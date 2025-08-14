@@ -12,7 +12,7 @@ export class CombatManager {
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
-  private targets: Array<{ obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number }; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally' }; weaponSlots?: string[]; shipId?: string }>=[];
+  private targets: Array<{ obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number }; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }; weaponSlots?: string[]; shipId?: string }>=[];
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -32,25 +32,34 @@ export class CombatManager {
 
   spawnNPCPrefab(prefabKey: string, x: number, y: number) {
     const prefab = this.config.stardwellers?.prefabs?.[prefabKey];
-    if (!prefab) return null;
-    const ship = this.config.ships.defs[prefab.shipId] ?? this.config.ships.defs[this.config.ships.current];
+    const shipDefId = prefab?.shipId ?? prefabKey; // allow direct ship id fallback
+    const ship = this.config.ships.defs[shipDefId] ?? this.config.ships.defs[this.config.ships.current];
+    if (!ship) {
+      console.log('[NPC] Ship def not found for', shipDefId, 'prefabKey=', prefabKey);
+      return null;
+    }
     let obj: any;
     const s = ship.sprite;
-    obj = this.scene.add.image(x, y, s.key).setDepth(0.4);
+    const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
+    obj = this.scene.add.image(x, y, texKey).setDepth(0.8);
     obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
     obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
     obj.setRotation(Phaser.Math.DegToRad(0));
+    obj.setAlpha(1);
+    obj.setVisible(true);
     (obj as any).__noseOffsetRad = 0;
     const barW = 128;
     const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
     const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
-    const profile = this.config.aiProfiles.profiles[prefab.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
+    const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
+    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
     const ai = { preferRange: profile.combat?.preferRange ?? 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab.shipId };
-    if (prefab.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
+    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId };
+    if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);
+    console.log('[NPC] Spawned', prefabKey, 'at', x, y, 'shipId=', entry.shipId);
     return obj as Target;
   }
 
@@ -154,6 +163,7 @@ export class CombatManager {
     const player = this.ship;
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
+      if (t.ai.behavior && t.ai.behavior !== 'aggressive') continue; // let non-aggressive (e.g., traders) be moved elsewhere
       const obj: any = t.obj;
       const prefer = t.ai.preferRange;
       const retreat = t.ai.retreatHpPct;
@@ -177,7 +187,8 @@ export class CombatManager {
       const turn = Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
       heading += turn;
       obj.rotation = heading + noseOffsetRad;
-      const speed = (desired !== 0) ? t.ai.speed : 0;
+      const baseSpeed = (typeof t.ai.speed === 'number' ? t.ai.speed : 140);
+      const speed = (desired !== 0) ? baseSpeed : 0;
       obj.x += Math.cos(heading) * speed * dt;
       obj.y += Math.sin(heading) * speed * dt;
       // update HP bar follow
