@@ -116,7 +116,7 @@ export default class StarSystemScene extends Phaser.Scene {
         system.star.y,
         key
       ).setDepth(0);
-      c.setDisplaySize(128, 128).setOrigin(0.5);
+      c.setDisplaySize(512, 512).setOrigin(0.5);
       this.planets.push({ obj: c, data: { ...p, angleDeg: 0 } });
     }
     // Fog of War setup
@@ -126,8 +126,17 @@ export default class StarSystemScene extends Phaser.Scene {
     const poiPos = system.poi.map((e: any) => ({ x: system.star.x + (e.x ?? 0), y: system.star.y + (e.y ?? 0) }));
     this.fog.setStatics({ x: system.star.x, y: system.star.y }, planetPos, poiPos);
 
-    // Spawn planet trader NPC (neutral) near star for each system
-    this.spawnPlanetTrader(system.star.x + 200, system.star.y + 120);
+    // Spawn NPCs from system config
+    const dwellers = (system as any).npcs as Array<any> | undefined;
+    if (Array.isArray(dwellers)) {
+      for (const d of dwellers) {
+        const planet = system.planets.find(p => p.id === d.planetId);
+        if (!planet) continue;
+        const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
+        const py = (planet as any)._y ?? system.star.y;
+        this.spawnPlanetTrader(px + 200, py + 120);
+      }
+    }
 
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
@@ -331,101 +340,50 @@ export default class StarSystemScene extends Phaser.Scene {
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
       let target = (o as any).__targetPlanet;
       if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
-      // Use planet's current world position if proxied
       const confPlanet = (sys.planets as any[]).find(p => p.id === target.id) as any;
       const tx = (confPlanet?._x ?? (sys.star.x + target.orbit.radius));
       const ty = (confPlanet?._y ?? sys.star.y);
       const dx = tx - o.x;
       const dy = ty - o.y;
       const dist = Math.hypot(dx, dy);
-      const speed = 120;
-      // Retreat if player is close (aggro)
-      const px = this.ship.x, py = this.ship.y;
-      const dPlayer = Math.hypot(o.x - px, o.y - py);
-      if (dPlayer < 400) {
-        // Aggressor near: immediately retreat from player
-        const desiredHeading = Math.atan2(o.y - py, o.x - px);
+      const dockRange = this.config.gameplay.dock_range ?? 220;
+
+      const state = (o as any).__state ?? 'travel';
+      if (state === 'travel') {
+        // Travel towards planet center
+        const desiredHeading = Math.atan2(dy, dx);
         let heading = (o.rotation ?? 0) - noseOffsetRad;
         let diff = desiredHeading - heading;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
-        const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.8 * dt);
+        const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.3 * dt);
         heading += turn;
         o.rotation = heading + noseOffsetRad;
+        const speed = 120;
         o.x += Math.cos(heading) * speed * dt;
         o.y += Math.sin(heading) * speed * dt;
-        (o as any).__orbitUntil = 0; // cancel orbit
-        continue;
-      }
-      let desiredHeading = Math.atan2(dy, dx);
-      // turn
-      let heading = (o.rotation ?? 0) - noseOffsetRad;
-      let diff = desiredHeading - heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.5 * dt);
-      heading += turn;
-      o.rotation = heading + noseOffsetRad;
-      // move
-      o.x += Math.cos(heading) * speed * dt;
-      o.y += Math.sin(heading) * speed * dt;
-      // Arrived near planet: orbit for 10..60s then pick another
-      if (dist < 120) {
-        if (!(o as any).__orbitUntil || (this.time.now > (o as any).__orbitUntil)) {
-          (o as any).__orbitUntil = this.time.now + (10 + Math.random() * 50) * 1000;
-        } else {
-          // orbit
-          const ang = Math.atan2((o as any).y - sys.star.y, (o as any).x - sys.star.x) + 0.4 * dt;
-          const r = target.orbit.radius + 50;
-          o.x = sys.star.x + Math.cos(ang) * r;
-          o.y = sys.star.y + Math.sin(ang) * r;
-          o.rotation = ang + (o as any).__noseOffsetRad;
+        if (dist < dockRange) {
+          // Start docking
+          (o as any).__state = 'docking';
+          const dur = 3000 + Math.random() * 1000;
+          this.tweens.add({ targets: o, x: tx, y: ty, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
+            (o as any).__state = 'docked';
+            // undock after random dwell
+            this.time.delayedCall(10000 + Math.random() * 50000, () => {
+              if (!o.active) return;
+              // pick new planet
+              const planets = sys.planets.filter(p => p.id !== target.id);
+              (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
+              (o as any).__state = 'undocking';
+              const ang = Math.random() * Math.PI * 2;
+              this.tweens.add({ targets: o, x: tx + Math.cos(ang) * 200, y: ty + Math.sin(ang) * 200, scaleX: 1, scaleY: 1, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
+                (o as any).__state = 'travel';
+              }});
+            });
+          }});
         }
-        if (this.time.now > (o as any).__orbitUntil) {
-          // pick next planet (not the same)
-          const planets = sys.planets.filter(p => p.id !== target.id);
-          (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
-        }
-      }
-
-      // Docking mechanic for NPCs
-      const dockRange = this.config.gameplay.dock_range ?? 220;
-      if (dist < dockRange) {
-        // tween to planet center, shrink and fade
-        if (!(o as any).__docking) {
-          (o as any).__docking = true;
-          this.tweens.add({
-            targets: o,
-            x: tx,
-            y: ty,
-            scaleX: 0.2,
-            scaleY: 0.2,
-            alpha: 0,
-            duration: 3000,
-            ease: 'Sine.easeInOut',
-            onComplete: () => {
-              (o as any).__docked = true;
-              (o as any).__docking = false;
-              // schedule undock
-              this.time.delayedCall(3000, () => {
-                if (!o.active) return;
-                // pick new target and undock
-                const planets = sys.planets.filter(p => p.id !== target.id);
-                (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
-                this.tweens.add({
-                  targets: o,
-                  x: o.x + 150,
-                  y: o.y + 150,
-                  scaleX: 1,
-                  scaleY: 1,
-                  alpha: 1,
-                  duration: 3000,
-                  ease: 'Sine.easeInOut'
-                });
-              });
-            }
-          });
-        }
+      } else if (state === 'docking' || state === 'docked' || state === 'undocking') {
+        // tween-controlled; no manual movement
         continue;
       }
     }
@@ -441,8 +399,9 @@ export default class StarSystemScene extends Phaser.Scene {
     delete (this.config.enemies.defs as any)[id];
     if (npc) {
       (npc as any).__behavior = 'planet_trader';
-      (npc as any).__targetPlanet = this.pickRandomPlanet();
+      (npc as any).__targetPlanet = this.pickNearestPlanet(x, y) ?? this.pickRandomPlanet();
       (npc as any).__orbitUntil = 0;
+      (npc as any).__state = 'travel';
       this.npcs.push(npc);
     }
   }
@@ -451,6 +410,19 @@ export default class StarSystemScene extends Phaser.Scene {
     const system = this.config.system;
     const idx = Math.floor(Math.random() * system.planets.length);
     return system.planets[idx];
+  }
+
+  private pickNearestPlanet(x: number, y: number) {
+    const sys = this.config.system;
+    let best: any = null;
+    let bestD = Number.POSITIVE_INFINITY;
+    for (const p of sys.planets as any[]) {
+      const px = p._x ?? (sys.star.x + p.orbit.radius);
+      const py = p._y ?? sys.star.y;
+      const d = Math.hypot(px - x, py - y);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best ?? null;
   }
 
   // navmesh удалён — работаем только с кинематическим планированием

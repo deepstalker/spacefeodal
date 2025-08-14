@@ -6,9 +6,9 @@
       "hull": 3000,
       "sprite": {
         "key": "ship_explorer",
-        "displaySize": { "width": 96, "height": 192 },
+        "displaySize": { "width": 128, "height": 256 },
         "origin": { "x": 0.5, "y": 0.5 },
-        "noseOffsetDeg": 90
+        "noseOffsetDeg": 0
       },
       "combat": {
         "weaponSlots": 3,
@@ -32,7 +32,7 @@
     },
     "trader": {
       "displayName": "Trader",
-      "hull": 140,
+      "hull": 600,
       "sprite": {
         "key": "ship_trader",
         "displaySize": { "width": 96, "height": 192 },
@@ -50,10 +50,10 @@
         ]
       },
       "movement": {
-        "MAX_SPEED": 0.9,
+        "MAX_SPEED": 0.5,
         "ACCELERATION": 0.02,
-        "DECELERATION": 0.075,
-        "TURN_SPEED": 0.018,
+        "DECELERATION": 0.05,
+        "TURN_SPEED": 0.06,
         "SLOWING_RADIUS": 160,
         "TURN_PENALTY_MULTIPLIER": 1.2,
         "TURN_DECELERATION_FACTOR": 0.22

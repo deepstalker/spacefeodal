@@ -1,0 +1,7 @@
+{
+  "prefabs": {
+    "trader": { "shipId": "trader", "aiProfile": "planet_trader", "weapons": [] }
+  }
+}
+
+

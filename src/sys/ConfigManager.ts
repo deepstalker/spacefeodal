@@ -114,8 +114,12 @@ export type EnemiesConfig = {
   }>;
 };
 
+export type StardwellersConfig = {
+  prefabs: Record<string, { shipId: string; aiProfile: string; weapons: string[] }>;
+};
+
 export type AIProfilesConfig = {
-  profiles: Record<string, { preferRange: number; retreatHpPct: number; speed?: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }>;
+  profiles: Record<string, { behavior: string; startDisposition: 'neutral' | 'enemy' | 'ally'; combat: { preferRange: number; retreatHpPct: number } }>;
 };
 
 export type PlayerConfig = {
@@ -138,6 +142,7 @@ export class ConfigManager {
   enemies!: EnemiesConfig;
   aiProfiles!: AIProfilesConfig;
   player!: PlayerConfig;
+  stardwellers!: StardwellersConfig;
   systemsIndex!: SystemsIndexConfig;
   systemProfiles!: SystemProfilesConfig;
 
@@ -147,7 +152,7 @@ export class ConfigManager {
 
   async loadAll() {
     const base = '/configs';
-    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, enemies, player, aiProfiles, systemsIndex, systemProfiles] = await Promise.all([
+    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, enemies, player, aiProfiles, systemsIndex, systemProfiles, stardwellers] = await Promise.all([
       fetch(`${base}/settings.json`).then(r => r.json()),
       fetch(`${base}/gameplay.json`).then(r => r.json()),
       fetch(`${base}/system.json`).then(r => r.json()),
@@ -161,7 +166,8 @@ export class ConfigManager {
       fetch(`${base}/player.json`).then(r => r.json()),
       fetch(`${base}/ai_profiles.json`).then(r => r.json()),
       fetch(`${base}/systems.json`).then(r => r.json()),
-      fetch(`${base}/system_profiles.json`).then(r => r.json())
+      fetch(`${base}/system_profiles.json`).then(r => r.json()),
+      fetch(`${base}/stardwellers.json`).then(r => r.json())
     ]);
     this.settings = settings;
     this.gameplay = gameplay;
@@ -175,6 +181,7 @@ export class ConfigManager {
     this.enemies = enemies;
     this.player = player;
     this.aiProfiles = aiProfiles;
+    this.stardwellers = stardwellers;
     this.systemsIndex = systemsIndex;
     this.systemProfiles = systemProfiles;
   }

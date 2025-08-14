@@ -11,6 +11,11 @@
     { "id": "enc_0", "name": "Пираты", "x": 13000, "y": 9200, "discovered": false },
     { "id": "enc_1", "name": "Потерянное сокровище", "x": 7000, "y": 14000, "discovered": false }
   ],
+  "npcs": [
+    { "prefab": "trader", "planetId": "pl_1" },
+    { "prefab": "trader", "planetId": "pl_2" },
+    { "prefab": "trader", "planetId": "pl_3" }
+  ],
   "dynamicObjects": []
 }
 

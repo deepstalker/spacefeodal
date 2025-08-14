@@ -46,8 +46,8 @@ export class CombatManager {
     const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
-    const profile = this.config.aiProfiles.profiles[def.aiProfile] ?? { preferRange: 0, retreatHpPct: 0, speed: 0 } as any;
-    const ai = { preferRange: profile.preferRange, retreatHpPct: profile.retreatHpPct, type: 'ship', speed: profile.speed ?? 0, disposition: profile.disposition ?? 'neutral', behavior: profile.behavior } as any;
+    const profile = this.config.aiProfiles.profiles[def.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
+    const ai = { preferRange: profile.combat?.preferRange ?? 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
     const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: def.shipId, behavior: profile.behavior };
     if (def.weapons && Array.isArray(def.weapons)) entry.weaponSlots = def.weapons.slice(0);
     this.targets.push(entry);
