@@ -114,7 +114,7 @@ export type EnemiesConfig = {
 };
 
 export type AIProfilesConfig = {
-  profiles: Record<string, { preferRange: number; retreatHpPct: number; speed?: number; disposition?: 'neutral' | 'enemy' | 'ally' }>;
+  profiles: Record<string, { preferRange: number; retreatHpPct: number; speed?: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }>;
 };
 
 export type PlayerConfig = {

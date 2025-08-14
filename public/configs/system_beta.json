@@ -1,6 +1,6 @@
 {
-  "size": { "width": 22000, "height": 22000 },
-  "star": { "x": 11000, "y": 11000 },
+  "size": { "width": 25000, "height": 25000 },
+  "star": { "x": 12500, "y": 12500 },
   "planets": [
     { "id": "pl_1", "name": "Blue 1",  "orbit": { "radius": 2800,  "angularSpeedDegPerSec": 7.2 },  "color": "#66aaff" },
     { "id": "pl_2", "name": "Red 2",   "orbit": { "radius": 4700,  "angularSpeedDegPerSec": 5.1 },  "color": "#ff6666" },

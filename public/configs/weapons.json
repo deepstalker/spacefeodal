@@ -6,7 +6,7 @@
       "projectileSpeed": 700,
       "fireRatePerSec": 4,
       "damage": 8,
-      "range": 900,
+      "range": 300,
       "muzzleOffset": { "x": 0, "y": -40 }
     },
     "cannon": {
@@ -15,16 +15,16 @@
       "projectileSpeed": 500,
       "fireRatePerSec": 2,
       "damage": 16,
-      "range": 800,
+      "range": 500,
       "muzzleOffset": { "x": -20, "y": -30 }
     },
     "missile": {
       "projectile": { "shape": "circle", "radius": 7, "color": "#f87171" },
       "hitEffect": { "shape": "circle", "radius": 32, "color": "#ef4444", "durationMs": 260 },
-      "projectileSpeed": 420,
+      "projectileSpeed": 200,
       "fireRatePerSec": 1,
       "damage": 26,
-      "range": 1000,
+      "range": 700,
       "muzzleOffset": { "x": 20, "y": -30 }
     }
   }

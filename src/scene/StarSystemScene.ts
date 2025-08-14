@@ -16,6 +16,7 @@ export default class StarSystemScene extends Phaser.Scene {
   private pathfinding!: PathfindingManager;
   private movement!: MovementManager;
   private combat!: CombatManager;
+  private npcs: any[] = [];
 
   private ship!: Phaser.GameObjects.Image;
   private playerHp!: number;
@@ -122,6 +123,9 @@ export default class StarSystemScene extends Phaser.Scene {
     const poiPos = system.poi.map((e: any) => ({ x: system.star.x + (e.x ?? 0), y: system.star.y + (e.y ?? 0) }));
     this.fog.setStatics({ x: system.star.x, y: system.star.y }, planetPos, poiPos);
 
+    // Spawn planet trader NPC (neutral) near star for each system
+    this.spawnPlanetTrader(system.star.x + 200, system.star.y + 120);
+
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
     const cfgStart = this.config.player?.start ?? {} as any;
@@ -205,6 +209,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, this.updateSystem, this);
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
   }
 
   public applyDamageToPlayer(amount: number) {
@@ -313,6 +318,79 @@ export default class StarSystemScene extends Phaser.Scene {
     const h = this.scale.height;
     const banner = this.add.text(w/2, h/2, `Вы нашли: ${name}`, { color: '#ffffff', fontSize: '28px', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(5000);
     this.tweens.add({ targets: banner, alpha: 0, duration: 2200, ease: 'Sine.easeIn', onComplete: () => banner.destroy() });
+  }
+
+  private updateNPCs(deltaMs: number) {
+    const dt = deltaMs / 1000;
+    const sys = this.config.system;
+    for (const o of this.npcs) {
+      if ((o as any).__behavior !== 'planet_trader') continue;
+      const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
+      let target = (o as any).__targetPlanet;
+      if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
+      const tx = sys.star.x + target.orbit.radius;
+      const ty = sys.star.y;
+      const dx = tx - o.x;
+      const dy = ty - o.y;
+      const dist = Math.hypot(dx, dy);
+      const speed = 120;
+      // Retreat if player is close (aggro)
+      const px = this.ship.x, py = this.ship.y;
+      const dPlayer = Math.hypot(o.x - px, o.y - py);
+      let desiredHeading = Math.atan2(dy, dx);
+      if (dPlayer < 400) desiredHeading = Math.atan2(o.y - py, o.x - px);
+      // turn
+      let heading = (o.rotation ?? 0) - noseOffsetRad;
+      let diff = desiredHeading - heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.5 * dt);
+      heading += turn;
+      o.rotation = heading + noseOffsetRad;
+      // move
+      o.x += Math.cos(heading) * speed * dt;
+      o.y += Math.sin(heading) * speed * dt;
+      // Arrived near planet: orbit for 10..60s then pick another
+      if (dist < 100) {
+        if (!(o as any).__orbitUntil || (this.time.now > (o as any).__orbitUntil)) {
+          (o as any).__orbitUntil = this.time.now + (10 + Math.random() * 50) * 1000;
+        } else {
+          // orbit
+          const ang = Math.atan2(o.y - sys.star.y, o.x - sys.star.x) + 0.4 * dt;
+          const r = target.orbit.radius + 50;
+          o.x = sys.star.x + Math.cos(ang) * r;
+          o.y = sys.star.y + Math.sin(ang) * r;
+          o.rotation = ang + (o as any).__noseOffsetRad;
+        }
+        if (this.time.now > (o as any).__orbitUntil) {
+          // pick next planet (not the same)
+          const planets = sys.planets.filter(p => p.id !== target.id);
+          (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
+        }
+      }
+    }
+  }
+
+  private spawnPlanetTrader(x: number, y: number) {
+    // synthetic enemy-def like object
+    const def = { shipId: 'trader', weapons: [], aiProfile: 'planet_trader' } as any;
+    // Temporarily inject into enemies table to reuse spawn
+    const id = `npc_trader_${Math.floor(Math.random()*1e6)}`;
+    (this.config.enemies.defs as any)[id] = def;
+    const npc = (this.combat as any).spawnEnemyFromConfig(id, x, y) as any;
+    delete (this.config.enemies.defs as any)[id];
+    if (npc) {
+      (npc as any).__behavior = 'planet_trader';
+      (npc as any).__targetPlanet = this.pickRandomPlanet();
+      (npc as any).__orbitUntil = 0;
+      this.npcs.push(npc);
+    }
+  }
+
+  private pickRandomPlanet() {
+    const system = this.config.system;
+    const idx = Math.floor(Math.random() * system.planets.length);
+    return system.planets[idx];
   }
 
   // navmesh удалён — работаем только с кинематическим планированием
