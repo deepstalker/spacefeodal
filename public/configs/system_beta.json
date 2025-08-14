@@ -13,9 +13,9 @@
     { "id": "enc_1", "name": "Пираты", "x": 11000, "y": 11000, "discovered": false }
   ],
   "npcs": [
-    { "prefab": "trader", "planetId": "pl_1" },
-    { "prefab": "trader", "planetId": "pl_3" },
-    { "prefab": "trader", "planetId": "pl_5" }
+    { "prefab": "trader", "planetId": "pl_1", "aiProfile": "planet_trader" },
+    { "prefab": "trader", "planetId": "pl_3", "aiProfile": "planet_trader" },
+    { "prefab": "trader", "planetId": "pl_5", "aiProfile": "planet_trader" }
   ],
   "dynamicObjects": []
 }

@@ -130,11 +130,16 @@ export default class StarSystemScene extends Phaser.Scene {
     const dwellers = (system as any).npcs as Array<any> | undefined;
     if (Array.isArray(dwellers)) {
       for (const d of dwellers) {
-        const planet = system.planets.find(p => p.id === d.planetId);
-        if (!planet) continue;
-        const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
-        const py = (planet as any)._y ?? system.star.y;
-        this.spawnPlanetTrader(px + 200, py + 120);
+        if (d.x != null && d.y != null) {
+          // explicit coordinates
+          (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y);
+        } else if (d.planetId) {
+          const planet = system.planets.find(p => p.id === d.planetId);
+          if (!planet) continue;
+          const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
+          const py = (planet as any)._y ?? system.star.y;
+          (this.combat as any).spawnNPCPrefab(d.prefab, px + 200, py + 120);
+        }
       }
     }
 
@@ -334,7 +339,8 @@ export default class StarSystemScene extends Phaser.Scene {
 
   private updateNPCs(deltaMs: number) {
     const dt = deltaMs / 1000;
-    const sys = this.config.system;
+    const sys = this.config?.system as any;
+    if (!sys || !Array.isArray(sys.planets) || !this.ship) return;
     for (const o of this.npcs) {
       if ((o as any).__behavior !== 'planet_trader') continue;
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;

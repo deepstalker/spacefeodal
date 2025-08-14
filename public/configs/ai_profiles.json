@@ -2,7 +2,7 @@
   "profiles": {
     "aggressive": { "behavior": "aggressive", "startDisposition": "enemy", "combat": { "preferRange": 700, "retreatHpPct": 0.5 } },
     "static": { "behavior": "static", "startDisposition": "neutral", "combat": { "preferRange": 0, "retreatHpPct": 0 } },
-    "planet_trader": { "behavior": "planet_trader", "startDisposition": "neutral", "combat": { "preferRange": 0, "retreatHpPct": 0.2 } }
+    "planet_trader": { "behavior": "planet_trader", "startDisposition": "neutral", "combat": { "preferRange": 0, "retreatHpPct": 0.99 } }
   }
 }
 

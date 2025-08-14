@@ -30,6 +30,30 @@ export class CombatManager {
 
   getSelectedTarget(): Target | null { return this.selectedTarget; }
 
+  spawnNPCPrefab(prefabKey: string, x: number, y: number) {
+    const prefab = this.config.stardwellers?.prefabs?.[prefabKey];
+    if (!prefab) return null;
+    const ship = this.config.ships.defs[prefab.shipId] ?? this.config.ships.defs[this.config.ships.current];
+    let obj: any;
+    const s = ship.sprite;
+    obj = this.scene.add.image(x, y, s.key).setDepth(0.4);
+    obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
+    obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
+    obj.setRotation(Phaser.Math.DegToRad(0));
+    (obj as any).__noseOffsetRad = 0;
+    const barW = 128;
+    const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
+    const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
+    const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
+    bg.setVisible(false); fill.setVisible(false);
+    const profile = this.config.aiProfiles.profiles[prefab.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
+    const ai = { preferRange: profile.combat?.preferRange ?? 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
+    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab.shipId };
+    if (prefab.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
+    this.targets.push(entry);
+    return obj as Target;
+  }
+
   spawnEnemyFromConfig(enemyId: string, worldX: number, worldY: number) {
     const def = this.config.enemies.defs[enemyId];
     if (!def) return null;
