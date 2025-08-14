@@ -23,12 +23,13 @@ export default class StarSystemScene extends Phaser.Scene {
   private playerHpMax!: number;
   private routeGraphics!: Phaser.GameObjects.Graphics;
   private clickMarker?: Phaser.GameObjects.Arc;
-  private planets: { obj: Phaser.GameObjects.Arc; data: any }[] = [];
+  private planets: { obj: Phaser.GameObjects.Image; data: any }[] = [];
   private encounterMarkers: Array<{ id: string; name: string; x: number; y: number; typeId?: string; activationRange?: number; marker: Phaser.GameObjects.GameObject; label: Phaser.GameObjects.Text }>=[];
   private starfield?: Phaser.GameObjects.Graphics;
   private bgTile?: Phaser.GameObjects.TileSprite;
   private readonly bgParallax: number = 0.2;
   private aimLine?: Phaser.GameObjects.Graphics;
+  private readonly orbitalSpeedScale: number = 0.1; // reduce planet speeds by ~90%
   private fog!: FogOfWar;
 
   constructor() {
@@ -106,14 +107,16 @@ export default class StarSystemScene extends Phaser.Scene {
       this.encounterMarkers.push({ id: e.id, name: e.name, x: ex, y: ey, typeId: type?.id, activationRange, marker: q, label: t });
     }
 
-    // Planets placeholders (will rotate)
-    for (const p of system.planets) {
-      const c = this.add.circle(
+    // Planets as sprites (will rotate)
+    for (let i = 0; i < system.planets.length; i++) {
+      const p = system.planets[i];
+      const key = `planet_${(i % 10).toString().padStart(2,'0')}`;
+      const c = this.add.image(
         system.star.x + p.orbit.radius,
         system.star.y,
-        36,
-        Number(p.color?.replace('#', '0x')) || 0x8888ff
+        key
       ).setDepth(0);
+      c.setDisplaySize(128, 128).setOrigin(0.5);
       this.planets.push({ obj: c, data: { ...p, angleDeg: 0 } });
     }
     // Fog of War setup
@@ -256,7 +259,7 @@ export default class StarSystemScene extends Phaser.Scene {
     if (!sys || !sys.star || !sys.planets) return;
     const dt = delta / 1000;
     for (const pl of this.planets) {
-      pl.data.angleDeg = (pl.data.angleDeg + pl.data.orbit.angularSpeedDegPerSec * dt) % 360;
+      pl.data.angleDeg = (pl.data.angleDeg + pl.data.orbit.angularSpeedDegPerSec * dt * this.orbitalSpeedScale) % 360;
       const rad = Phaser.Math.DegToRad(pl.data.angleDeg);
       const px = sys.star.x + Math.cos(rad) * pl.data.orbit.radius;
       const py = sys.star.y + Math.sin(rad) * pl.data.orbit.radius;
@@ -328,8 +331,10 @@ export default class StarSystemScene extends Phaser.Scene {
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
       let target = (o as any).__targetPlanet;
       if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
-      const tx = sys.star.x + target.orbit.radius;
-      const ty = sys.star.y;
+      // Use planet's current world position if proxied
+      const confPlanet = (sys.planets as any[]).find(p => p.id === target.id) as any;
+      const tx = (confPlanet?._x ?? (sys.star.x + target.orbit.radius));
+      const ty = (confPlanet?._y ?? sys.star.y);
       const dx = tx - o.x;
       const dy = ty - o.y;
       const dist = Math.hypot(dx, dy);
@@ -337,8 +342,22 @@ export default class StarSystemScene extends Phaser.Scene {
       // Retreat if player is close (aggro)
       const px = this.ship.x, py = this.ship.y;
       const dPlayer = Math.hypot(o.x - px, o.y - py);
+      if (dPlayer < 400) {
+        // Aggressor near: immediately retreat from player
+        const desiredHeading = Math.atan2(o.y - py, o.x - px);
+        let heading = (o.rotation ?? 0) - noseOffsetRad;
+        let diff = desiredHeading - heading;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.8 * dt);
+        heading += turn;
+        o.rotation = heading + noseOffsetRad;
+        o.x += Math.cos(heading) * speed * dt;
+        o.y += Math.sin(heading) * speed * dt;
+        (o as any).__orbitUntil = 0; // cancel orbit
+        continue;
+      }
       let desiredHeading = Math.atan2(dy, dx);
-      if (dPlayer < 400) desiredHeading = Math.atan2(o.y - py, o.x - px);
       // turn
       let heading = (o.rotation ?? 0) - noseOffsetRad;
       let diff = desiredHeading - heading;
@@ -351,12 +370,12 @@ export default class StarSystemScene extends Phaser.Scene {
       o.x += Math.cos(heading) * speed * dt;
       o.y += Math.sin(heading) * speed * dt;
       // Arrived near planet: orbit for 10..60s then pick another
-      if (dist < 100) {
+      if (dist < 120) {
         if (!(o as any).__orbitUntil || (this.time.now > (o as any).__orbitUntil)) {
           (o as any).__orbitUntil = this.time.now + (10 + Math.random() * 50) * 1000;
         } else {
           // orbit
-          const ang = Math.atan2(o.y - sys.star.y, o.x - sys.star.x) + 0.4 * dt;
+          const ang = Math.atan2((o as any).y - sys.star.y, (o as any).x - sys.star.x) + 0.4 * dt;
           const r = target.orbit.radius + 50;
           o.x = sys.star.x + Math.cos(ang) * r;
           o.y = sys.star.y + Math.sin(ang) * r;
@@ -367,6 +386,47 @@ export default class StarSystemScene extends Phaser.Scene {
           const planets = sys.planets.filter(p => p.id !== target.id);
           (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
         }
+      }
+
+      // Docking mechanic for NPCs
+      const dockRange = this.config.gameplay.dock_range ?? 220;
+      if (dist < dockRange) {
+        // tween to planet center, shrink and fade
+        if (!(o as any).__docking) {
+          (o as any).__docking = true;
+          this.tweens.add({
+            targets: o,
+            x: tx,
+            y: ty,
+            scaleX: 0.2,
+            scaleY: 0.2,
+            alpha: 0,
+            duration: 3000,
+            ease: 'Sine.easeInOut',
+            onComplete: () => {
+              (o as any).__docked = true;
+              (o as any).__docking = false;
+              // schedule undock
+              this.time.delayedCall(3000, () => {
+                if (!o.active) return;
+                // pick new target and undock
+                const planets = sys.planets.filter(p => p.id !== target.id);
+                (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
+                this.tweens.add({
+                  targets: o,
+                  x: o.x + 150,
+                  y: o.y + 150,
+                  scaleX: 1,
+                  scaleY: 1,
+                  alpha: 1,
+                  duration: 3000,
+                  ease: 'Sine.easeInOut'
+                });
+              });
+            }
+          });
+        }
+        continue;
       }
     }
   }

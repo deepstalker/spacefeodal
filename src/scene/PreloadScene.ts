@@ -51,6 +51,11 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('bg_nebula1', '/assets/Blue Nebula 1 - 1024x1024.png');
     this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');
     this.load.image('bg_stars1', '/assets/Stars-Big_1_1_PC.png');
+    // Planets
+    for (let i = 0; i <= 9; i++) {
+      const idx = i.toString().padStart(2, '0');
+      this.load.image(`planet_${idx}`, `/assets/planet${idx}.png`);
+    }
   }
 
   create() {

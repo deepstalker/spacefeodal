@@ -1,6 +1,6 @@
 {
-  "size": { "width": 24000, "height": 24000 },
-  "star": { "x": 12000, "y": 12000 },
+  "size": { "width": 25000, "height": 25000 },
+  "star": { "x": 12500, "y": 12500 },
   "planets": [
     { "id": "p1", "name": "Aster",  "orbit": { "radius": 3000,  "angularSpeedDegPerSec": 8.0 },  "color": "#8888ff" },
     { "id": "p2", "name": "Boreal", "orbit": { "radius": 5000,  "angularSpeedDegPerSec": 5.5 },  "color": "#88ffaa" },

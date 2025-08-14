@@ -26,6 +26,7 @@ export type GameplayConfig = {
     fogColor: string;
     fogAlpha: number;
   };
+  dock_range?: number;
 };
 
 export type SystemConfig = {

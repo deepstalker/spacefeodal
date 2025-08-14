@@ -14,6 +14,8 @@
     "fogColor": "#0b1020",
     "fogAlpha": 0.55
   }
+  ,
+  "dock_range": 220
 }
 
 
