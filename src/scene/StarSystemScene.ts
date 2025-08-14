@@ -143,6 +143,9 @@ export default class StarSystemScene extends Phaser.Scene {
       }
     }
 
+    // Ensure at least one trader near the star in every system
+    (this.combat as any).spawnNPCPrefab('trader', system.star.x + 300, system.star.y - 180);
+
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
     const cfgStart = this.config.player?.start ?? {} as any;
