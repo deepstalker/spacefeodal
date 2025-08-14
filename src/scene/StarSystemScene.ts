@@ -132,19 +132,37 @@ export default class StarSystemScene extends Phaser.Scene {
       for (const d of dwellers) {
         if (d.x != null && d.y != null) {
           // explicit coordinates
-          (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y);
+          const npc = (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y) as any;
+          if (npc) {
+            (npc as any).__behavior = this.config.aiProfiles.profiles?.[this.config.stardwellers.prefabs[d.prefab].aiProfile]?.behavior ?? 'planet_trader';
+            (npc as any).__targetPlanet = this.pickNearestPlanet(npc.x, npc.y) ?? this.pickRandomPlanet();
+            (npc as any).__state = 'travel';
+            this.npcs.push(npc);
+          }
         } else if (d.planetId) {
           const planet = system.planets.find(p => p.id === d.planetId);
           if (!planet) continue;
           const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
           const py = (planet as any)._y ?? system.star.y;
-          (this.combat as any).spawnNPCPrefab(d.prefab, px + 200, py + 120);
+          const npc = (this.combat as any).spawnNPCPrefab(d.prefab, px + 200, py + 120) as any;
+          if (npc) {
+            (npc as any).__behavior = this.config.aiProfiles.profiles?.[this.config.stardwellers.prefabs[d.prefab].aiProfile]?.behavior ?? 'planet_trader';
+            (npc as any).__targetPlanet = planet;
+            (npc as any).__state = 'travel';
+            this.npcs.push(npc);
+          }
         }
       }
     }
 
     // Ensure at least one trader near the star in every system
-    (this.combat as any).spawnNPCPrefab('trader', system.star.x + 300, system.star.y - 180);
+    const near = (this.combat as any).spawnNPCPrefab('trader', system.star.x + 300, system.star.y - 180) as any;
+    if (near) {
+      (near as any).__behavior = this.config.aiProfiles.profiles?.[this.config.stardwellers.prefabs['trader'].aiProfile]?.behavior ?? 'planet_trader';
+      (near as any).__targetPlanet = this.pickNearestPlanet(near.x, near.y) ?? this.pickRandomPlanet();
+      (near as any).__state = 'travel';
+      this.npcs.push(near);
+    }
 
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
