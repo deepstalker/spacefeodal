@@ -1,0 +1,20 @@
+{
+  "size": { "width": 24000, "height": 24000 },
+  "star": { "x": 12000, "y": 12000 },
+  "planets": [
+    { "id": "p1", "name": "Aster",  "orbit": { "radius": 3000,  "angularSpeedDegPerSec": 8.0 },  "color": "#8888ff" },
+    { "id": "p2", "name": "Boreal", "orbit": { "radius": 5000,  "angularSpeedDegPerSec": 5.5 },  "color": "#88ffaa" },
+    { "id": "p3", "name": "Ceres",  "orbit": { "radius": 7000,  "angularSpeedDegPerSec": 4.0 },  "color": "#ffaa88" },
+    { "id": "p4", "name": "Dione",  "orbit": { "radius": 9000,  "angularSpeedDegPerSec": 3.2 },  "color": "#a0a0ff" },
+    { "id": "p5", "name": "Erebos", "orbit": { "radius": 12000, "angularSpeedDegPerSec": 2.5 },  "color": "#aaffaa" }
+  ],
+  "poi": [
+    { "id": "q1", "name": "Таинственный обломок", "x": 8000, "y": 5000, "discovered": false },
+    { "id": "q2", "name": "Неизвестная станция", "x": 15000, "y": 17000, "discovered": false }
+  ],
+  "dynamicObjects": [
+    { "id": "convoy1", "type": "ship", "x": 10000, "y": 10000, "vx": 20, "vy": -10 }
+  ]
+}
+
+

@@ -1,0 +1,51 @@
+import Phaser from 'phaser';
+import UIPlugin from 'phaser3-rex-plugins/templates/ui/ui-plugin.js';
+
+export default class PreloadScene extends Phaser.Scene {
+  rexUI!: UIPlugin;
+
+  constructor() {
+    super('PreloadScene');
+  }
+
+  preload() {
+    // Прогресс-бар через rexUI: горизонтальный sizer с заполнением
+    const width = this.scale.width;
+    const height = this.scale.height;
+
+    const sizer = this.rexUI.add.sizer({ x: width / 2, y: height / 2, width: 420, height: 28, orientation: 0 });
+    const box = this.add.rectangle(0, 0, 420, 24, 0x222222).setOrigin(0.5);
+    const fill = this.add.rectangle(-210 + 2, 0, 0, 16, 0x20c997).setOrigin(0, 0.5);
+    sizer.add(box, 0, 'center', 0, true);
+    sizer.add(fill, 0, 'center', { left: 2, right: 2 }, false);
+    sizer.layout();
+
+    this.load.on('progress', (v: number) => {
+      fill.width = (416 - 4) * v;
+      sizer.layout();
+    });
+
+    this.load.on('complete', () => {
+      sizer.destroy();
+    });
+
+    // Загрузка ассетов: сначала пробуем из src/assets через ESM URL, затем public fallback
+    // Пробуем загрузить из src (ESM) и из public (fallback)
+    try {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      const urlFromSrc = new URL('../assets/ships/alpha/alpha_image.png', import.meta.url).href;
+      this.load.image('ship_alpha', urlFromSrc);
+    } catch (_) {
+      /* noop */
+    }
+    this.load.image('ship_alpha_public', '/assets/ships/alpha/alpha_image.png');
+  }
+
+  create() {
+    this.scene.start('StarSystemScene');
+    this.scene.launch('UIScene');
+  }
+}
+
+

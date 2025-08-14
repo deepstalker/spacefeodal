@@ -1,0 +1,13 @@
+{
+  "resolution": { "width": 1920, "height": 1080 },
+  "scaleMode": "RESIZE",
+  "ui": {
+    "theme": "dark",
+    "fontFamily": "Inter, Arial, sans-serif",
+    "baseFontSize": 16,
+    "spacing": { "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24 }
+  },
+  "camera": { "minZoom": 0.3, "maxZoom": 2.0, "edgePanMargin": 24, "edgePanSpeed": 600 }
+}
+
+
