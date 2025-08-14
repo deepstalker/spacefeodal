@@ -1,0 +1,18 @@
+{
+  "defs": {
+    "dummy": {
+      "displayName": "Dummy Target",
+      "shipId": "explorer",
+      "weapons": [],
+      "aiProfile": "static"
+    },
+    "hostile_ship": {
+      "displayName": "Hostile Ship",
+      "shipId": "fighter",
+      "weapons": ["laser", "cannon"],
+      "aiProfile": "aggressive"
+    }
+  }
+}
+
+

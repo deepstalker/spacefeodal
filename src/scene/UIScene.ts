@@ -8,6 +8,17 @@ export default class UIScene extends Phaser.Scene {
   private configRef?: ConfigManager;
   private minimapHit?: Phaser.GameObjects.Zone;
   private followLabel?: Phaser.GameObjects.Text;
+  // HUD elements
+  private speedBar?: any;
+  private speedFill?: Phaser.GameObjects.Rectangle;
+  private followToggle?: any;
+  private hullBar?: any;
+  private hullFill?: Phaser.GameObjects.Rectangle;
+  private playerHp: number | null = null;
+  private shipNameText?: Phaser.GameObjects.Text;
+  private shipIcon?: Phaser.GameObjects.Image;
+  private gameOverGroup?: Phaser.GameObjects.Container;
+  private systemMenu?: any;
   constructor() {
     super('UIScene');
   }
@@ -36,6 +47,21 @@ export default class UIScene extends Phaser.Scene {
         const worldY = Phaser.Math.Clamp(relY * sys.size.height, 0, sys.size.height);
         const star = this.scene.get('StarSystemScene') as any;
         star.cameras.main.centerOn(worldX, worldY);
+      });
+      // при смене системы обновляем ссылку
+      starScene.events.on('system-ready', (pl: any) => {
+        this.configRef = pl.config;
+        this.minimap = new MinimapManager(this, pl.config);
+        this.minimap.init(this.scale.width - 260, 20);
+        this.minimap.attachShip(pl.ship);
+      });
+
+      // HUD bottom area
+      this.createHUD(payload);
+      // Подписываемся на урон игрока
+      const star = this.scene.get('StarSystemScene') as any;
+      star.events.on('player-damaged', (hp: number) => {
+        this.playerHp = hp;
       });
     };
     // Если уже создана — попробуем сразу
@@ -67,12 +93,167 @@ export default class UIScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, updateFollow);
 
     this.events.on(Phaser.Scenes.Events.UPDATE, () => {
-      const mv = this.configRef?.gameplay?.movement;
+      const mv = this.getMovementConfig();
       if (!mv) return;
+      // Update debug
       this.debugText.setText(
-        `acc=${mv.acceleration} dec=${mv.deceleration} vmax=${mv.maxSpeed} turn=${mv.turnRateDegPerSec}`
+        `ACC=${mv.ACCELERATION.toFixed(3)} DEC=${mv.DECELERATION.toFixed(3)} VMAX=${mv.MAX_SPEED.toFixed(2)} TURN=${mv.TURN_SPEED.toFixed(3)}`
       );
+      // Update speed bar by estimating MovementManager speed if available via ship data
+      this.updateHUD();
     });
+
+    // Debug menu to switch systems
+    const key = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+    key?.on('down', () => this.toggleSystemMenu());
+  }
+
+  private getMovementConfig() {
+    const mv = this.configRef?.gameplay?.movement;
+    const playerShipId = this.configRef?.player?.shipId;
+    const shipMv = playerShipId ? this.configRef?.ships?.defs[playerShipId]?.movement : undefined;
+    return shipMv ?? mv;
+  }
+
+  private createHUD(payload: { config: ConfigManager; ship: Phaser.GameObjects.GameObject }) {
+    const rexUI = (this as any).rexUI;
+    const sw = this.scale.width;
+    const sh = this.scale.height;
+    const pad = 12;
+
+    // Container at bottom
+    const barW = Math.min(520, sw * 0.4);
+    const barH = 20;
+    const hudY = sh - pad;
+
+    // Speed panel (progress bar)
+    const speedBg = this.add.rectangle(pad, hudY, barW, barH, 0x1e293b).setOrigin(0, 1).setScrollFactor(0).setDepth(1500);
+    const speedFill = this.add.rectangle(pad + 2, hudY - 2, 0, barH - 4, 0x38bdf8).setOrigin(0, 1).setScrollFactor(0).setDepth(1501);
+    this.speedFill = speedFill;
+    const speedValue = this.add.text(pad + barW - 6, hudY - barH / 2, '0', { color: '#e2e8f0', fontSize: '14px' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(1502);
+
+    // Follow toggle (rexUI label behaves like a toggle)
+    const followBg = this.add.rectangle(0, 0, 130, 28, 0x0f172a).setStrokeStyle(1, 0x334155);
+    const followText = this.add.text(0, 0, 'Следовать', { color: '#e2e8f0', fontSize: '14px' });
+    this.followToggle = rexUI.add.label({
+      x: 0, y: 0,
+      background: followBg,
+      text: followText,
+      space: { left: 10, right: 10, top: 4, bottom: 4 }
+    }).layout().setScrollFactor(0).setDepth(1500)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        const stars = this.scene.get('StarSystemScene') as any;
+        if (stars?.cameraMgr?.isFollowing?.()) stars.cameraMgr.disableFollow();
+        else stars?.cameraMgr?.enableFollow?.(payload.ship);
+      });
+    this.followToggle.setPosition(sw / 2 + 40, hudY - 40);
+
+    // HULL (HP) bar
+    const hullBg = this.add.rectangle(sw - pad - barW, hudY, barW, barH, 0x1e293b).setOrigin(0, 1).setScrollFactor(0).setDepth(1500);
+    const hullFill = this.add.rectangle(sw - pad - barW + 2, hudY - 2, barW - 4, barH - 4, 0x22c55e).setOrigin(0, 1).setScrollFactor(0).setDepth(1501);
+    this.hullFill = hullFill;
+    const hullValue = this.add.text(sw - pad - barW + 6, hudY - barH / 2, '100', { color: '#0f172a', fontSize: '14px' }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(1502);
+
+    // Ship name and icon (no rotation)
+    const currentId = payload.config.player?.shipId ?? payload.config.ships?.current;
+    const def = currentId ? payload.config.ships?.defs[currentId] : undefined;
+    const shipName = def?.displayName ?? 'Ship';
+    const iconKey = (def?.sprite?.key) ?? (this.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
+    const icon = this.add.image(sw / 2 - 120, hudY - 40, iconKey).setScrollFactor(0).setDepth(1500).setDisplaySize(48, 48);
+    icon.setRotation(0);
+    this.shipIcon = icon;
+    const nameText = this.add.text(sw / 2 - 80, hudY - 40, shipName, { color: '#e2e8f0', fontSize: '16px' }).setScrollFactor(0).setDepth(1500).setOrigin(0, 0.5);
+    this.shipNameText = nameText;
+
+    // store refs for dynamic values
+    (this as any).__hudSpeedValue = speedValue;
+    (this as any).__hudHullValue = hullValue;
+  }
+
+  private updateHUD() {
+    if (!this.configRef) return;
+    // Speed percentage — попробуем определить по смещению MovementManager. Упростим: нет прямого доступа к скорости, оценим по delta позициям последнего кадра (не идеально, но достаточно для UI)
+    const star = this.scene.get('StarSystemScene') as any;
+    const ship = star?.ship as Phaser.GameObjects.Image | undefined;
+    if (ship && this.speedFill) {
+      const mv = this.getMovementConfig();
+      const max = mv?.MAX_SPEED ?? 1;
+      // Храним в объекте временные данные
+      const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
+      const dx = ship.x - prev.x;
+      const dy = ship.y - prev.y;
+      const v = Math.hypot(dx, dy);
+      (ship as any).__prevPos = { x: ship.x, y: ship.y };
+      const pct = Phaser.Math.Clamp(max > 0 ? v / max : 0, 0, 1);
+      this.speedFill.width = (Math.min(520, this.scale.width * 0.4) - 4) * pct;
+      const speedText = (this as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
+      if (speedText) speedText.setText(v.toFixed(2));
+    }
+
+    // HULL percentage (from player's ship def or placeholder)
+    if (this.hullFill && this.configRef) {
+      const id = this.configRef.player?.shipId ?? this.configRef.ships?.current;
+      const baseHull = id ? this.configRef.ships?.defs[id]?.hull ?? 100 : 100;
+      const hull = this.playerHp != null ? this.playerHp : baseHull;
+      const pct = Phaser.Math.Clamp(hull / 100, 0, 1);
+      this.hullFill.width = (Math.min(520, this.scale.width * 0.4) - 4) * pct;
+      const hullText = (this as any).__hudHullValue as Phaser.GameObjects.Text | undefined;
+      if (hullText) hullText.setText(`${Math.round(hull)}`);
+    }
+  }
+
+  // Game Over overlay with rexUI button
+  public showGameOver() {
+    if (this.gameOverGroup) return;
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const overlay = this.add.rectangle(0, 0, width, height, 0x000000, 0.6).setOrigin(0).setScrollFactor(0).setDepth(3000);
+    const title = this.add.text(0, 0, 'Корабль уничтожен', { color: '#ffffff', fontSize: '32px' }).setOrigin(0.5).setScrollFactor(0).setDepth(3001);
+    const btn = (this as any).rexUI.add.label({
+      x: 0, y: 0,
+      background: this.add.rectangle(0, 0, 200, 44, 0x0f172a).setStrokeStyle(1, 0x334155),
+      text: this.add.text(0, 0, 'Перезапуск', { color: '#e2e8f0', fontSize: '18px' }),
+      space: { left: 14, right: 14, top: 8, bottom: 8 }
+    }).layout().setScrollFactor(0).setDepth(3001)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        // Reload scenes
+        const stars = this.scene.get('StarSystemScene');
+        this.scene.stop('UIScene');
+        this.scene.stop('StarSystemScene');
+        this.scene.start('PreloadScene');
+      });
+    title.setPosition(width / 2, height / 2 - 40);
+    btn.setPosition(width / 2, height / 2 + 20);
+    const group = this.add.container(0, 0, [overlay, title, btn]).setDepth(3000);
+    this.gameOverGroup = group;
+  }
+
+  private async toggleSystemMenu() {
+    if (this.systemMenu) { this.systemMenu.destroy(); this.systemMenu = undefined; return; }
+    const sw = this.scale.width; const sh = this.scale.height;
+    const systems = await fetch('/configs/systems.json').then(r=>r.json());
+    const items = Object.entries(systems.defs).map(([id, def]: any) => ({ id, name: def.name }));
+    const bg = this.add.rectangle(sw/2, sh/2, 360, 240, 0x0f172a, 0.95).setScrollFactor(0).setDepth(4000);
+    bg.setStrokeStyle(1, 0x334155);
+    const title = this.add.text(sw/2, sh/2 - 90, 'Смена системы (M)', { color: '#e2e8f0', fontSize: '18px' }).setOrigin(0.5).setDepth(4001).setScrollFactor(0);
+    const buttons: any[] = [];
+    const rex = (this as any).rexUI;
+    items.forEach((it, idx) => {
+      const btn = rex.add.label({ x: sw/2, y: sh/2 - 40 + idx*40, background: this.add.rectangle(0,0,280,30,0x111827).setStrokeStyle(1,0x334155), text: this.add.text(0,0,it.name,{color:'#e2e8f0',fontSize:'14px'}), space:{left:10,right:10,top:6,bottom:6} }).layout().setScrollFactor(0).setDepth(4001)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', async () => {
+          // Смена системы (runtime): сохраняем выбор в localStorage
+          try { localStorage.setItem('sf_selectedSystem', it.id); } catch {}
+          const starScene = this.scene.get('StarSystemScene') as any;
+          starScene.scene.stop('StarSystemScene');
+          starScene.scene.stop('UIScene');
+          starScene.scene.start('PreloadScene');
+        });
+      buttons.push(btn);
+    });
+    this.systemMenu = this.add.container(0,0,[bg,title,...buttons]).setDepth(4000);
   }
 }
 

@@ -5,6 +5,8 @@ import { CameraManager } from '@/sys/CameraManager';
 import { InputManager } from '@/sys/InputManager';
 import { PathfindingManager } from '@/sys/PathfindingManager';
 import { MovementManager } from '@/sys/MovementManager';
+import { CombatManager } from '@/sys/CombatManager';
+import { FogOfWar } from '@/sys/FogOfWar';
 
 export default class StarSystemScene extends Phaser.Scene {
   private config!: ConfigManager;
@@ -13,13 +15,20 @@ export default class StarSystemScene extends Phaser.Scene {
   private inputMgr!: InputManager;
   private pathfinding!: PathfindingManager;
   private movement!: MovementManager;
+  private combat!: CombatManager;
 
-  private ship!: Phaser.GameObjects.Triangle;
+  private ship!: Phaser.GameObjects.Image;
+  private playerHp!: number;
+  private playerHpMax!: number;
   private routeGraphics!: Phaser.GameObjects.Graphics;
   private clickMarker?: Phaser.GameObjects.Arc;
   private planets: { obj: Phaser.GameObjects.Arc; data: any }[] = [];
+  private encounterMarkers: Array<{ id: string; name: string; x: number; y: number; typeId?: string; activationRange?: number; marker: Phaser.GameObjects.GameObject; label: Phaser.GameObjects.Text }>=[];
   private starfield?: Phaser.GameObjects.Graphics;
+  private bgTile?: Phaser.GameObjects.TileSprite;
+  private readonly bgParallax: number = 0.2;
   private aimLine?: Phaser.GameObjects.Graphics;
+  private fog!: FogOfWar;
 
   constructor() {
     super('StarSystemScene');
@@ -29,21 +38,72 @@ export default class StarSystemScene extends Phaser.Scene {
     this.config = new ConfigManager(this);
     await this.config.loadAll();
 
+    // Определяем текущую систему: статичная или процедурная
+    const systemsIndex = (this.cache.json.get('systems_index') as any) ?? await fetch('/configs/systems.json').then(r=>r.json());
+    const systemProfiles = (this.cache.json.get('system_profiles') as any) ?? await fetch('/configs/system_profiles.json').then(r=>r.json());
+    const stored = (()=>{ try { return localStorage.getItem('sf_selectedSystem'); } catch { return null; } })();
+    const currentId = stored || systemsIndex.current;
+    const sysDef = systemsIndex.defs[currentId];
+    if (sysDef?.type === 'procedural') {
+      const { generateSystem } = await import('@/sys/SystemGenerator');
+      const profile = systemProfiles.profiles[sysDef.profile ?? 'default'];
+      this.config.system = generateSystem(profile);
+    } else if (sysDef?.type === 'static' && sysDef.configPath) {
+      // Загрузим указанный статики конфиг
+      this.config.system = await fetch(sysDef.configPath).then(r => r.json());
+    }
+
     this.save = new SaveManager(this, this.config);
     this.cameraMgr = new CameraManager(this, this.config, this.save);
     this.inputMgr = new InputManager(this, this.config);
     this.pathfinding = new PathfindingManager(this, this.config);
     this.movement = new MovementManager(this, this.config);
+    this.combat = new CombatManager(this, this.config);
 
     const system = this.config.system;
-    this.cameras.main.setBounds(0, 0, system.size.width, system.size.height);
+    const maxSize = 25000;
+    const w = Math.min(system.size.width, maxSize);
+    const h = Math.min(system.size.height, maxSize);
+    this.cameras.main.setBounds(0, 0, w, h);
 
-    // Starfield procedural background (semi-transparent)
-    this.starfield = this.add.graphics().setDepth(-10);
+    // Use BackgroundTiler with new texture
+    const { BackgroundTiler } = await import('@/sys/BackgroundTiler');
+    // Back stars layer (farther): lower parallax
+    try { this.textures.get('bg_stars1').setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
+    const stars = new BackgroundTiler(this, 'bg_stars1', -30, 0.6, 1.0, Phaser.BlendModes.SCREEN);
+    stars.init(system.size.width, system.size.height);
+    // Nebula layer on top of stars: stronger parallax
+    const bgKey = this.textures.exists('bg_nebula_blue') ? 'bg_nebula_blue' : 'bg_nebula1';
+    try { this.textures.get(bgKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
+    const nebula = new BackgroundTiler(this, bgKey, -25, 0.8, 0.8, Phaser.BlendModes.SCREEN);
+    nebula.init(system.size.width, system.size.height);
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => { stars.update(); nebula.update(); });
+    // Optional extra starfield
+    this.starfield = this.add.graphics().setDepth(-15);
     this.drawStarfield();
+
+    // Parallax update and resize handling
+    this.events.on(Phaser.Scenes.Events.UPDATE, this.updateBackground, this);
+    this.scale.on('resize', (gameSize: any) => {
+      if (this.bgTile) {
+        this.bgTile.width = gameSize.width;
+        this.bgTile.height = gameSize.height;
+      }
+    });
 
     // Star placeholder
     this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
+    // Draw encounters (POI). Интерпретируем координаты как относительные к центру звезды
+    for (const e of system.poi as any[]) {
+      const ex = system.star.x + (e.x ?? 0);
+      const ey = system.star.y + (e.y ?? 0);
+      const q = this.add.circle(ex, ey, 24, 0x999999, 0.4).setDepth(0.5);
+      const t = this.add.text(ex, ey, '?', { color: '#ffffff', fontSize: '24px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(0.6);
+      const typesArr = (this.config.systemProfiles as any)?.profiles?.default?.encounters?.types as Array<any> | undefined;
+      const type = typesArr?.find((k: any)=>k.name === e.name);
+      const activationRange = (type && typeof type.activation_range === 'number') ? type.activation_range : 400;
+      this.encounterMarkers.push({ id: e.id, name: e.name, x: ex, y: ey, typeId: type?.id, activationRange, marker: q, label: t });
+    }
 
     // Planets placeholders (will rotate)
     for (const p of system.planets) {
@@ -55,11 +115,26 @@ export default class StarSystemScene extends Phaser.Scene {
       ).setDepth(0);
       this.planets.push({ obj: c, data: { ...p, angleDeg: 0 } });
     }
+    // Fog of War setup
+    this.fog = new FogOfWar(this, this.config);
+    this.fog.init();
+    const planetPos = system.planets.map((p) => ({ x: system.star.x + p.orbit.radius, y: system.star.y }));
+    const poiPos = system.poi.map((e: any) => ({ x: system.star.x + (e.x ?? 0), y: system.star.y + (e.y ?? 0) }));
+    this.fog.setStatics({ x: system.star.x, y: system.star.y }, planetPos, poiPos);
 
     // Ship sprite (256x128)
-    const start = this.save.getLastPlayerState() ?? { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
+    const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
+    const cfgStart = this.config.player?.start ?? {} as any;
+    const start = this.save.getLastPlayerState() ?? {
+      x: cfgStart.x ?? fallbackStart.x,
+      y: cfgStart.y ?? fallbackStart.y,
+      headingDeg: cfgStart.headingDeg ?? fallbackStart.headingDeg,
+      zoom: cfgStart.zoom ?? fallbackStart.zoom
+    };
     const shipKey = this.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public';
-    const cfg = this.config.assets.sprites?.ship;
+    const selectedId = this.config.player?.shipId ?? this.config.ships.current;
+    const selected = this.config.ships.defs[selectedId];
+    const cfg = selected?.sprite ?? this.config.assets.sprites?.ship;
     const keyToUse = cfg?.key ?? shipKey;
     this.ship = this.add.image(start.x, start.y, keyToUse) as any;
     const ox = cfg?.origin?.x ?? 0.5;
@@ -73,7 +148,12 @@ export default class StarSystemScene extends Phaser.Scene {
     this.ship.setRotation(Phaser.Math.DegToRad(start.headingDeg) + noseOffsetRad);
 
     this.cameraMgr.enableFollow(this.ship);
-    this.cameraMgr.setZoom(start.zoom ?? 1);
+    this.combat.attachShip(this.ship);
+    this.cameraMgr.setZoom((this.config.player?.start?.zoom ?? start.zoom) ?? 1);
+
+    // Player HP
+    this.playerHpMax = (selected as any)?.hull ?? 100;
+    this.playerHp = this.playerHpMax;
 
     this.routeGraphics = this.add.graphics({ lineStyle: { width: 2, color: 0x4dd2ff, alpha: 0.85 } }).setDepth(0.5);
     this.aimLine = this.add.graphics({}).setDepth(0.6);
@@ -82,6 +162,8 @@ export default class StarSystemScene extends Phaser.Scene {
     // Example (commented until tilemap exists):
     // const navMesh = (this as any).navMeshPlugin.buildFromTileLayer(tilemap, layer, { collisionIndices: [1], debug: { navMesh: false } });
     // this.pathfinding.setNavMesh(navMesh);
+
+    // Врагов не спауним напрямую — они будут привязаны к энкаунтерам (POI)
 
     // Сообщаем другим сценам, что система готова (конфиги загружены, корабль создан)
     this.events.emit('system-ready', { config: this.config, ship: this.ship });
@@ -99,6 +181,7 @@ export default class StarSystemScene extends Phaser.Scene {
       this.drawAimLine();
     };
     this.inputMgr.onRightClick(onSelect);
+    this.combat.bindInput(this.inputMgr);
     // Только правая кнопка ставит цель
 
     // Toggle follow camera (F)
@@ -109,17 +192,34 @@ export default class StarSystemScene extends Phaser.Scene {
     });
 
     this.events.on(Phaser.Scenes.Events.SHUTDOWN, () => {
+      const cam = this.cameras ? this.cameras.main : undefined;
       this.save.setLastPlayerState({
-        x: this.ship.x,
-        y: this.ship.y,
-        headingDeg: Phaser.Math.RadToDeg(this.ship.rotation),
-        zoom: this.cameras.main.zoom
+        x: this.ship?.x ?? 0,
+        y: this.ship?.y ?? 0,
+        headingDeg: Phaser.Math.RadToDeg(this.ship?.rotation ?? 0),
+        zoom: cam?.zoom ?? 1
       });
       this.save.flush();
     });
 
     this.events.on(Phaser.Scenes.Events.UPDATE, this.updateSystem, this);
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
+  }
+
+  public applyDamageToPlayer(amount: number) {
+    this.playerHp = Math.max(0, this.playerHp - amount);
+    this.events.emit('player-damaged', this.playerHp);
+    if (this.playerHp <= 0) {
+      this.gameOver();
+    }
+  }
+
+  private gameOver() {
+    const ui = this.scene.get('UIScene') as any;
+    if (ui?.showGameOver) {
+      ui.showGameOver();
+    }
   }
 
   private drawPath(points: Phaser.Math.Vector2[]) {
@@ -146,8 +246,9 @@ export default class StarSystemScene extends Phaser.Scene {
   }
 
   private updateSystem(_time: number, delta: number) {
-    // Update planets along circular orbits
-    const sys = this.config.system;
+    // Update planets along circular orbits (безопасные проверки при переключении сцен/систем)
+    const sys = this.config?.system as any;
+    if (!sys || !sys.star || !sys.planets) return;
     const dt = delta / 1000;
     for (const pl of this.planets) {
       pl.data.angleDeg = (pl.data.angleDeg + pl.data.orbit.angularSpeedDegPerSec * dt) % 360;
@@ -157,7 +258,7 @@ export default class StarSystemScene extends Phaser.Scene {
       pl.obj.x = px;
       pl.obj.y = py;
       // проксируем текущие координаты планет обратно в конфиг (для миникарты)
-      const confPlanet = sys.planets.find(q => q.id === pl.data.id) as any;
+      const confPlanet = (sys.planets as Array<any>).find((q: any) => q.id === pl.data.id) as any;
       if (confPlanet) { confPlanet._x = px; confPlanet._y = py; }
     }
   }
@@ -181,6 +282,39 @@ export default class StarSystemScene extends Phaser.Scene {
     this.aimLine.strokeCircle(target.x, target.y, 8);
   }
 
+  private updateEncounters() {
+    const ship = this.ship;
+    if (!ship) return;
+    for (const e of this.encounterMarkers) {
+      const d = Math.hypot(e.x - ship.x, e.y - ship.y);
+      if (d <= (e.activationRange ?? 400)) {
+        // Activate encounter: show banner and remove marker
+        this.showEncounterBanner(e.name);
+        e.marker.destroy();
+        e.label.destroy();
+        // spawn by type
+        if (e.typeId === 'lost_treasure') {
+          this.add.rectangle(e.x, e.y, 48, 48, 0xffe066).setDepth(0.4);
+        } else if (e.typeId === 'pirates') {
+          // spawn 3 hostile ships
+          const ids = ['hostile_ship','hostile_ship','hostile_ship'];
+          const offs = [[0,0],[40,20],[-40,-20]];
+          ids.forEach((id, idx)=> this.combat.spawnEnemyFromConfig(id, e.x + offs[idx][0], e.y + offs[idx][1]));
+        }
+        // remove from list
+        this.encounterMarkers = this.encounterMarkers.filter(m => m !== e);
+        break;
+      }
+    }
+  }
+
+  private showEncounterBanner(name: string) {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const banner = this.add.text(w/2, h/2, `Вы нашли: ${name}`, { color: '#ffffff', fontSize: '28px', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(5000);
+    this.tweens.add({ targets: banner, alpha: 0, duration: 2200, ease: 'Sine.easeIn', onComplete: () => banner.destroy() });
+  }
+
   // navmesh удалён — работаем только с кинематическим планированием
 
   private drawStarfield() {
@@ -195,6 +329,13 @@ export default class StarSystemScene extends Phaser.Scene {
       const r = Math.random() * 1.5 + 0.2;
       g.fillCircle(x, y, r);
     }
+  }
+
+  private updateBackground() {
+    if (!this.bgTile) return;
+    const cam = this.cameras.main;
+    this.bgTile.tilePositionX = -cam.scrollX * this.bgParallax;
+    this.bgTile.tilePositionY = -cam.scrollY * this.bgParallax;
   }
 }
 

@@ -46,7 +46,10 @@ export class MovementManager {
     const obj = this.scene.children.getAll().find(o => (o as any)['__moveRef'] === this) as any;
     if (!obj) return;
 
-    const mv = this.config.gameplay.movement;
+    // Параметры движения могут переопределяться выбранным кораблём
+    const selectedId = this.config.ships?.current;
+    const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
+    const mv = selected?.movement ?? this.config.gameplay.movement;
     const noseOffsetRad = Phaser.Math.DegToRad(this.config.assets.sprites?.ship?.noseOffsetDeg ?? 0);
     if (this.headingRad == null) this.headingRad = obj.rotation - noseOffsetRad;
     let speed = this.speed;

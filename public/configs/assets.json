@@ -14,6 +14,10 @@
       "displaySize": { "width": 64, "height": 128 },
       "origin": { "x": 0.5, "y": 0.5 },
       "noseOffsetDeg": 90
+    },
+    "ships": {
+      "explorer": { "key": "ship_explorer", "displaySize": { "width": 96, "height": 192 }, "origin": { "x": 0.5, "y": 0.5 }, "noseOffsetDeg": 90 },
+      "trader": { "key": "ship_trader", "displaySize": { "width": 96, "height": 192 }, "origin": { "x": 0.5, "y": 0.5 }, "noseOffsetDeg": 90 }
     }
   }
 }

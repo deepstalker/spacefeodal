@@ -1,0 +1,94 @@
+{
+  "current": "explorer",
+  "defs": {
+    "explorer": {
+      "displayName": "Explorer",
+      "hull": 3000,
+      "sprite": {
+        "key": "ship_explorer",
+        "displaySize": { "width": 96, "height": 192 },
+        "origin": { "x": 0.5, "y": 0.5 },
+        "noseOffsetDeg": 90
+      },
+      "combat": {
+        "weaponSlots": 3,
+        "accuracy": 0.6,
+        "sensorRadius": 1200,
+        "slots": [
+          { "offset": { "x": -20, "y": -30 } },
+          { "offset": { "x": 0, "y": -40 } },
+          { "offset": { "x": 20, "y": -30 } }
+        ]
+      },
+      "movement": {
+        "MAX_SPEED": 1.0,
+        "ACCELERATION": 0.025,
+        "DECELERATION": 0.08,
+        "TURN_SPEED": 0.02,
+        "SLOWING_RADIUS": 150,
+        "TURN_PENALTY_MULTIPLIER": 1.3,
+        "TURN_DECELERATION_FACTOR": 0.2
+      }
+    },
+    "trader": {
+      "displayName": "Trader",
+      "hull": 140,
+      "sprite": {
+        "key": "ship_trader",
+        "displaySize": { "width": 96, "height": 192 },
+        "origin": { "x": 0.5, "y": 0.5 },
+        "noseOffsetDeg": 90
+      },
+      "combat": {
+        "weaponSlots": 3,
+        "accuracy": 0.5,
+        "sensorRadius": 1400,
+        "slots": [
+          { "offset": { "x": -24, "y": -28 } },
+          { "offset": { "x": 0, "y": -36 } },
+          { "offset": { "x": 24, "y": -28 } }
+        ]
+      },
+      "movement": {
+        "MAX_SPEED": 0.9,
+        "ACCELERATION": 0.02,
+        "DECELERATION": 0.075,
+        "TURN_SPEED": 0.018,
+        "SLOWING_RADIUS": 160,
+        "TURN_PENALTY_MULTIPLIER": 1.2,
+        "TURN_DECELERATION_FACTOR": 0.22
+      }
+    },
+    "fighter": {
+      "displayName": "Fighter",
+      "hull": 80,
+      "sprite": {
+        "key": "ship_alpha",
+        "displaySize": { "width": 64, "height": 128 },
+        "origin": { "x": 0.5, "y": 0.5 },
+        "noseOffsetDeg": 90
+      },
+      "combat": {
+        "weaponSlots": 3,
+        "accuracy": 0.8,
+        "sensorRadius": 1000,
+        "slots": [
+          { "offset": { "x": -18, "y": -32 } },
+          { "offset": { "x": 0, "y": -44 } },
+          { "offset": { "x": 18, "y": -32 } }
+        ]
+      },
+      "movement": {
+        "MAX_SPEED": 1.2,
+        "ACCELERATION": 0.03,
+        "DECELERATION": 0.09,
+        "TURN_SPEED": 0.024,
+        "SLOWING_RADIUS": 140,
+        "TURN_PENALTY_MULTIPLIER": 1.4,
+        "TURN_DECELERATION_FACTOR": 0.18
+      }
+    }
+  }
+}
+
+

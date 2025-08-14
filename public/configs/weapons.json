@@ -1,0 +1,33 @@
+{
+  "defs": {
+    "laser": {
+      "projectile": { "shape": "rect", "width": 8, "height": 2, "color": "#60a5fa" },
+      "hitEffect": { "shape": "circle", "radius": 18, "color": "#93c5fd", "durationMs": 180 },
+      "projectileSpeed": 700,
+      "fireRatePerSec": 4,
+      "damage": 8,
+      "range": 900,
+      "muzzleOffset": { "x": 0, "y": -40 }
+    },
+    "cannon": {
+      "projectile": { "shape": "circle", "radius": 5, "color": "#fde047" },
+      "hitEffect": { "shape": "circle", "radius": 26, "color": "#fbbf24", "durationMs": 220 },
+      "projectileSpeed": 500,
+      "fireRatePerSec": 2,
+      "damage": 16,
+      "range": 800,
+      "muzzleOffset": { "x": -20, "y": -30 }
+    },
+    "missile": {
+      "projectile": { "shape": "circle", "radius": 7, "color": "#f87171" },
+      "hitEffect": { "shape": "circle", "radius": 32, "color": "#ef4444", "durationMs": 260 },
+      "projectileSpeed": 420,
+      "fireRatePerSec": 1,
+      "damage": 26,
+      "range": 1000,
+      "muzzleOffset": { "x": 20, "y": -30 }
+    }
+  }
+}
+
+

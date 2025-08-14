@@ -16,8 +16,15 @@ export class MinimapManager {
   }
 
   init(containerX: number, containerY: number) {
-    this.worldW = this.config.system.size.width;
-    this.worldH = this.config.system.size.height;
+    const sys = (this.config as any)?.system;
+    if (sys?.size) {
+      this.worldW = sys.size.width;
+      this.worldH = sys.size.height;
+    } else {
+      // безопасные дефолты до инициализации системы
+      this.worldW = 5000;
+      this.worldH = 5000;
+    }
     this.g = this.scene.add.graphics();
     this.g.setScrollFactor(0).setDepth(1000);
     // Используем локальные координаты, а смещение применяем при рисовании
@@ -34,7 +41,18 @@ export class MinimapManager {
     if (!this.g) return;
     const x = (this.g as any)._mx ?? 0;
     const y = (this.g as any)._my ?? 0;
-    const sys = this.config.system;
+    const sys = (this.config as any)?.system;
+    if (!sys) {
+      // пока система не готова — рисуем только фон рамки
+      this.g.clear();
+      const x = (this.g as any)._mx ?? 0;
+      const y = (this.g as any)._my ?? 0;
+      this.g.fillStyle(0x000000, 0.6);
+      this.g.fillRect(x - 4, y - 4, this.width + 8, this.height + 8);
+      this.g.lineStyle(1, 0x99aaff);
+      this.g.strokeRect(x, y, this.width, this.height);
+      return;
+    }
     const scaleX = this.width / this.worldW;
     const scaleY = this.height / this.worldH;
     this.g.clear();
@@ -44,24 +62,51 @@ export class MinimapManager {
     this.g.lineStyle(1, 0x99aaff);
     this.g.strokeRect(x, y, this.width, this.height);
 
-    // Star
+    // Clipping to minimap rect
+    const clipX = x, clipY = y, clipW = this.width, clipH = this.height;
+    const inRect = (wx: number, wy: number) => wx >= 0 && wy >= 0 && wx <= this.worldW && wy <= this.worldH;
+    const toScreen = (wx: number, wy: number) => ({ sx: clipX + wx * scaleX, sy: clipY + wy * scaleY });
+
+    // Star (bigger marker)
     this.g.fillStyle(0xffcc00, 1);
-    this.g.fillCircle(x + sys.star.x * scaleX, y + sys.star.y * scaleY, 2);
+    if (inRect(sys.star.x, sys.star.y)) {
+      const { sx, sy } = toScreen(sys.star.x, sys.star.y);
+      this.g.fillCircle(sx, sy, 4);
+    }
 
     // Planets
     for (const p of sys.planets) {
       // Берём текущие мировые координаты планет, если StarSystemScene их обновляет и проксирует в config
       const px = (p as any)._x ?? (sys.star.x + p.orbit.radius);
       const py = (p as any)._y ?? sys.star.y;
-      this.g.fillStyle(0x88f, 1);
-      this.g.fillRect(x + px * scaleX - 1, y + py * scaleY - 1, 2, 2);
+      if (inRect(px, py)) {
+        const { sx, sy } = toScreen(px, py);
+        this.g.fillStyle(0x88aaff, 1);
+        this.g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+      }
+    }
+
+    // Encounters (POI) — relative to star center
+    if (Array.isArray(sys.poi)) {
+      for (const e of sys.poi) {
+        const ex = sys.star.x + ((e as any).x ?? 0);
+        const ey = sys.star.y + ((e as any).y ?? 0);
+        if (inRect(ex, ey)) {
+          const { sx, sy } = toScreen(ex, ey);
+          this.g.fillStyle(0xf0e68c, 1);
+          this.g.fillCircle(sx, sy, 3.5);
+        }
+      }
     }
 
     // Ship
     if (this.shipRef) {
       const s: any = this.shipRef;
-      this.g.fillStyle(0x7fd1f3, 1);
-      this.g.fillRect(x + s.x * scaleX - 1, y + s.y * scaleY - 1, 2, 2);
+      if (inRect(s.x, s.y)) {
+        const { sx, sy } = toScreen(s.x, s.y);
+        this.g.fillStyle(0x7fd1f3, 1);
+        this.g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+      }
     }
 
     // Camera viewport rectangle (use world camera from StarSystemScene, not UI camera)

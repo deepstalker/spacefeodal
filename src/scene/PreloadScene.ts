@@ -29,6 +29,10 @@ export default class PreloadScene extends Phaser.Scene {
       sizer.destroy();
     });
 
+    // Загрузка ассетов и конфигов
+    this.load.json('systems_index', '/configs/systems.json');
+    this.load.json('system_profiles', '/configs/system_profiles.json');
+
     // Загрузка ассетов: сначала пробуем из src/assets через ESM URL, затем public fallback
     // Пробуем загрузить из src (ESM) и из public (fallback)
     try {
@@ -40,6 +44,13 @@ export default class PreloadScene extends Phaser.Scene {
       /* noop */
     }
     this.load.image('ship_alpha_public', '/assets/ships/alpha/alpha_image.png');
+    // New ship variants
+    this.load.image('ship_explorer', '/assets/ships/alpha/explorer_ship.jpg');
+    this.load.image('ship_trader', '/assets/ships/alpha/trader_ship.jpg');
+    // Background tiles
+    this.load.image('bg_nebula1', '/assets/Blue Nebula 1 - 1024x1024.png');
+    this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');
+    this.load.image('bg_stars1', '/assets/Stars-Big_1_1_PC.png');
   }
 
   create() {

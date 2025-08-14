@@ -9,12 +9,14 @@ const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'app',
   backgroundColor: '#0b0f1a',
+  resolution: Math.max(1, (window.devicePixelRatio as number) || 1),
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 1920,
     height: 1080
   },
+  render: { antialias: true, pixelArt: false, roundPixels: false },
   plugins: { scene: [ { key: 'rexUI', plugin: UIPlugin, mapping: 'rexUI' } ] },
   scene: [BootScene, PreloadScene, StarSystemScene, UIScene]
 };

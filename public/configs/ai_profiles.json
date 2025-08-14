@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "static": { "preferRange": 0, "retreatHpPct": 0, "speed": 0, "disposition": "neutral" },
+    "aggressive": { "preferRange": 700, "retreatHpPct": 0.5, "speed": 110, "disposition": "enemy" }
+  }
+}
+
+

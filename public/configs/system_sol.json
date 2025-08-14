@@ -1,0 +1,17 @@
+{
+  "size": { "width": 25000, "height": 25000 },
+  "star": { "x": 12500, "y": 12500 },
+  "planets": [
+    { "id": "pl_1", "name": "Red 1",  "orbit": { "radius": 3200,  "angularSpeedDegPerSec": 6.5 },  "color": "#ff6666" },
+    { "id": "pl_2", "name": "Blue 2", "orbit": { "radius": 5200,  "angularSpeedDegPerSec": 4.8 },  "color": "#66aaff" },
+    { "id": "pl_3", "name": "Red 3",  "orbit": { "radius": 7100,  "angularSpeedDegPerSec": 3.9 },  "color": "#ff6666" },
+    { "id": "pl_4", "name": "Blue 4", "orbit": { "radius": 9100,  "angularSpeedDegPerSec": 3.0 },  "color": "#66aaff" }
+  ],
+  "poi": [
+    { "id": "enc_0", "name": "Пираты", "x": 13000, "y": 9200, "discovered": false },
+    { "id": "enc_1", "name": "Потерянное сокровище", "x": 7000, "y": 14000, "discovered": false }
+  ],
+  "dynamicObjects": []
+}
+
+
