@@ -14,7 +14,7 @@ export class FogOfWar {
 
   init() {
     this.overlay = this.scene.add.graphics().setDepth(999).setScrollFactor(1);
-    this.overlay.setBlendMode(Phaser.BlendModes.MULTIPLY);
+    this.overlay.setBlendMode(Phaser.BlendModes.NORMAL);
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.render, this);
   }
 
@@ -35,20 +35,17 @@ export class FogOfWar {
     const cam = this.scene.cameras.main;
     const vw = cam.worldView;
     // Dim background slightly
+    g.setBlendMode(Phaser.BlendModes.NORMAL);
     g.fillStyle(0x000000, 0.25);
     g.fillRect(vw.x, vw.y, vw.width, vw.height);
 
     // Soft erase helper
     const eraseSoft = (x: number, y: number, r: number) => {
-      g.save();
-      g.beginPath();
+      // Erase by drawing circle in ERASE mode, then switch back
+      g.setBlendMode(Phaser.BlendModes.ERASE);
       g.fillStyle(0xffffff, 1);
       g.fillCircle(x, y, r);
-      g.restore();
-      // Use erase by setting blend mode
-      g.setBlendMode(Phaser.BlendModes.ERASE);
-      g.fillCircle(x, y, r);
-      g.setBlendMode(Phaser.BlendModes.MULTIPLY);
+      g.setBlendMode(Phaser.BlendModes.NORMAL);
     };
 
     // Always visible: star/planets/POI

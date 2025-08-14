@@ -128,8 +128,10 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Spawn NPCs from system config
     const dwellers = (system as any).npcs as Array<any> | undefined;
+    console.debug('NPC config', dwellers);
     if (Array.isArray(dwellers)) {
       for (const d of dwellers) {
+        console.debug('Spawning NPC', d);
         if (d.x != null && d.y != null) {
           // explicit coordinates
           const npc = (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y) as any;
