@@ -123,10 +123,8 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Spawn NPCs from system config
     const dwellers = (system as any).npcs as Array<any> | undefined;
-    console.log('[NPC] Config array:', dwellers);
     if (Array.isArray(dwellers)) {
       for (const d of dwellers) {
-        console.log('[NPC] Spawning from system config', d);
         if (d.x != null && d.y != null) {
           // explicit coordinates
           const npc = (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y) as any;
@@ -135,14 +133,11 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
             (npc as any).__targetPlanet = this.pickNearestPlanet(npc.x, npc.y) ?? this.pickRandomPlanet();
             (npc as any).__state = 'travel';
-            (npc as any).__dockLockUntil = this.time.now + 8000; // avoid instant docking
             (npc as any).setAlpha?.(1);
             this.npcs.push(npc);
             const sx = (npc as any).scaleX ?? 1;
             const sy = (npc as any).scaleY ?? 1;
             this.tweens.add({ targets: npc, scaleX: { from: sx * 0.6, to: sx }, scaleY: { from: sy * 0.6, to: sy }, duration: 250, ease: 'Sine.easeOut' });
-            const mark = this.add.circle(npc.x, npc.y, 10, 0xff00ff, 0.7).setDepth(2000).setScrollFactor(1);
-            this.tweens.add({ targets: mark, alpha: 0, duration: 1200, onComplete: () => mark.destroy() });
           }
         } else if (d.planetId) {
           const planet = system.planets.find(p => p.id === d.planetId);
@@ -158,14 +153,11 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
             (npc as any).__targetPlanet = planet;
             (npc as any).__state = 'travel';
-            (npc as any).__dockLockUntil = this.time.now + 8000;
             (npc as any).setAlpha?.(1);
             this.npcs.push(npc);
             const sx2 = (npc as any).scaleX ?? 1;
             const sy2 = (npc as any).scaleY ?? 1;
             this.tweens.add({ targets: npc, scaleX: { from: sx2 * 0.6, to: sx2 }, scaleY: { from: sy2 * 0.6, to: sy2 }, duration: 250, ease: 'Sine.easeOut' });
-            const mark = this.add.circle(npc.x, npc.y, 10, 0xff00ff, 0.7).setDepth(2000).setScrollFactor(1);
-            this.tweens.add({ targets: mark, alpha: 0, duration: 1200, onComplete: () => mark.destroy() });
           }
         }
       }
@@ -174,24 +166,17 @@ export default class StarSystemScene extends Phaser.Scene {
     // Ensure at least one trader near the star in every system
     const nearX = system.star.x + 300;
     const nearY = system.star.y - 180;
-    console.log('[NPC] Spawning guaranteed trader near star at', nearX, nearY);
     const near = (this.combat as any).spawnNPCPrefab('trader', nearX, nearY) as any;
     if (near) {
       const pref = this.config.stardwellers?.prefabs?.['trader'];
       (near as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
-      (near as any).__targetPlanet = this.pickNearestPlanet(near.x, near.y) ?? this.pickRandomPlanet();
+      (near as any).__targetPlanet = this.pickRandomPlanet();
       (near as any).__state = 'travel';
-      (near as any).__dockLockUntil = this.time.now + 8000;
       (near as any).setAlpha?.(1);
       this.npcs.push(near);
       const nsx = (near as any).scaleX ?? 1;
       const nsy = (near as any).scaleY ?? 1;
       this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
-      console.log('[NPC] Guaranteed trader spawned and registered', { x: near.x, y: near.y, state: (near as any).__state });
-      const m = this.add.circle(nearX, nearY, 18, 0x00ff00, 0.6).setDepth(3000).setScrollFactor(1);
-      this.tweens.add({ targets: m, alpha: 0, duration: 1500, onComplete: () => m.destroy() });
-    } else {
-      console.log('[NPC] Failed to spawn guaranteed trader near star');
     }
 
     // Ship sprite (256x128)
@@ -419,7 +404,7 @@ export default class StarSystemScene extends Phaser.Scene {
         const speed = 120;
         o.x += Math.cos(heading) * speed * dt;
         o.y += Math.sin(heading) * speed * dt;
-        if (dist < dockRange && (!((o as any).__dockLockUntil) || this.time.now > (o as any).__dockLockUntil)) {
+        if (dist < dockRange) {
           // Start docking
           (o as any).__state = 'docking';
           const dur = 3000 + Math.random() * 1000;

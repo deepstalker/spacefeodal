@@ -34,10 +34,7 @@ export class CombatManager {
     const prefab = this.config.stardwellers?.prefabs?.[prefabKey];
     const shipDefId = prefab?.shipId ?? prefabKey; // allow direct ship id fallback
     const ship = this.config.ships.defs[shipDefId] ?? this.config.ships.defs[this.config.ships.current];
-    if (!ship) {
-      console.log('[NPC] Ship def not found for', shipDefId, 'prefabKey=', prefabKey);
-      return null;
-    }
+    if (!ship) { return null; }
     let obj: any;
     const s = ship.sprite;
     const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
@@ -63,7 +60,6 @@ export class CombatManager {
     const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId };
     if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);
-    console.log('[NPC] Spawned', prefabKey, 'at', x, y, 'shipId=', entry.shipId);
     return obj as Target;
   }
 
