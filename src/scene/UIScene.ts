@@ -153,21 +153,20 @@ export default class UIScene extends Phaser.Scene {
       });
     this.followToggle.setPosition(sw / 2 + 40, hudY - 40);
 
-    // HULL (HP) bar
-    const hullBg = this.add.rectangle(sw - pad - barW, hudY, barW, barH, 0x1e293b).setOrigin(0, 1).setScrollFactor(0).setDepth(1500);
-    const hullFill = this.add.rectangle(sw - pad - barW + 2, hudY - 2, barW - 4, barH - 4, 0x22c55e).setOrigin(0, 1).setScrollFactor(0).setDepth(1501);
-    this.hullFill = hullFill;
-    const hullValue = this.add.text(sw - pad - barW + 6, hudY - barH / 2, '100', { color: '#0f172a', fontSize: '14px' }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(1502);
+    // HP bar перенесён на оружейную панель (создаётся в createWeaponBar)
 
     // Ship name and icon (no rotation)
     const currentId = payload.config.player?.shipId ?? payload.config.ships?.current;
     const def = currentId ? payload.config.ships?.defs[currentId] : undefined;
     const shipName = def?.displayName ?? 'Ship';
     const iconKey = (def?.sprite?.key) ?? (this.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
-    const icon = this.add.image(sw / 2 - 120, hudY - 40, iconKey).setScrollFactor(0).setDepth(1500).setDisplaySize(48, 48);
+    // Переносим иконку корабля в правый нижний угол
+    const icon = this.add.image(sw - pad - 24, hudY - 24, iconKey).setScrollFactor(0).setDepth(1500).setDisplaySize(48, 48);
+    icon.setOrigin(1, 1);
     icon.setRotation(0);
     this.shipIcon = icon;
-    const nameText = this.add.text(sw / 2 - 80, hudY - 40, shipName, { color: '#e2e8f0', fontSize: '16px' }).setScrollFactor(0).setDepth(1500).setOrigin(0, 0.5);
+    // Имя корабля рядом слева от иконки
+    const nameText = this.add.text(sw - pad - 24 - 8, hudY - 24 - 24, shipName, { color: '#e2e8f0', fontSize: '16px' }).setScrollFactor(0).setDepth(1500).setOrigin(1, 0.5);
     this.shipNameText = nameText;
 
     // store refs for dynamic values
@@ -184,7 +183,7 @@ export default class UIScene extends Phaser.Scene {
     // Weapon panel rectangle 800x128, 40px above bottom edge
     const panelW = 800; const panelH = 128;
     const panelX = (sw - panelW) / 2; const panelY = sh - 40 - panelH;
-    this.weaponPanel = this.add.rectangle(panelX, panelY, panelW, panelH, 0x000000, 0).setOrigin(0,0).setScrollFactor(0).setDepth(1499);
+    this.weaponPanel = this.add.rectangle(panelX, panelY, panelW, panelH, 0x2c2a2d, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1499);
     this.weaponPanel.setStrokeStyle(2, outline, 1);
 
     const cx = sw / 2; const cy = panelY; // place slots so their centers lie on panel top edge
@@ -229,7 +228,7 @@ export default class UIScene extends Phaser.Scene {
     // HP bar inside panel bottom area (614x30) with outline and custom colors
     const hpW = this.hullBarWidth; const hpH = 30;
     const hpX = panelX + (panelW - hpW) / 2;
-    const hpY = panelY + panelH - 10 - hpH; // 10px padding from bottom of panel
+    const hpY = panelY + panelH - 30 - hpH; // подняли на 20px выше
     const hpOutline = this.add.rectangle(hpX, hpY, hpW, hpH, 0x000000, 0).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
     hpOutline.setStrokeStyle(2, outline, 1);
     const hpBg = this.add.rectangle(hpX, hpY, hpW, hpH, 0x1E3A2B, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
