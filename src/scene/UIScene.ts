@@ -18,6 +18,8 @@ export default class UIScene extends Phaser.Scene {
   private shipNameText?: Phaser.GameObjects.Text;
   private shipIcon?: Phaser.GameObjects.Image;
   private weaponSlotsContainer?: Phaser.GameObjects.Container;
+  private weaponPanel?: Phaser.GameObjects.Rectangle;
+  private hullBarWidth: number = 614;
   private gameOverGroup?: Phaser.GameObjects.Container;
   private systemMenu?: any;
   constructor() {
@@ -179,7 +181,13 @@ export default class UIScene extends Phaser.Scene {
     const slotSize = 96; const slotBgColor = 0x2c2a2d; const outline = 0xA28F6E;
     const container = this.add.container(0, 0).setDepth(1500);
     container.setScrollFactor(0);
-    const cx = sw / 2; const cy = sh - pad - 110;
+    // Weapon panel rectangle 800x128, 40px above bottom edge
+    const panelW = 800; const panelH = 128;
+    const panelX = (sw - panelW) / 2; const panelY = sh - 40 - panelH;
+    this.weaponPanel = this.add.rectangle(panelX, panelY, panelW, panelH, 0x000000, 0).setOrigin(0,0).setScrollFactor(0).setDepth(1499);
+    this.weaponPanel.setStrokeStyle(2, outline, 1);
+
+    const cx = sw / 2; const cy = panelY; // place slots so their centers lie on panel top edge
     const spacing = 8;
     const totalW = 6 * slotSize + 5 * spacing;
     const startX = cx - totalW / 2;
@@ -188,7 +196,7 @@ export default class UIScene extends Phaser.Scene {
     const rarityMap = (this.configRef.items?.rarities ?? {}) as any;
     for (let i = 0; i < 6; i++) {
       const x = startX + i * (slotSize + spacing);
-      const y = cy;
+      const y = cy - slotSize / 2;
       // base slot background
       const slotBg = this.add.rectangle(x, y, slotSize, slotSize, slotBgColor, 1).setOrigin(0, 0).setDepth(1500).setScrollFactor(0);
       slotBg.setStrokeStyle(2, outline, 1);
@@ -209,14 +217,26 @@ export default class UIScene extends Phaser.Scene {
           container.add(img);
         }
       }
-      // number badge (top-left)
-      const badge = this.add.rectangle(x + 4, y + 4, 32, 32, 0x2c2a2d, 1).setOrigin(0, 0).setDepth(1502).setScrollFactor(0);
+      // number badge (bottom-left)
+      const badge = this.add.rectangle(x + 4, y + slotSize - 4 - 32, 32, 32, 0x2c2a2d, 1).setOrigin(0, 0).setDepth(1502).setScrollFactor(0);
       badge.setStrokeStyle(1, outline, 1);
-      const num = this.add.text(x + 4 + 16, y + 4 + 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
+      const num = this.add.text(x + 4 + 16, y + slotSize - 4 - 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
       container.add(badge);
       container.add(num);
     }
     this.weaponSlotsContainer = container;
+
+    // HP bar inside panel bottom area (614x30) with outline and custom colors
+    const hpW = this.hullBarWidth; const hpH = 30;
+    const hpX = panelX + (panelW - hpW) / 2;
+    const hpY = panelY + panelH - 10 - hpH; // 10px padding from bottom of panel
+    const hpOutline = this.add.rectangle(hpX, hpY, hpW, hpH, 0x000000, 0).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
+    hpOutline.setStrokeStyle(2, outline, 1);
+    const hpBg = this.add.rectangle(hpX, hpY, hpW, hpH, 0x1E3A2B, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
+    const hpFill = this.add.rectangle(hpX + 2, hpY + 2, hpW - 4, hpH - 4, 0x1E8449, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1501);
+    this.hullFill = hpFill;
+    const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#e2e8f0', fontSize: '14px' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
+    (this as any).__hudHullValue = hpText;
   }
 
   private updateHUD() {
