@@ -101,73 +101,10 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Star placeholder
     this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
-    // Pirate base (top-left corner) visual and logic
-    const baseX = Math.max(200, system.size.width * 0.08);
-    const baseY = Math.max(200, system.size.height * 0.08);
-    const pirateBase = this.add.rectangle(baseX, baseY, 420, 420, 0x7f1d1d).setDepth(0.2);
-    const baseLabel = this.add.text(baseX, baseY, 'Пиратская база', { color: '#fca5a5', fontSize: '20px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(0.21);
-    ;(pirateBase as any).__hp = 5000;
-    ;(pirateBase as any).__alive = true;
-    // simple base weapon: shoot at nearest enemy within 1200
-    const baseRadar = 1400;
-    const baseFireCooldownMs = 600;
-    let baseLastShot = 0;
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      if (!(pirateBase as any).__alive) return;
-      // acquire nearest non-pirate target in radar
-      const cm: any = (this as any).combat;
-      const now = this.time.now;
-      const near = cm?.getTargetObjects?.().find(() => true);
-      let best: any = null; let bestD = Number.POSITIVE_INFINITY;
-      for (const t of (cm?.targets ?? [])) {
-        if (!t.obj?.active) continue;
-        if (t.faction === 'pirate') continue;
-        const d = Phaser.Math.Distance.Between(baseX, baseY, (t.obj as any).x, (t.obj as any).y);
-        if (d < bestD && d <= baseRadar) { best = t.obj; bestD = d; }
-      }
-      if (best && now - baseLastShot > baseFireCooldownMs) {
-        baseLastShot = now;
-        // simple bullet
-        const ang = Math.atan2((best as any).y - baseY, (best as any).x - baseX);
-        const proj = this.add.rectangle(baseX, baseY, 12, 4, 0xff6666).setDepth(0.25);
-        const spd = 900; const vx = Math.cos(ang) * spd; const vy = Math.sin(ang) * spd;
-        const onUpd = (_tt:number, dtt:number) => {
-          (proj as any).x += vx * (dtt/1000);
-          (proj as any).y += vy * (dtt/1000);
-          const dd = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, (best as any).x, (best as any).y);
-          if (dd < 30 && (best as any).active) {
-            // apply damage via CombatManager
-            const cm2: any = (this as any).combat;
-            cm2?.applyDamage?.(best, 20, pirateBase);
-            this.events.off(Phaser.Scenes.Events.UPDATE, onUpd);
-            proj.destroy();
-          }
-        };
-        this.events.on(Phaser.Scenes.Events.UPDATE, onUpd);
-        this.time.delayedCall(2000, () => { this.events.off(Phaser.Scenes.Events.UPDATE, onUpd); proj.destroy(); });
-      }
-    });
-    // spawn wave every minute; pirates live 2 minutes then return & dock
-    const waveIntervalMs = 60000; const pirateLifetimeMs = 120000;
-    const spawnWave = () => {
-      if (!(pirateBase as any).__alive) return;
-      const offs = [[-220,-240],[-260,180],[240,-200],[200,260],[0,-280]];
-      for (let i = 0; i < 5; i++) {
-        const ox = baseX + offs[i % offs.length][0];
-        const oy = baseY + offs[i % offs.length][1];
-        const npc = (this.combat as any).spawnNPCPrefab('pirate', ox, oy) as any;
-        if (!npc) continue;
-        (npc as any).__behavior = 'patrol';
-        (npc as any).__targetPatrol = null;
-        ;(npc as any).__despawnAt = this.time.now + pirateLifetimeMs;
-        // mark base home
-        ;(npc as any).__homeBase = pirateBase;
-        ;(npc as any).__returningHome = false;
-        this.npcs.push(npc);
-      }
-    };
-    this.time.delayedCall(6000, spawnWave); // first wave with small delay after load
-    this.time.addEvent({ delay: waveIntervalMs, loop: true, callback: spawnWave });
+    // Stations manager
+    const { SpaceStationManager } = await import('@/sys/SpaceStationManager');
+    const stationMgr = new SpaceStationManager(this as any, this.config);
+    stationMgr.init();
     // Draw encounters (POI). Интерпретируем координаты как относительные к центру звезды
     for (const e of system.poi as any[]) {
       const ex = system.star.x + (e.x ?? 0);

@@ -35,6 +35,7 @@ export type SystemConfig = {
   planets: Array<{ id: string; name: string; orbit: { radius: number; angularSpeedDegPerSec: number }; color?: string }>;
   poi: Array<{ id: string; name: string; x: number; y: number; discovered: boolean }>;
   dynamicObjects: Array<{ id: string; type: string; x: number; y: number; vx: number; vy: number }>;
+  stations?: Array<{ type: 'pirate_base' | string; x: number; y: number; wave?: { initialDelayMs?: number; intervalMs?: number; count?: number; lifespanMs?: number } }>;
 };
 
 export type SystemsIndexConfig = {
