@@ -98,6 +98,8 @@ export type ShipConfig = {
 
 export type WeaponsConfig = {
   defs: Record<string, {
+    icon?: string;
+    rarity?: string;
     projectile: any;
     hitEffect: any;
     projectileSpeed: number;

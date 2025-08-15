@@ -21,6 +21,7 @@ export default class UIScene extends Phaser.Scene {
   private weaponPanel?: Phaser.GameObjects.Rectangle;
   private hullBarWidth: number = 614;
   private hullRect?: { x: number; y: number; w: number; h: number };
+  private uiTextResolution: number = 1;
   private gameOverGroup?: Phaser.GameObjects.Container;
   private systemMenu?: any;
   constructor() {
@@ -28,10 +29,13 @@ export default class UIScene extends Phaser.Scene {
   }
 
   create() {
+    this.uiTextResolution = Math.max(1, Math.min(3, Math.ceil((window.devicePixelRatio as number) || 1)));
     // improve crispness for UI text
     try { this.cameras.main.setRoundPixels(true); } catch {}
-    const label = this.add.text(16, 16, 'SF A2', { color: '#a0b4ff', fontFamily: 'HooskaiChamferedSquare', fontSize: '24px' }).setScrollFactor(0).setDepth(1000);
-    this.debugText = this.add.text(16, 40, '', { color: '#99ff99' }).setScrollFactor(0).setDepth(1000);
+    const label = this.add.text(16, 16, 'SF A2', { color: '#F5F0E9', fontFamily: 'HooskaiChamferedSquare', fontSize: '24px' }).setScrollFactor(0).setDepth(1000);
+    try { (label as any).setResolution?.(this.uiTextResolution); } catch {}
+    this.debugText = this.add.text(16, 40, '', { color: '#F5F0E9' }).setScrollFactor(0).setDepth(1000);
+    try { (this.debugText as any).setResolution?.(this.uiTextResolution); } catch {}
 
     // Миникарта: ждём готовности StarSystemScene
     const starScene = this.scene.get('StarSystemScene') as Phaser.Scene & any;
@@ -128,14 +132,16 @@ export default class UIScene extends Phaser.Scene {
     const hudY = sh - pad;
 
     // Speed numeric readout
-    const speedValue = this.add.text(pad + 6, hudY - 26, '0 U/S', { color: '#e2e8f0', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0, 1).setScrollFactor(0).setDepth(1502);
+    const speedValue = this.add.text(pad + 6, hudY - 26, '0 U/S', { color: '#F5F0E9', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0, 1).setScrollFactor(0).setDepth(1502);
+    try { (speedValue as any).setResolution?.(this.uiTextResolution); } catch {}
     this.speedText = speedValue;
     // underline under speed text (60x2)
     const underline = this.add.rectangle(pad + 6 + 30, hudY - 22, 60, 2, 0xA28F6E).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1502);
 
     // Follow toggle (rexUI label behaves like a toggle)
     const followBg = this.add.rectangle(0, 0, 130, 28, 0x0f172a).setStrokeStyle(1, 0x334155);
-    const followText = this.add.text(0, 0, 'Следовать', { color: '#e2e8f0', fontSize: '14px' });
+    const followText = this.add.text(0, 0, 'Следовать', { color: '#F5F0E9', fontSize: '14px' });
+    try { (followText as any).setResolution?.(this.uiTextResolution); } catch {}
     this.followToggle = rexUI.add.label({
       x: 0, y: 0,
       background: followBg,
@@ -164,7 +170,8 @@ export default class UIScene extends Phaser.Scene {
     icon.setRotation(0);
     this.shipIcon = icon;
     // Имя корабля рядом слева от иконки
-    const nameText = this.add.text(sw - pad - 24 - 8, hudY - 24 - 24, shipName, { color: '#e2e8f0', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setScrollFactor(0).setDepth(1500).setOrigin(1, 0.5);
+    const nameText = this.add.text(sw - pad - 24 - 8, hudY - 24 - 24, shipName, { color: '#F5F0E9', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setScrollFactor(0).setDepth(1500).setOrigin(1, 0.5);
+    try { (nameText as any).setResolution?.(this.uiTextResolution); } catch {}
     this.shipNameText = nameText;
 
     // store refs for dynamic values
@@ -200,12 +207,12 @@ export default class UIScene extends Phaser.Scene {
       // rarity underlay (94x94 inside with 75% alpha)
       const key = playerSlots[i];
       if (key && defs[key]) {
-        const rarityKey = defs[key].rarity as string | undefined;
+        const rarityKey = (defs[key] as any).rarity as string | undefined;
         const rarityColorHex = rarityKey && rarityMap[rarityKey]?.color ? Number(rarityMap[rarityKey].color.replace('#','0x')) : 0x000000;
         const under = this.add.rectangle(x + 1, y + 1, slotSize - 2, slotSize - 2, rarityColorHex, 0.75).setOrigin(0, 0).setDepth(1500).setScrollFactor(0);
         container.add(under);
         // icon fit
-        const iconKey = defs[key].icon ?? key;
+        const iconKey = (defs[key] as any).icon ?? key;
         if (this.textures.exists(iconKey)) {
           try { this.textures.get(iconKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
           const img = this.add.image(x + slotSize/2, y + slotSize/2, iconKey).setDepth(1501).setScrollFactor(0);
@@ -216,7 +223,8 @@ export default class UIScene extends Phaser.Scene {
       // number badge (bottom-left)
       const badge = this.add.rectangle(x + 4, y + slotSize - 4 - 32, 32, 32, 0x2c2a2d, 1).setOrigin(0, 0).setDepth(1502).setScrollFactor(0);
       badge.setStrokeStyle(1, outline, 1);
-      const num = this.add.text(x + 4 + 16, y + slotSize - 4 - 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
+      const num = this.add.text(x + 4 + 16, y + slotSize - 4 - 16, `${i + 1}`, { color: '#F5F0E9', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
+      try { (num as any).setResolution?.(this.uiTextResolution); } catch {}
       container.add(badge);
       container.add(num);
     }
@@ -231,7 +239,8 @@ export default class UIScene extends Phaser.Scene {
     const hpBg = this.add.rectangle(hpX, hpY, hpW, hpH, 0x1E3A2B, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
     const hpFill = this.add.rectangle(hpX + 2, hpY + 2, hpW - 4, hpH - 4, 0x1E8449, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1501);
     this.hullFill = hpFill;
-    const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#e2e8f0', fontSize: '14px', fontFamily: 'Request' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
+    const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#F5F0E9', fontSize: '14px', fontFamily: 'Request' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
+    try { (hpText as any).setResolution?.(this.uiTextResolution); } catch {}
     (this as any).__hudHullValue = hpText;
     this.hullRect = { x: hpX, y: hpY, w: hpW, h: hpH };
   }

@@ -9,7 +9,6 @@ const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'app',
   backgroundColor: '#0b0f1a',
-  resolution: Math.max(1, (window.devicePixelRatio as number) || 1),
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
