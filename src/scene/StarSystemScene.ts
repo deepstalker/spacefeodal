@@ -378,6 +378,20 @@ export default class StarSystemScene extends Phaser.Scene {
     }
   }
 
+  private getPlanetWorldPosById(id: string): { x: number; y: number } | null {
+    const rec = this.planets.find(p => (p as any).data?.id === id);
+    if (rec && rec.obj) return { x: rec.obj.x, y: rec.obj.y };
+    // fallback to config proxy values
+    const sys: any = this.config?.system;
+    const confPlanet = (sys?.planets as any[])?.find((p: any) => p.id === id);
+    if (confPlanet) {
+      const x = confPlanet._x ?? (sys.star.x + confPlanet.orbit.radius);
+      const y = confPlanet._y ?? sys.star.y;
+      return { x, y };
+    }
+    return null;
+  }
+
   private updatePatrolNPCs(deltaMs: number) {
     const dt = deltaMs / 1000;
     const sys = this.config?.system as any;
@@ -416,10 +430,10 @@ export default class StarSystemScene extends Phaser.Scene {
       let tx = sys.star.x, ty = sys.star.y;
       if ((target as any)._isPoint) { tx = (target as any).x; ty = (target as any).y; }
       else if ((target as any)._isPlanet) {
-        const confPlanet = (sys.planets as any[]).find((p: any) => p.id === (target as any).id) as any;
-        // как у торговца: используем проксированные _x/_y, fallback на звезду/радиус орбиты
-        tx = (confPlanet?._x ?? (sys.star.x + confPlanet.orbit.radius));
-        ty = (confPlanet?._y ?? sys.star.y);
+        const pos = this.getPlanetWorldPosById((target as any).id);
+        // как у торговца: используются текущие координаты спрайта (точно совпадают)
+        tx = pos?.x ?? sys.star.x;
+        ty = pos?.y ?? sys.star.y;
         // добавим небольшой случайный оффсет вокруг центра планеты как у трейдера (визуально более живо)
         const offR = (o as any).__rand.offsetR;
         if (!(target as any)._seededOffset) {
