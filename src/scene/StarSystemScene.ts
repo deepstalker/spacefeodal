@@ -274,6 +274,7 @@ export default class StarSystemScene extends Phaser.Scene {
       if (!p) return;
       (p as any).__behavior = 'patrol';
       (p as any).__targetPatrol = null;
+      (this.combat as any).setAIProfileFor?.(p, 'patrol');
       this.npcs.push(p);
     });
   }
@@ -367,9 +368,16 @@ export default class StarSystemScene extends Phaser.Scene {
         if (e.typeId === 'lost_treasure') {
           this.add.rectangle(e.x, e.y, 48, 48, 0xffe066).setDepth(0.4);
         } else if (e.typeId === 'pirates') {
-          // spawn 3 pirates from stardwellers
+          // spawn 3 pirates from stardwellers with patrol behavior
           const offs = [[0,0],[40,20],[-40,-20]];
-          offs.forEach((o, idx)=> (this.combat as any).spawnNPCPrefab('pirate', e.x + o[0], e.y + o[1]));
+          offs.forEach((o, idx)=> {
+            const npc = (this.combat as any).spawnNPCPrefab('pirate', e.x + o[0], e.y + o[1]) as any;
+            if (!npc) return;
+            (npc as any).__behavior = 'patrol';
+            (npc as any).__targetPatrol = null;
+            (this.combat as any).setAIProfileFor?.(npc, 'patrol');
+            this.npcs.push(npc);
+          });
         }
         // remove from list
         this.encounterMarkers = this.encounterMarkers.filter(m => m !== e);

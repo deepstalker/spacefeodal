@@ -31,6 +31,16 @@ export class CombatManager {
     this.config = config;
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
+  public setAIProfileFor(obj: any, profileKey: string) {
+    const entry = this.targets.find(t => t.obj === obj);
+    if (!entry) return;
+    const profile = this.config.aiProfiles.profiles[profileKey];
+    if (!profile) return;
+    entry.aiProfileKey = profileKey;
+    entry.ai = entry.ai || ({ type: 'ship', preferRange: 0, speed: 0 } as any);
+    (entry.ai as any).behavior = profile.behavior;
+    (entry.ai as any).retreatHpPct = profile.combat?.retreatHpPct ?? 0;
+  }
 
   attachShip(ship: Phaser.GameObjects.Image) {
     this.ship = ship;
@@ -404,6 +414,10 @@ export class CombatManager {
         if (act === 'flee') { decided = { type: 'flee', target: s.obj }; break; }
       }
       t.intent = decided;
+      // debug: pirates intents
+      if ((t.faction === 'pirate') && decided) {
+        try { console.debug('[AI] Pirate intent', decided.type, 'to', decided.target?.x, decided.target?.y); } catch {}
+      }
 
       if (!seesPlayer) {
         (t as any).overrides = (t as any).overrides ?? {};
