@@ -376,6 +376,8 @@ export class CombatManager {
     const entry = this.targets.find(t => t.obj === obj);
     const shipId = entry?.shipId ?? (obj === this.ship ? (this.config.player?.shipId ?? this.config.ships.current) : undefined);
     const def = shipId ? this.config.ships.defs[shipId] : undefined;
+    const overrideR = (entry as any)?.radarRange;
+    if (typeof overrideR === 'number') return overrideR;
     const r = (def as any)?.sensors?.radar_range ?? def?.combat?.sensorRadius ?? 800;
     return r;
   }

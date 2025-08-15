@@ -101,6 +101,72 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Star placeholder
     this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
+    // Pirate base (top-left corner) visual and logic
+    const baseX = Math.max(200, system.size.width * 0.08);
+    const baseY = Math.max(200, system.size.height * 0.08);
+    const pirateBase = this.add.rectangle(baseX, baseY, 420, 420, 0x7f1d1d).setDepth(0.2);
+    const baseLabel = this.add.text(baseX, baseY, 'Пиратская база', { color: '#fca5a5', fontSize: '20px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(0.21);
+    ;(pirateBase as any).__hp = 5000;
+    ;(pirateBase as any).__alive = true;
+    // simple base weapon: shoot at nearest enemy within 1200
+    const baseRadar = 1400;
+    const baseFireCooldownMs = 600;
+    let baseLastShot = 0;
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
+      if (!(pirateBase as any).__alive) return;
+      // acquire nearest non-pirate target in radar
+      const cm: any = (this as any).combat;
+      const now = this.time.now;
+      const near = cm?.getTargetObjects?.().find(() => true);
+      let best: any = null; let bestD = Number.POSITIVE_INFINITY;
+      for (const t of (cm?.targets ?? [])) {
+        if (!t.obj?.active) continue;
+        if (t.faction === 'pirate') continue;
+        const d = Phaser.Math.Distance.Between(baseX, baseY, (t.obj as any).x, (t.obj as any).y);
+        if (d < bestD && d <= baseRadar) { best = t.obj; bestD = d; }
+      }
+      if (best && now - baseLastShot > baseFireCooldownMs) {
+        baseLastShot = now;
+        // simple bullet
+        const ang = Math.atan2((best as any).y - baseY, (best as any).x - baseX);
+        const proj = this.add.rectangle(baseX, baseY, 12, 4, 0xff6666).setDepth(0.25);
+        const spd = 900; const vx = Math.cos(ang) * spd; const vy = Math.sin(ang) * spd;
+        const onUpd = (_tt:number, dtt:number) => {
+          (proj as any).x += vx * (dtt/1000);
+          (proj as any).y += vy * (dtt/1000);
+          const dd = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, (best as any).x, (best as any).y);
+          if (dd < 30 && (best as any).active) {
+            // apply damage via CombatManager
+            const cm2: any = (this as any).combat;
+            cm2?.applyDamage?.(best, 20, pirateBase);
+            this.events.off(Phaser.Scenes.Events.UPDATE, onUpd);
+            proj.destroy();
+          }
+        };
+        this.events.on(Phaser.Scenes.Events.UPDATE, onUpd);
+        this.time.delayedCall(2000, () => { this.events.off(Phaser.Scenes.Events.UPDATE, onUpd); proj.destroy(); });
+      }
+    });
+    // spawn wave every minute; pirates live 2 minutes then return & dock
+    const waveIntervalMs = 60000; const pirateLifetimeMs = 120000;
+    const spawnWave = () => {
+      if (!(pirateBase as any).__alive) return;
+      const offs = [[-220,-240],[-260,180],[240,-200],[200,260],[0,-280]];
+      for (let i = 0; i < 5; i++) {
+        const ox = baseX + offs[i % offs.length][0];
+        const oy = baseY + offs[i % offs.length][1];
+        const npc = (this.combat as any).spawnNPCPrefab('pirate', ox, oy) as any;
+        if (!npc) continue;
+        (npc as any).__behavior = 'patrol';
+        (npc as any).__targetPatrol = null;
+        ;(npc as any).__despawnAt = this.time.now + pirateLifetimeMs;
+        // mark base home
+        ;(npc as any).__homeBase = pirateBase;
+        this.npcs.push(npc);
+      }
+    };
+    this.time.delayedCall(6000, spawnWave); // first wave with small delay after load
+    this.time.addEvent({ delay: waveIntervalMs, loop: true, callback: spawnWave });
     // Draw encounters (POI). Интерпретируем координаты как относительные к центру звезды
     for (const e of system.poi as any[]) {
       const ex = system.star.x + (e.x ?? 0);
@@ -123,7 +189,8 @@ export default class StarSystemScene extends Phaser.Scene {
         key
       ).setDepth(0);
       c.setDisplaySize(512, 512).setOrigin(0.5);
-      this.planets.push({ obj: c, data: { ...p, angleDeg: 0 } });
+      const initAng = Math.random() * 360;
+      this.planets.push({ obj: c, data: { ...p, angleDeg: initAng } });
     }
     // Fog of War disabled for now
 
@@ -169,20 +236,27 @@ export default class StarSystemScene extends Phaser.Scene {
       }
     }
 
-    // Ensure at least one trader near the star in every system
-    const nearX = system.star.x + 300;
-    const nearY = system.star.y - 180;
-    const near = (this.combat as any).spawnNPCPrefab('trader', nearX, nearY) as any;
-    if (near) {
-      const pref = this.config.stardwellers?.prefabs?.['trader'];
-      (near as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
-      (near as any).__targetPlanet = this.pickRandomPlanet();
-      (near as any).__state = 'travel';
-      (near as any).setAlpha?.(1);
-      this.npcs.push(near);
-      const nsx = (near as any).scaleX ?? 1;
-      const nsy = (near as any).scaleY ?? 1;
-      this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
+    // Spawn traders near planets — count equals number of planets
+    for (let i = 0; i < system.planets.length; i++) {
+      const planet = system.planets[i];
+      const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
+      const py = (planet as any)._y ?? system.star.y;
+      const ang = Math.random() * Math.PI * 2;
+      const dOff = 300 + Math.random() * 200;
+      const tX = px + Math.cos(ang) * dOff;
+      const tY = py + Math.sin(ang) * dOff;
+      const near = (this.combat as any).spawnNPCPrefab('trader', tX, tY) as any;
+      if (near) {
+        const pref = this.config.stardwellers?.prefabs?.['trader'];
+        (near as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
+        (near as any).__targetPlanet = planet;
+        (near as any).__state = 'travel';
+        (near as any).setAlpha?.(1);
+        this.npcs.push(near);
+        const nsx = (near as any).scaleX ?? 1;
+        const nsy = (near as any).scaleY ?? 1;
+        this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
+      }
     }
 
     // Ship sprite (256x128)
@@ -502,7 +576,17 @@ export default class StarSystemScene extends Phaser.Scene {
         }
       }
       const dist = Math.hypot(dx, dy);
-      if (dist < 160) (o as any).__targetPatrol = null;
+      if ((o as any).__despawnAt && this.time.now >= (o as any).__despawnAt) {
+        // return to base and despawn
+        const hb: any = (o as any).__homeBase;
+        const hx = hb?.x ?? 0, hy = hb?.y ?? 0;
+        const ang = Math.atan2(hy - o.y, hx - o.x);
+        o.rotation = ang + noseOffsetRad;
+        const retSpeed = baseSpeed * 1.1;
+        o.x += Math.cos(ang) * retSpeed * dt;
+        o.y += Math.sin(ang) * retSpeed * dt;
+        if (Phaser.Math.Distance.Between(o.x, o.y, hx, hy) < 80) { o.destroy(); continue; }
+      } else if (dist < 160) (o as any).__targetPatrol = null;
     }
   }
 
