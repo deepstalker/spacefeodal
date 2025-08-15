@@ -29,18 +29,7 @@ export class MovementManager {
     return this.target;
   }
 
-  getRenderPathPoints(currentX: number, currentY: number): Phaser.Math.Vector2[] {
-    if (this.flightPlan.length <= 1) return [];
-    const ps = this.config.planner ?? { SIMULATION_STEP: 0.05, MAX_STEPS: 400 };
-    const idx = Math.floor(this.planTime / ps.SIMULATION_STEP);
-    const points: Phaser.Math.Vector2[] = [];
-    points.push(new Phaser.Math.Vector2(currentX, currentY));
-    for (let i = Math.max(0, idx + 1); i < this.flightPlan.length; i++) {
-      const p = this.flightPlan[i];
-      points.push(new Phaser.Math.Vector2(p.x, p.y));
-    }
-    return points;
-  }
+  // getRenderPathPoints удалён как неиспользуемый (визуальный путь рисуется напрямую по текущей цели)
 
   private update(_time: number, deltaMs: number) {
     const dt = deltaMs / 1000;
