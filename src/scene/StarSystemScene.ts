@@ -381,12 +381,24 @@ export default class StarSystemScene extends Phaser.Scene {
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
       let target = (o as any).__targetPatrol;
       if (!target) {
-        const choice = Math.random() < 0.2 ? { _isStar: true } : this.pickRandomPlanet();
-        (o as any).__targetPatrol = choice;
-        target = choice;
+        const pickStar = Math.random() < 0.2;
+        if (pickStar) {
+          const ang = Math.random() * Math.PI * 2;
+          const r = 300 + Math.random() * 400;
+          (o as any).__targetPatrol = { _isPoint: true, x: sys.star.x + Math.cos(ang) * r, y: sys.star.y + Math.sin(ang) * r };
+        } else {
+          const planet = this.pickRandomPlanet();
+          (o as any).__targetPatrol = { _isPlanet: true, id: planet.id };
+        }
+        target = (o as any).__targetPatrol;
       }
-      const tx = (target._isStar ? sys.star.x : (target._x ?? (sys.star.x + target.orbit.radius)));
-      const ty = (target._isStar ? sys.star.y : (target._y ?? sys.star.y));
+      let tx = sys.star.x, ty = sys.star.y;
+      if ((target as any)._isPoint) { tx = (target as any).x; ty = (target as any).y; }
+      else if ((target as any)._isPlanet) {
+        const confPlanet = (sys.planets as any[]).find((p: any) => p.id === (target as any).id) as any;
+        tx = (confPlanet?._x ?? (sys.star.x + confPlanet.orbit.radius));
+        ty = (confPlanet?._y ?? sys.star.y);
+      }
       const dx = tx - o.x;
       const dy = ty - o.y;
       const desiredHeading = Math.atan2(dy, dx);
@@ -411,7 +423,7 @@ export default class StarSystemScene extends Phaser.Scene {
         o.y = Phaser.Math.Clamp(o.y, my, maxY);
       }
       const dist = Math.hypot(dx, dy);
-      if (dist < 120) (o as any).__targetPatrol = null;
+      if (dist < 160) (o as any).__targetPatrol = null;
     }
   }
 

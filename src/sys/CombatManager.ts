@@ -186,7 +186,11 @@ export class CombatManager {
       const turn = Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
       heading += turn;
       obj.rotation = heading + noseOffsetRad;
-      const baseSpeed = (typeof t.ai.speed === 'number' ? t.ai.speed : 140);
+      // derive base speed from ship movement profile for consistency across flee/attack
+      const speedScalePxPerSec = 120; // 1.0 MAX_SPEED ~= 120 px/s
+      const shipDef = this.config.ships.defs[t.shipId ?? (this.config.ships.current)];
+      const maxSpeed = shipDef?.movement?.MAX_SPEED ?? 1.0;
+      const baseSpeed = maxSpeed * speedScalePxPerSec;
       const speed = (desired !== 0) ? baseSpeed : 0;
       obj.x += Math.cos(heading) * speed * dt;
       obj.y += Math.sin(heading) * speed * dt;
