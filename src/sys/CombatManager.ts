@@ -306,6 +306,12 @@ export class CombatManager {
       if (t.hp < 0) t.hp = 0;
       this.updateHpBar(t);
       this.floatDamageText(target.x, target.y - 70, damage);
+      // Если атаковал игрок и цель — NPC, задаём временную конфронтацию к игроку
+      if (attacker && attacker === this.ship) {
+        (t as any).overrides = (t as any).overrides ?? {};
+        (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+        (t as any).overrides.factions['player'] = 'confrontation';
+      }
       if (t.hp <= 0) {
         target.destroy();
         t.hpBarBg.destroy();
@@ -346,8 +352,7 @@ export class CombatManager {
     const entry = this.targets.find(t => t.obj === obj);
     const shipId = entry?.shipId ?? (obj === this.ship ? (this.config.player?.shipId ?? this.config.ships.current) : undefined);
     const def = shipId ? this.config.ships.defs[shipId] : undefined;
-    // Пока используем combat.sensorRadius как радарный радиус
-    const r = def?.combat?.sensorRadius ?? 800;
+    const r = (def as any)?.sensors?.radar_radius ?? def?.combat?.sensorRadius ?? 800;
     return r;
   }
 
@@ -359,24 +364,21 @@ export class CombatManager {
   }
 
   private updateSensors(deltaMs: number) {
-    // Build list of sensed intents
     for (const t of this.targets) {
       t.intent = null;
       const myFaction = t.faction;
       const radar = this.getRadarRangeFor(t.obj);
-      // scan all potential targets (other NPCs + player)
       const sensed: any[] = [];
       for (const o of this.targets) {
         if (o === t) continue;
         const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, o.obj.x, o.obj.y);
         if (d <= radar) sensed.push(o);
       }
-      // include player
       const playerObj = this.ship as any;
       const dp = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, playerObj.x, playerObj.y);
-      if (dp <= radar) sensed.push({ obj: playerObj, faction: 'player' });
+      const seesPlayer = dp <= radar;
+      if (seesPlayer) sensed.push({ obj: playerObj, faction: 'player' });
 
-      // derive intent by reactions
       const profileKey = t.aiProfileKey;
       const profile = profileKey ? this.config.aiProfiles.profiles[profileKey] : undefined;
       const reactions = profile?.sensors?.react?.onFaction;
@@ -388,13 +390,19 @@ export class CombatManager {
         if (act === 'flee') { decided = { type: 'flee', target: s.obj }; break; }
       }
       t.intent = decided;
+
+      if (!seesPlayer) {
+        (t as any).overrides = (t as any).overrides ?? {};
+        (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+        if ((t as any).overrides.factions['player'] === 'confrontation') {
+          delete (t as any).overrides.factions['player'];
+        }
+      }
     }
   }
 
   private getAimedTargetPoint(shooter: any, target: any, w: any) {
-    // accuracy: 0..1; 1 = perfect leading, 0 = no prediction
     let accuracy = 1.0;
-    // if shooter is an AI enemy with accuracy in config
     const entry = this.targets.find(t => t.obj === shooter);
     if (shooter === this.ship) {
       const playerShipId = this.config.player?.shipId ?? this.config.ships.current;
@@ -407,40 +415,36 @@ export class CombatManager {
       const a = shipDef?.combat?.accuracy;
       if (typeof a === 'number') accuracy = Phaser.Math.Clamp(a, 0, 1);
     }
-    // Estimate target velocity per frame (store prev pos)
     const prev = (target as any).__prevPos || { x: target.x, y: target.y };
     const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
     const vx = (target.x - prev.x) / dt;
     const vy = (target.y - prev.y) / dt;
     (target as any).__prevPos = { x: target.x, y: target.y };
     const projectileSpeed = w.projectileSpeed;
-    // Solve time to intercept assuming straight-line target velocity
     const sx = shooter.x;
     const sy = shooter.y;
     const tx = target.x;
     const ty = target.y;
     const rx = tx - sx;
     const ry = ty - sy;
-    const a = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
+    const a2 = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
     const b = 2 * (rx * vx + ry * vy);
     const c = rx * rx + ry * ry;
-    let t: number;
-    if (Math.abs(a) < 1e-3) {
-      t = c / Math.max(1, -b);
+    let tHit: number;
+    if (Math.abs(a2) < 1e-3) {
+      tHit = c / Math.max(1, -b);
     } else {
-      const disc = b * b - 4 * a * c;
-      if (disc < 0) t = 0;
-      else {
-        const t1 = (-b - Math.sqrt(disc)) / (2 * a);
-        const t2 = (-b + Math.sqrt(disc)) / (2 * a);
-        t = Math.min(t1, t2);
-        if (t < 0) t = Math.max(t1, t2);
-        if (t < 0) t = 0;
+      const disc = b * b - 4 * a2 * c;
+      if (disc < 0) tHit = 0; else {
+        const t1 = (-b - Math.sqrt(disc)) / (2 * a2);
+        const t2 = (-b + Math.sqrt(disc)) / (2 * a2);
+        tHit = Math.min(t1, t2);
+        if (tHit < 0) tHit = Math.max(t1, t2);
+        if (tHit < 0) tHit = 0;
       }
     }
-    const leadX = tx + vx * t * accuracy;
-    const leadY = ty + vy * t * accuracy;
-    // Blend by accuracy: 0 -> current target; 1 -> full lead
+    const leadX = tx + vx * tHit * accuracy;
+    const leadY = ty + vy * tHit * accuracy;
     const aimX = Phaser.Math.Linear(tx, leadX, accuracy);
     const aimY = Phaser.Math.Linear(ty, leadY, accuracy);
     return { x: aimX, y: aimY };
