@@ -49,7 +49,7 @@ export class MinimapManager {
       const y = (this.g as any)._my ?? 0;
       this.g.fillStyle(0x000000, 0.6);
       this.g.fillRect(x - 4, y - 4, this.width + 8, this.height + 8);
-      this.g.lineStyle(1, 0x99aaff);
+      this.g.lineStyle(1, 0xA28F6E);
       this.g.strokeRect(x, y, this.width, this.height);
       return;
     }
@@ -59,7 +59,7 @@ export class MinimapManager {
     // background panel
     this.g.fillStyle(0x2c2a2d, 0.8);
     this.g.fillRect(x - 4, y - 4, this.width + 8, this.height + 8);
-    this.g.lineStyle(1, 0xb3c7ff);
+    this.g.lineStyle(1, 0xA28F6E);
     this.g.strokeRect(x, y, this.width, this.height);
 
     // Clipping to minimap rect
