@@ -29,9 +29,10 @@ export default class UIScene extends Phaser.Scene {
   }
 
   create() {
-    this.uiTextResolution = Math.max(1, Math.min(3, Math.ceil((window.devicePixelRatio as number) || 1)));
-    // improve crispness for UI text
-    try { this.cameras.main.setRoundPixels(true); } catch {}
+    // lock UI text resolution to 2x for stability across zoom/scales
+    this.uiTextResolution = 2;
+    // keep subpixel positioning for UI (crisper with setResolution)
+    try { this.cameras.main.setRoundPixels(false); } catch {}
     const label = this.add.text(16, 16, 'SF A2', { color: '#F5F0E9', fontFamily: 'HooskaiChamferedSquare', fontSize: '24px' }).setScrollFactor(0).setDepth(1000);
     try { (label as any).setResolution?.(this.uiTextResolution); } catch {}
     this.debugText = this.add.text(16, 40, '', { color: '#F5F0E9' }).setScrollFactor(0).setDepth(1000);

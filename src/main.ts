@@ -15,7 +15,7 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 1920,
     height: 1080
   },
-  render: { antialias: true, pixelArt: false, roundPixels: true },
+  render: { antialias: true, pixelArt: false, roundPixels: false },
   plugins: { scene: [ { key: 'rexUI', plugin: UIPlugin, mapping: 'rexUI' } ] },
   scene: [BootScene, PreloadScene, StarSystemScene, UIScene]
 };
