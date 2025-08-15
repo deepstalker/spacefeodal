@@ -233,7 +233,7 @@ export default class UIScene extends Phaser.Scene {
   private async toggleSystemMenu() {
     if (this.systemMenu) { this.systemMenu.destroy(); this.systemMenu = undefined; return; }
     const sw = this.scale.width; const sh = this.scale.height;
-    const systems = await fetch('/configs/systems.json').then(r=>r.json());
+    const systems = await (async()=>{ try { return await (await fetch('/configs/systems/systems.json')).json(); } catch { return await (await fetch('/configs/systems.json')).json(); } })();
     const items = Object.entries(systems.defs).map(([id, def]: any) => ({ id, name: def.name }));
     const bg = this.add.rectangle(sw/2, sh/2, 360, 240, 0x0f172a, 0.95).setScrollFactor(0).setDepth(4000);
     bg.setStrokeStyle(1, 0x334155);
