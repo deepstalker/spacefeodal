@@ -171,7 +171,6 @@ export default class UIScene extends Phaser.Scene {
 
     // store refs for dynamic values
     (this as any).__hudSpeedValue = speedValue;
-    (this as any).__hudHullValue = hullValue;
   }
 
   private createWeaponBar() {
