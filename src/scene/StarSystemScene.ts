@@ -389,6 +389,17 @@ export default class StarSystemScene extends Phaser.Scene {
       const entry = cm?.targets?.find((t: any) => t.obj === o);
       if (entry && entry.intent) continue;
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
+      // randomization per-NPC from ai profile
+      const profKey = entry?.aiProfileKey;
+      const prof = profKey ? this.config.aiProfiles.profiles[profKey] : undefined;
+      const rnd: any = (prof as any)?.random ?? {};
+      if (!(o as any).__rand) {
+        (o as any).__rand = {
+          speedK: 1 + (Math.random() * 2 - 1) * (rnd.speedVarPct ?? 0),
+          turnK: 1 + (Math.random() * 2 - 1) * (rnd.turnVarPct ?? 0),
+          offsetR: rnd.offsetRadius ?? 140
+        };
+      }
       let target = (o as any).__targetPatrol;
       if (!target) {
         const pickStar = Math.random() < 0.2;
@@ -406,8 +417,19 @@ export default class StarSystemScene extends Phaser.Scene {
       if ((target as any)._isPoint) { tx = (target as any).x; ty = (target as any).y; }
       else if ((target as any)._isPlanet) {
         const confPlanet = (sys.planets as any[]).find((p: any) => p.id === (target as any).id) as any;
+        // как у торговца: используем проксированные _x/_y, fallback на звезду/радиус орбиты
         tx = (confPlanet?._x ?? (sys.star.x + confPlanet.orbit.radius));
         ty = (confPlanet?._y ?? sys.star.y);
+        // добавим небольшой случайный оффсет вокруг центра планеты как у трейдера (визуально более живо)
+        const offR = (o as any).__rand.offsetR;
+        if (!(target as any)._seededOffset) {
+          const a = Math.random() * Math.PI * 2;
+          (target as any)._ox = Math.cos(a) * offR;
+          (target as any)._oy = Math.sin(a) * offR;
+          (target as any)._seededOffset = true;
+        }
+        tx += (target as any)._ox;
+        ty += (target as any)._oy;
       }
       const dx = tx - o.x;
       const dy = ty - o.y;
@@ -416,7 +438,7 @@ export default class StarSystemScene extends Phaser.Scene {
       let diff = desiredHeading - heading;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.1 * dt);
+      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.1 * (o as any).__rand.turnK * dt);
       heading += turn;
       o.rotation = heading + noseOffsetRad;
       // derive base speed from ship definition to keep consistent pacing
@@ -424,7 +446,7 @@ export default class StarSystemScene extends Phaser.Scene {
         if (entry?.shipId) return (this.config.ships.defs[entry.shipId]?.movement?.MAX_SPEED ?? 1.0);
         return 1.0;
       })();
-      const baseSpeed = maxSpeed * 120; // px/s
+      const baseSpeed = maxSpeed * 120 * (o as any).__rand.speedK; // px/s
       // ease-in near target to reduce overshoot/zigzag
       const arriveFactor = Phaser.Math.Clamp(Math.hypot(dx, dy) / 300, 0.5, 1);
       const speed = baseSpeed * arriveFactor;

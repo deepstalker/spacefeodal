@@ -19,7 +19,8 @@
     "patrol": {
       "behavior": "patrol",
       "sensors": { "react": { "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore" } } },
-      "combat": { "retreatHpPct": 0.3 }
+      "combat": { "retreatHpPct": 0.3 },
+      "random": { "speedVarPct": 0.2, "turnVarPct": 0.2, "offsetRadius": 140 }
     }
   }
 }
