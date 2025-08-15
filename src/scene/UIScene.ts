@@ -28,7 +28,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   create() {
-    const label = this.add.text(16, 16, 'SF A2', { color: '#a0b4ff' }).setScrollFactor(0).setDepth(1000);
+    const label = this.add.text(16, 16, 'SF A2', { color: '#a0b4ff', fontFamily: 'HooskaiChamferedSquare', fontSize: '24px' }).setScrollFactor(0).setDepth(1000);
     this.debugText = this.add.text(16, 40, '', { color: '#99ff99' }).setScrollFactor(0).setDepth(1000);
 
     // Миникарта: ждём готовности StarSystemScene
@@ -126,7 +126,7 @@ export default class UIScene extends Phaser.Scene {
     const hudY = sh - pad;
 
     // Speed numeric readout
-    const speedValue = this.add.text(pad + 6, hudY - 26, '0 U/S', { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0, 1).setScrollFactor(0).setDepth(1502);
+    const speedValue = this.add.text(pad + 6, hudY - 26, '0 U/S', { color: '#e2e8f0', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0, 1).setScrollFactor(0).setDepth(1502);
     this.speedText = speedValue;
     // underline under speed text (60x2)
     const underline = this.add.rectangle(pad + 6 + 30, hudY - 22, 60, 2, 0xA28F6E).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1502);
@@ -162,7 +162,7 @@ export default class UIScene extends Phaser.Scene {
     icon.setRotation(0);
     this.shipIcon = icon;
     // Имя корабля рядом слева от иконки
-    const nameText = this.add.text(sw - pad - 24 - 8, hudY - 24 - 24, shipName, { color: '#e2e8f0', fontSize: '16px' }).setScrollFactor(0).setDepth(1500).setOrigin(1, 0.5);
+    const nameText = this.add.text(sw - pad - 24 - 8, hudY - 24 - 24, shipName, { color: '#e2e8f0', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setScrollFactor(0).setDepth(1500).setOrigin(1, 0.5);
     this.shipNameText = nameText;
 
     // store refs for dynamic values
@@ -214,7 +214,7 @@ export default class UIScene extends Phaser.Scene {
       // number badge (bottom-left)
       const badge = this.add.rectangle(x + 4, y + slotSize - 4 - 32, 32, 32, 0x2c2a2d, 1).setOrigin(0, 0).setDepth(1502).setScrollFactor(0);
       badge.setStrokeStyle(1, outline, 1);
-      const num = this.add.text(x + 4 + 16, y + slotSize - 4 - 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
+      const num = this.add.text(x + 4 + 16, y + slotSize - 4 - 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px', fontFamily: 'Request' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
       container.add(badge);
       container.add(num);
     }
@@ -229,7 +229,7 @@ export default class UIScene extends Phaser.Scene {
     const hpBg = this.add.rectangle(hpX, hpY, hpW, hpH, 0x1E3A2B, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
     const hpFill = this.add.rectangle(hpX + 2, hpY + 2, hpW - 4, hpH - 4, 0x1E8449, 1).setOrigin(0,0).setScrollFactor(0).setDepth(1501);
     this.hullFill = hpFill;
-    const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#e2e8f0', fontSize: '14px' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
+    const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#e2e8f0', fontSize: '14px', fontFamily: 'Request' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
     (this as any).__hudHullValue = hpText;
     this.hullRect = { x: hpX, y: hpY, w: hpW, h: hpH };
   }

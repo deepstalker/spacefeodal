@@ -1,11 +1,11 @@
 export const Typography = {
   fontFamily: 'Inter, Arial, sans-serif',
   size: {
-    xs: 12,
-    sm: 14,
-    md: 16,
-    lg: 20,
-    xl: 24
+    xs: 16,
+    sm: 18,
+    md: 20,
+    lg: 26,
+    xl: 30
   },
   weight: {
     regular: '400',
