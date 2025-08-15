@@ -4,17 +4,17 @@
     "sol": {
       "name": "Sol",
       "type": "static",
-      "configPath": "/configs/system_sol.json"
+      "configPath": "/configs/systems/system_sol.json"
     },
     "beta": {
       "name": "Beta",
       "type": "static",
-      "configPath": "/configs/system_beta.json"
+      "configPath": "/configs/systems/system_beta.json"
     },
     "paradise": {
       "name": "Paradise",
       "type": "static",
-      "configPath": "/configs/system_paradise.json"
+      "configPath": "/configs/systems/system_paradise.json"
     },
     "proc_default": {
       "name": "Proc-1",
