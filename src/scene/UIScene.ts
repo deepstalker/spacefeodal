@@ -10,7 +10,7 @@ export default class UIScene extends Phaser.Scene {
   private followLabel?: Phaser.GameObjects.Text;
   // HUD elements
   private speedBar?: any;
-  private speedFill?: Phaser.GameObjects.Rectangle;
+  private speedText?: Phaser.GameObjects.Text;
   private followToggle?: any;
   private hullBar?: any;
   private hullFill?: Phaser.GameObjects.Rectangle;
@@ -98,11 +98,7 @@ export default class UIScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, () => {
       const mv = this.getMovementConfig();
       if (!mv) return;
-      // Update debug
-      this.debugText.setText(
-        `ACC=${mv.ACCELERATION.toFixed(3)} DEC=${mv.DECELERATION.toFixed(3)} VMAX=${mv.MAX_SPEED.toFixed(2)} TURN=${mv.TURN_SPEED.toFixed(3)}`
-      );
-      // Update speed bar by estimating MovementManager speed if available via ship data
+      // Update speed numeric and HP bar
       this.updateHUD();
     });
 
@@ -129,11 +125,11 @@ export default class UIScene extends Phaser.Scene {
     const barH = 20;
     const hudY = sh - pad;
 
-    // Speed panel (progress bar)
-    const speedBg = this.add.rectangle(pad, hudY, barW, barH, 0x1e293b).setOrigin(0, 1).setScrollFactor(0).setDepth(1500);
-    const speedFill = this.add.rectangle(pad + 2, hudY - 2, 0, barH - 4, 0x38bdf8).setOrigin(0, 1).setScrollFactor(0).setDepth(1501);
-    this.speedFill = speedFill;
-    const speedValue = this.add.text(pad + barW - 6, hudY - barH / 2, '0', { color: '#e2e8f0', fontSize: '14px' }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(1502);
+    // Speed numeric readout
+    const speedValue = this.add.text(pad + 6, hudY - 26, '0 U/S', { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0, 1).setScrollFactor(0).setDepth(1502);
+    this.speedText = speedValue;
+    // underline under speed text (60x2)
+    const underline = this.add.rectangle(pad + 6 + 30, hudY - 22, 60, 2, 0xA28F6E).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1502);
 
     // Follow toggle (rexUI label behaves like a toggle)
     const followBg = this.add.rectangle(0, 0, 130, 28, 0x0f172a).setStrokeStyle(1, 0x334155);
@@ -150,7 +146,8 @@ export default class UIScene extends Phaser.Scene {
         if (stars?.cameraMgr?.isFollowing?.()) stars.cameraMgr.disableFollow();
         else stars?.cameraMgr?.enableFollow?.(payload.ship);
       });
-    this.followToggle.setPosition(sw / 2 + 40, hudY - 40);
+    // Move follow toggle to right-bottom corner
+    this.followToggle.setPosition(sw - pad - 75, hudY - 80);
 
     // HP bar перенесён на оружейную панель (создаётся в createWeaponBar)
 
@@ -242,10 +239,10 @@ export default class UIScene extends Phaser.Scene {
     // update immediately
     this.updateHUD();
     // flash effect over HP bar
-    if (this.hullRect) {
-      const r = this.add.rectangle(this.hullRect.x, this.hullRect.y, this.hullRect.w, this.hullRect.h, 0xffffff, 0.35)
+    if (this.hullRect && this.hullFill) {
+      const fx = this.add.rectangle(this.hullFill.x, this.hullFill.y, this.hullFill.width, this.hullFill.height, 0xffffff, 0.35)
         .setOrigin(0,0).setScrollFactor(0).setDepth(1502);
-      this.tweens.add({ targets: r, alpha: 0, duration: 180, ease: 'Sine.easeOut', onComplete: () => r.destroy() });
+      this.tweens.add({ targets: fx, alpha: 0, duration: 180, ease: 'Sine.easeOut', onComplete: () => fx.destroy() });
     }
   }
 
@@ -254,7 +251,7 @@ export default class UIScene extends Phaser.Scene {
     // Speed percentage — попробуем определить по смещению MovementManager. Упростим: нет прямого доступа к скорости, оценим по delta позициям последнего кадра (не идеально, но достаточно для UI)
     const star = this.scene.get('StarSystemScene') as any;
     const ship = star?.ship as Phaser.GameObjects.Image | undefined;
-    if (ship && this.speedFill) {
+    if (ship && this.speedText) {
       const mv = this.getMovementConfig();
       const max = mv?.MAX_SPEED ?? 1;
       // Храним в объекте временные данные
@@ -263,10 +260,9 @@ export default class UIScene extends Phaser.Scene {
       const dy = ship.y - prev.y;
       const v = Math.hypot(dx, dy);
       (ship as any).__prevPos = { x: ship.x, y: ship.y };
-      const pct = Phaser.Math.Clamp(max > 0 ? v / max : 0, 0, 1);
-      this.speedFill.width = (Math.min(520, this.scale.width * 0.4) - 4) * pct;
-      const speedText = (this as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
-      if (speedText) speedText.setText(v.toFixed(2));
+      const u = Math.round((max > 0 ? (v / max) : 0) * 100);
+      const txt = (this as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
+      if (txt) txt.setText(`${u} U/S`);
     }
 
     // HULL percentage (from player's ship def or placeholder)
