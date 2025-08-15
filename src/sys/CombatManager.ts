@@ -190,6 +190,16 @@ export class CombatManager {
       const speed = (desired !== 0) ? baseSpeed : 0;
       obj.x += Math.cos(heading) * speed * dt;
       obj.y += Math.sin(heading) * speed * dt;
+      // clamp to system bounds with 20% margin
+      const sz = this.config.system?.size;
+      if (sz) {
+        const mx = Math.max(0, sz.width * 0.2);
+        const my = Math.max(0, sz.height * 0.2);
+        const maxX = Math.max(mx, sz.width - mx);
+        const maxY = Math.max(my, sz.height - my);
+        obj.x = Phaser.Math.Clamp(obj.x, mx, maxX);
+        obj.y = Phaser.Math.Clamp(obj.y, my, maxY);
+      }
       // update HP bar follow
       this.updateHpBar(t as any);
     }

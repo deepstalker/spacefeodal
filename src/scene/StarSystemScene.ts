@@ -400,6 +400,16 @@ export default class StarSystemScene extends Phaser.Scene {
       const speed = 140;
       o.x += Math.cos(heading) * speed * dt;
       o.y += Math.sin(heading) * speed * dt;
+      // clamp to system bounds with 20% margin
+      const sz2 = this.config.system?.size as any;
+      if (sz2) {
+        const mx = Math.max(0, sz2.width * 0.2);
+        const my = Math.max(0, sz2.height * 0.2);
+        const maxX = Math.max(mx, sz2.width - mx);
+        const maxY = Math.max(my, sz2.height - my);
+        o.x = Phaser.Math.Clamp(o.x, mx, maxX);
+        o.y = Phaser.Math.Clamp(o.y, my, maxY);
+      }
       const dist = Math.hypot(dx, dy);
       if (dist < 120) (o as any).__targetPatrol = null;
     }
@@ -443,6 +453,16 @@ export default class StarSystemScene extends Phaser.Scene {
         const speed = 120;
         o.x += Math.cos(heading) * speed * dt;
         o.y += Math.sin(heading) * speed * dt;
+        // clamp to system bounds with 20% margin
+        const sz = this.config.system?.size as any;
+        if (sz) {
+          const mx = Math.max(0, sz.width * 0.2);
+          const my = Math.max(0, sz.height * 0.2);
+          const maxX = Math.max(mx, sz.width - mx);
+          const maxY = Math.max(my, sz.height - my);
+          o.x = Phaser.Math.Clamp(o.x, mx, maxX);
+          o.y = Phaser.Math.Clamp(o.y, my, maxY);
+        }
         if (dist < dockRange) {
           // Start docking
           (o as any).__state = 'docking';
