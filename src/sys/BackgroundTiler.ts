@@ -9,6 +9,7 @@ export class BackgroundTiler {
   private worldH = 0;
   private tileW = 1024;
   private tileH = 1024;
+  private overdrawTiles = 2; // draw extra tiles around viewport to avoid popping on scroll/zoom
   private pool: Phaser.GameObjects.Image[] = [];
   private activeKeys = new Set<string>();
   private rotationByKey = new Map<string, number>();
@@ -38,11 +39,14 @@ export class BackgroundTiler {
     const vw = cam.worldView;
     const px = vw.x * this.parallax;
     const py = vw.y * this.parallax;
-    const margin = 1;
-    const minTX = Math.max(0, Math.floor(px / this.tileW) - margin);
-    const maxTX = Math.min(Math.floor((this.worldW - 1) / this.tileW), Math.floor(((px + vw.width) - 1) / this.tileW) + margin);
-    const minTY = Math.max(0, Math.floor(py / this.tileH) - margin);
-    const maxTY = Math.min(Math.floor((this.worldH - 1) / this.tileH), Math.floor(((py + vw.height) - 1) / this.tileH) + margin);
+    const effW = vw.width * this.parallax;
+    const effH = vw.height * this.parallax;
+    const margin = this.overdrawTiles;
+    // allow a bit outside world to prevent edge popping
+    const minTX = Math.floor(px / this.tileW) - margin;
+    const maxTX = Math.floor(((px + effW) - 1) / this.tileW) + margin;
+    const minTY = Math.floor(py / this.tileH) - margin;
+    const maxTY = Math.floor(((py + effH) - 1) / this.tileH) + margin;
 
     const needed = new Set<string>();
     for (let ty = minTY; ty <= maxTY; ty++) {
@@ -78,7 +82,9 @@ export class BackgroundTiler {
         (spr as any).__tileKey = key;
       }
       const [sx, sy] = key.split(':').map(n => parseInt(n, 10));
-      spr.setPosition(sx * this.tileW - (px % this.tileW), sy * this.tileH - (py % this.tileH));
+      const offX = ((px % this.tileW) + this.tileW) % this.tileW;
+      const offY = ((py % this.tileH) + this.tileH) % this.tileH;
+      spr.setPosition(sx * this.tileW - offX, sy * this.tileH - offY);
       // Disable rotation to avoid checkerboard artifacts with non-rotatable seamless tiles
       spr.setAngle(0);
       spr.setVisible(true);
