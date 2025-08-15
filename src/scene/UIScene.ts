@@ -20,6 +20,7 @@ export default class UIScene extends Phaser.Scene {
   private weaponSlotsContainer?: Phaser.GameObjects.Container;
   private weaponPanel?: Phaser.GameObjects.Rectangle;
   private hullBarWidth: number = 614;
+  private hullRect?: { x: number; y: number; w: number; h: number };
   private gameOverGroup?: Phaser.GameObjects.Container;
   private systemMenu?: any;
   constructor() {
@@ -64,9 +65,7 @@ export default class UIScene extends Phaser.Scene {
       this.createWeaponBar();
       // Подписываемся на урон игрока
       const star = this.scene.get('StarSystemScene') as any;
-      star.events.on('player-damaged', (hp: number) => {
-        this.playerHp = hp;
-      });
+      star.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
     };
     // Если уже создана — попробуем сразу
     if ((starScene as any).config && (starScene as any).ship) {
@@ -211,7 +210,6 @@ export default class UIScene extends Phaser.Scene {
         if (this.textures.exists(iconKey)) {
           try { this.textures.get(iconKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
           const img = this.add.image(x + slotSize/2, y + slotSize/2, iconKey).setDepth(1501).setScrollFactor(0);
-          img.setDisplaySize(slotSize - 6, slotSize - 6);
           img.setOrigin(0.5);
           container.add(img);
         }
@@ -236,6 +234,19 @@ export default class UIScene extends Phaser.Scene {
     this.hullFill = hpFill;
     const hpText = this.add.text(hpX + 8, hpY + hpH/2, '100', { color: '#e2e8f0', fontSize: '14px' }).setOrigin(0,0.5).setScrollFactor(0).setDepth(1502);
     (this as any).__hudHullValue = hpText;
+    this.hullRect = { x: hpX, y: hpY, w: hpW, h: hpH };
+  }
+
+  private onPlayerDamaged(hp: number) {
+    this.playerHp = hp;
+    // update immediately
+    this.updateHUD();
+    // flash effect over HP bar
+    if (this.hullRect) {
+      const r = this.add.rectangle(this.hullRect.x, this.hullRect.y, this.hullRect.w, this.hullRect.h, 0xffffff, 0.35)
+        .setOrigin(0,0).setScrollFactor(0).setDepth(1502);
+      this.tweens.add({ targets: r, alpha: 0, duration: 180, ease: 'Sine.easeOut', onComplete: () => r.destroy() });
+    }
   }
 
   private updateHUD() {
@@ -263,10 +274,10 @@ export default class UIScene extends Phaser.Scene {
       const id = this.configRef.player?.shipId ?? this.configRef.ships?.current;
       const baseHull = id ? this.configRef.ships?.defs[id]?.hull ?? 100 : 100;
       const hull = this.playerHp != null ? this.playerHp : baseHull;
-      const pct = Phaser.Math.Clamp(hull / 100, 0, 1);
-      this.hullFill.width = (Math.min(520, this.scale.width * 0.4) - 4) * pct;
+      const pct = Phaser.Math.Clamp(baseHull > 0 ? hull / baseHull : 0, 0, 1);
+      this.hullFill.width = (this.hullBarWidth - 4) * pct;
       const hullText = (this as any).__hudHullValue as Phaser.GameObjects.Text | undefined;
-      if (hullText) hullText.setText(`${Math.round(hull)}`);
+      if (hullText) hullText.setText(`${Math.round(hull)}/${baseHull}`);
     }
   }
 
