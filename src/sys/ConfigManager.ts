@@ -89,6 +89,7 @@ export type ShipConfig = {
       noseOffsetDeg?: number;
     };
     combat?: { weaponSlots: number; accuracy?: number; sensorRadius?: number; slots?: Array<{ offset: { x: number; y: number } }> };
+    sensors?: { radar_range?: number };
     movement: GameplayConfig['movement'];
   }>;
 };

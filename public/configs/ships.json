@@ -13,13 +13,13 @@
       "combat": {
         "weaponSlots": 3,
         "accuracy": 0.6,
-        "sensorRadius": 1200,
         "slots": [
           { "offset": { "x": -20, "y": -30 } },
           { "offset": { "x": 0, "y": -40 } },
           { "offset": { "x": 20, "y": -30 } }
         ]
       },
+      "sensors": { "radar_range": 1200 },
       "movement": {
         "MAX_SPEED": 1.0,
         "ACCELERATION": 0.025,
@@ -42,13 +42,13 @@
       "combat": {
         "weaponSlots": 3,
         "accuracy": 0.5,
-        "sensorRadius": 1400,
         "slots": [
           { "offset": { "x": -24, "y": -28 } },
           { "offset": { "x": 0, "y": -36 } },
           { "offset": { "x": 24, "y": -28 } }
         ]
       },
+      "sensors": { "radar_range": 1400 },
       "movement": {
         "MAX_SPEED": 0.5,
         "ACCELERATION": 0.02,
@@ -71,13 +71,13 @@
       "combat": {
         "weaponSlots": 3,
         "accuracy": 0.8,
-        "sensorRadius": 1000,
         "slots": [
           { "offset": { "x": -18, "y": -32 } },
           { "offset": { "x": 0, "y": -44 } },
           { "offset": { "x": 18, "y": -32 } }
         ]
       },
+      "sensors": { "radar_range": 1000 },
       "movement": {
         "MAX_SPEED": 1.2,
         "ACCELERATION": 0.03,
