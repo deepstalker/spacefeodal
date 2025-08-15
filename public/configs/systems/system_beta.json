@@ -12,6 +12,9 @@
     { "id": "enc_0", "name": "Потерянное сокровище", "x": 0, "y": 1500, "discovered": false },
     { "id": "enc_1", "name": "Пираты", "x": 11000, "y": 11000, "discovered": false }
   ],
+  "stations": [
+  { "type": "pirate_base", "x": 7000, "y": 6000, "wave": { "count": 2, "lifespanMs": 120000, "intervalMs": 60000, "initialDelayMs": 6000 } }
+]
   "npcs": [
     { "prefab": "trader", "planetId": "pl_1", "aiProfile": "planet_trader" },
     { "prefab": "trader", "planetId": "pl_3", "aiProfile": "planet_trader" },

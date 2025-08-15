@@ -29,14 +29,8 @@ export default class PreloadScene extends Phaser.Scene {
       sizer.destroy();
     });
 
-    // Загрузка ассетов и конфигов (новые пути с фолбэком)
-    const tryJson = (key: string, primary: string, fallback: string) => {
-      // Phaser Loader не поддерживает два URL на один ключ, поэтому грузим primary под key, а fallback под key+"_fb",
-      // а чтение делает ConfigManager напрямую через fetch. Здесь оставим только primary.
-      this.load.json(key, primary);
-    };
-    tryJson('systems_index', '/configs/systems/systems.json', '/configs/systems.json');
-    tryJson('system_profiles', '/configs/systems/system_profiles.json', '/configs/system_profiles.json');
+    // Конфиги грузим напрямую в StarSystemScene/ConfigManager через fetch — убираем JSON из Loader,
+    // чтобы не падать, если сервер отдаёт HTML на 404
 
     // Загрузка ассетов: сначала пробуем из src/assets через ESM URL, затем public fallback
     // Пробуем загрузить из src (ESM) и из public (fallback)
@@ -53,7 +47,7 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('ship_explorer', '/assets/ships/alpha/explorer_ship.jpg');
     this.load.image('ship_trader', '/assets/ships/alpha/trader_ship.jpg');
     // Background tiles
-    this.load.image('bg_nebula1', '/assets/Blue Nebula 1 - 1024x1024.png');
+    // убран устаревший "bg_nebula1" (файл удалён)
     this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');
     this.load.image('bg_stars1', '/assets/Stars-Big_1_1_PC.png');
     // Planets
