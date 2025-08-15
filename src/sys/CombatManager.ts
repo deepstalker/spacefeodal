@@ -82,8 +82,8 @@ export class CombatManager {
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
     const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
-    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static', startDisposition: 'neutral' } as any;
-    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
+    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static' } as any;
+    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', behavior: profile.behavior } as any;
     const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI, aiProfileKey: aiProfileName, intent: null };
     if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);

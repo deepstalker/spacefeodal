@@ -25,7 +25,7 @@ export class FogOfWar {
 
   private render() {
     const shipId = this.config.player?.shipId ?? this.config.ships.current;
-    const visRadius = this.config.ships.defs[shipId]?.combat?.sensorRadius ?? 1200;
+    const visRadius = (this.config.ships.defs[shipId]?.sensors as any)?.radar_range ?? this.config.ships.defs[shipId]?.combat?.sensorRadius ?? 1200;
     const player = (this.scene as any).ship as Phaser.GameObjects.Image | undefined;
     if (!player) return;
     const px = player.x, py = player.y;

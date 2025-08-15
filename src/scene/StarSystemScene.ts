@@ -80,12 +80,14 @@ export default class StarSystemScene extends Phaser.Scene {
     try { this.textures.get('bg_stars1').setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
     const stars = new BackgroundTiler(this, 'bg_stars1', -30, 0.6, 1.0, Phaser.BlendModes.SCREEN);
     stars.init(system.size.width, system.size.height);
-    // Nebula layer on top of stars: stronger parallax
-    const bgKey = this.textures.exists('bg_nebula_blue') ? 'bg_nebula_blue' : 'bg_nebula1';
-    try { this.textures.get(bgKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
-    const nebula = new BackgroundTiler(this, bgKey, -25, 0.8, 0.8, Phaser.BlendModes.SCREEN);
-    nebula.init(system.size.width, system.size.height);
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => { stars.update(); nebula.update(); });
+    // Nebula layer on top of stars: stronger parallax (only if texture exists)
+    let nebula: any = null;
+    if (this.textures.exists('bg_nebula_blue')) {
+      try { this.textures.get('bg_nebula_blue').setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
+      nebula = new BackgroundTiler(this, 'bg_nebula_blue', -25, 0.8, 0.8, Phaser.BlendModes.SCREEN);
+      nebula.init(system.size.width, system.size.height);
+    }
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => { stars.update(); if (nebula) nebula.update(); });
     // Optional extra starfield
     this.starfield = this.add.graphics().setDepth(-15);
     this.drawStarfield();

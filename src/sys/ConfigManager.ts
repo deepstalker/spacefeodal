@@ -114,7 +114,7 @@ export type StardwellersConfig = {
 };
 
 export type AIProfilesConfig = {
-  profiles: Record<string, { behavior: string; startDisposition: 'neutral' | 'enemy' | 'ally'; sensors?: { react?: { onFaction?: Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> } }; combat?: { retreatHpPct?: number } }>;
+  profiles: Record<string, { behavior: string; sensors?: { react?: { onFaction?: Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> } }; combat?: { retreatHpPct?: number } }>;
 };
 
 export type FactionsConfig = {
