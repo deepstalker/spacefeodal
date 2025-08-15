@@ -10,7 +10,7 @@
     "pirate": {
       "relations": {
         "player": "confrontation",
-        "pirate": "confrontation",
+        "pirate": "ally",
         "planet_traders": "confrontation"
       }
     },

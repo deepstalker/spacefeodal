@@ -407,7 +407,9 @@ export class CombatManager {
       const profile = profileKey ? this.config.aiProfiles.profiles[profileKey] : undefined;
       const reactions = profile?.sensors?.react?.onFaction;
       let decided: { type: 'attack'|'flee'; target: any } | null = null;
-      for (const s of sensed) {
+      // prefer non-pirate targets first to avoid mutual pirate-pirate selection
+      const sorted = sensed.sort((a,b) => (a.faction === 'pirate' ? 1 : 0) - (b.faction === 'pirate' ? 1 : 0));
+      for (const s of sorted) {
         const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions);
         const act = reactions?.[rel] ?? 'ignore';
         if (act === 'attack') { decided = { type: 'attack', target: s.obj }; break; }
@@ -415,7 +417,7 @@ export class CombatManager {
       }
       t.intent = decided;
       // debug: pirates intents
-      if ((t.faction === 'pirate') && decided) {
+      if ((t.faction === 'pirate') && decided && Math.random() < 0.1) {
         try { console.debug('[AI] Pirate intent', decided.type, 'to', decided.target?.x, decided.target?.y); } catch {}
       }
 
