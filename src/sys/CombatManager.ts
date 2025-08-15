@@ -395,7 +395,14 @@ export class CombatManager {
       const sensed: any[] = [];
       for (const o of this.targets) {
         if (o === t) continue;
-        const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, o.obj.x, o.obj.y);
+        const objAny: any = o.obj;
+        // пропускаем цели в состоянии докинга/дока
+        const st = objAny?.__state;
+        const invisible = (typeof objAny?.alpha === 'number' && objAny.alpha <= 0.05) || objAny?.visible === false;
+        if (!objAny?.active) continue;
+        if (st === 'docked' || st === 'docking') continue;
+        if (invisible) continue;
+        const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, objAny.x, objAny.y);
         if (d <= radar) sensed.push(o);
       }
       const playerObj = this.ship as any;
@@ -412,10 +419,19 @@ export class CombatManager {
       for (const s of sorted) {
         const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions);
         const act = reactions?.[rel] ?? 'ignore';
+        // пропускаем докованных целей
+        if ((s.obj as any)?.__state === 'docked' || (s.obj as any)?.__state === 'docking') continue;
         if (act === 'attack') { decided = { type: 'attack', target: s.obj }; break; }
         if (act === 'flee') { decided = { type: 'flee', target: s.obj }; break; }
       }
-      t.intent = decided;
+      // If current intent target is invalid (docked/docking/inactive) — clear it
+      const curIntent: any = (t as any).intent;
+      const curTarget: any = curIntent?.target;
+      if (curTarget && (!curTarget.active || curTarget.__state === 'docked' || curTarget.__state === 'docking')) {
+        (t as any).intent = null;
+      } else {
+        (t as any).intent = decided;
+      }
       // debug: pirates intents
       if ((t.faction === 'pirate') && decided && Math.random() < 0.1) {
         try { console.debug('[AI] Pirate intent', decided.type, 'to', decided.target?.x, decided.target?.y); } catch {}

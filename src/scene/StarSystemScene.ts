@@ -513,6 +513,10 @@ export default class StarSystemScene extends Phaser.Scene {
     if (!sys || !Array.isArray(sys.planets) || !this.ship) return;
     for (const o of this.npcs) {
       if ((o as any).__behavior !== 'planet_trader') continue;
+      // If trader has combat intent (e.g., flee), let CombatManager drive movement to avoid double-speed
+      const cmAny: any = (this as any).combat;
+      const cmEntry = cmAny?.targets?.find((t: any) => t.obj === o);
+      if (cmEntry && cmEntry.intent) continue;
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
       let target = (o as any).__targetPlanet;
       if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
@@ -535,7 +539,10 @@ export default class StarSystemScene extends Phaser.Scene {
         const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.3 * dt);
         heading += turn;
         o.rotation = heading + noseOffsetRad;
-        const speed = 120;
+        // derive speed from ship definition (consistent with CombatManager)
+        const shipId = cmEntry?.shipId ?? 'trader';
+        const maxSpeed = this.config.ships.defs[shipId]?.movement?.MAX_SPEED ?? 0.8;
+        const speed = maxSpeed * 120;
         const prevX = o.x, prevY = o.y;
         o.x += Math.cos(heading) * speed * dt;
         o.y += Math.sin(heading) * speed * dt;
