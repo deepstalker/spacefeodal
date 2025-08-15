@@ -121,14 +121,18 @@ export default class StarSystemScene extends Phaser.Scene {
     for (let i = 0; i < system.planets.length; i++) {
       const p = system.planets[i];
       const key = `planet_${(i % 10).toString().padStart(2,'0')}`;
-      const c = this.add.image(
-        system.star.x + p.orbit.radius,
-        system.star.y,
-        key
-      ).setDepth(0);
+      const c = this.add.image(0, 0, key).setDepth(0);
       c.setDisplaySize(512, 512).setOrigin(0.5);
       const initAng = Math.random() * 360;
-      this.planets.push({ obj: c, data: { ...p, angleDeg: initAng } });
+      const record = { obj: c, data: { ...p, angleDeg: initAng } } as any;
+      this.planets.push(record);
+      // Immediately position planet to its initial randomized angle and proxy into config for consumers
+      const rad = Phaser.Math.DegToRad(initAng);
+      const px0 = system.star.x + Math.cos(rad) * p.orbit.radius;
+      const py0 = system.star.y + Math.sin(rad) * p.orbit.radius;
+      c.x = px0; c.y = py0;
+      const confPlanet = (system.planets as any[]).find(pl => pl.id === p.id) as any;
+      if (confPlanet) { confPlanet._x = px0; confPlanet._y = py0; }
     }
     // Fog of War disabled for now
 
@@ -177,8 +181,10 @@ export default class StarSystemScene extends Phaser.Scene {
     // Spawn traders near planets — count equals number of planets
     for (let i = 0; i < system.planets.length; i++) {
       const planet = system.planets[i];
-      const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
-      const py = (planet as any)._y ?? system.star.y;
+      // use live sprite coords (already set by initial placement)
+      const live = this.getPlanetWorldPosById(planet.id);
+      const px = live?.x ?? (planet as any)._x ?? (system.star.x + planet.orbit.radius);
+      const py = live?.y ?? (planet as any)._y ?? system.star.y;
       const ang = Math.random() * Math.PI * 2;
       const dOff = 300 + Math.random() * 200;
       const tX = px + Math.cos(ang) * dOff;
