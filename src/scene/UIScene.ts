@@ -209,6 +209,7 @@ export default class UIScene extends Phaser.Scene {
         // icon fit
         const iconKey = defs[key].icon ?? key;
         if (this.textures.exists(iconKey)) {
+          try { this.textures.get(iconKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
           const img = this.add.image(x + slotSize/2, y + slotSize/2, iconKey).setDepth(1501).setScrollFactor(0);
           img.setDisplaySize(slotSize - 6, slotSize - 6);
           img.setOrigin(0.5);
