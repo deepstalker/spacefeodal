@@ -1,0 +1,11 @@
+{
+  "rarities": {
+    "common":   { "name": "Обычное",   "color": "#808080" },
+    "uncommon": { "name": "Необычное", "color": "#3b82f6" },
+    "rare":     { "name": "Редкое",    "color": "#22c55e" },
+    "epic":     { "name": "Эпическое", "color": "#a855f7" },
+    "legendary":{ "name": "Легендарное","color": "#f59e0b" }
+  }
+}
+
+

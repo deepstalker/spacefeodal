@@ -50,6 +50,13 @@ export default class PreloadScene extends Phaser.Scene {
     // убран устаревший "bg_nebula1" (файл удалён)
     this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');
     this.load.image('bg_stars1', '/assets/Stars-Big_1_1_PC.png');
+    // Weapons icons
+    this.load.image('weapon_laser', '/assets/weapon/laser.png');
+    this.load.image('weapon_cannon', '/assets/weapon/cannon.png');
+    this.load.image('weapon_missile', '/assets/weapon/missile.png');
+    this.load.image('weapon_railgun', '/assets/weapon/railgun.png');
+    this.load.image('weapon_plasma', '/assets/weapon/plasma.png');
+    this.load.image('weapon_flak', '/assets/weapon/flak.png');
     // Planets
     for (let i = 0; i <= 9; i++) {
       const idx = i.toString().padStart(2, '0');

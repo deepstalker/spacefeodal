@@ -77,6 +77,7 @@ export type AssetsConfig = {
 export type KeybindsConfig = { toggleFollow: string; zoomIn: string; zoomOut: string };
 export type ModulesConfig = { navigation: boolean; combat: boolean; llm: boolean };
 export type PersistenceConfig = { saveKey: string };
+export type ItemsConfig = { rarities: Record<string, { name: string; color: string }> };
 
 export type ShipConfig = {
   current: string;
@@ -137,6 +138,7 @@ export class ConfigManager {
   gameplay!: GameplayConfig;
   system!: SystemConfig;
   assets!: AssetsConfig;
+  items!: ItemsConfig;
   keybinds!: KeybindsConfig;
   modules!: ModulesConfig;
   persistence!: PersistenceConfig;
@@ -165,11 +167,12 @@ export class ConfigManager {
       // last resort: return empty object to avoid hard crash
       return {} as any;
     };
-    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
+    const [settings, gameplay, system, assets, items, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
       tryFetch(['/configs/general/settings.json', '/configs/settings.json']),
       tryFetch(['/configs/general/gameplay.json', '/configs/gameplay.json']),
       tryFetch(['/configs/systems/system.json', '/configs/system.json']),
       tryFetch(['/configs/general/assets.json', '/configs/assets.json']),
+      tryFetch(['/configs/general/items.json', '/configs/items.json']),
       tryFetch(['/configs/general/keybinds.json', '/configs/keybinds.json']),
       tryFetch(['/configs/general/modules.json', '/configs/modules.json']),
       tryFetch(['/configs/general/persistence.json', '/configs/persistence.json']),
@@ -187,6 +190,7 @@ export class ConfigManager {
     this.gameplay = gameplay;
     this.system = system;
     this.assets = assets;
+    this.items = items;
     this.keybinds = keybinds;
     this.modules = modules;
     this.persistence = persistence;

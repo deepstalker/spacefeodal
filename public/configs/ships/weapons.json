@@ -1,6 +1,8 @@
 {
   "defs": {
     "laser": {
+      "icon": "weapon_laser",
+      "rarity": "uncommon",
       "projectile": { "shape": "rect", "width": 8, "height": 2, "color": "#60a5fa" },
       "hitEffect": { "shape": "circle", "radius": 18, "color": "#93c5fd", "durationMs": 180 },
       "projectileSpeed": 700,
@@ -10,6 +12,8 @@
       "muzzleOffset": { "x": 0, "y": -40 }
     },
     "cannon": {
+      "icon": "weapon_cannon",
+      "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 5, "color": "#fde047" },
       "hitEffect": { "shape": "circle", "radius": 26, "color": "#fbbf24", "durationMs": 220 },
       "projectileSpeed": 500,
@@ -19,6 +23,8 @@
       "muzzleOffset": { "x": -20, "y": -30 }
     },
     "missile": {
+      "icon": "weapon_missile",
+      "rarity": "epic",
       "projectile": { "shape": "circle", "radius": 7, "color": "#f87171" },
       "hitEffect": { "shape": "circle", "radius": 32, "color": "#ef4444", "durationMs": 260 },
       "projectileSpeed": 200,
@@ -26,6 +32,40 @@
       "damage": 26,
       "range": 700,
       "muzzleOffset": { "x": 20, "y": -30 }
+    }
+    ,
+    "railgun": {
+      "icon": "weapon_railgun",
+      "rarity": "legendary",
+      "projectile": { "shape": "rect", "width": 10, "height": 2, "color": "#a3e635" },
+      "hitEffect": { "shape": "circle", "radius": 28, "color": "#84cc16", "durationMs": 240 },
+      "projectileSpeed": 900,
+      "fireRatePerSec": 1.5,
+      "damage": 22,
+      "range": 650,
+      "muzzleOffset": { "x": 0, "y": -42 }
+    },
+    "plasma": {
+      "icon": "weapon_plasma",
+      "rarity": "rare",
+      "projectile": { "shape": "circle", "radius": 6, "color": "#22d3ee" },
+      "hitEffect": { "shape": "circle", "radius": 24, "color": "#06b6d4", "durationMs": 220 },
+      "projectileSpeed": 550,
+      "fireRatePerSec": 3,
+      "damage": 14,
+      "range": 520,
+      "muzzleOffset": { "x": 12, "y": -36 }
+    },
+    "flak": {
+      "icon": "weapon_flak",
+      "rarity": "common",
+      "projectile": { "shape": "circle", "radius": 4, "color": "#94a3b8" },
+      "hitEffect": { "shape": "circle", "radius": 20, "color": "#cbd5e1", "durationMs": 180 },
+      "projectileSpeed": 480,
+      "fireRatePerSec": 5,
+      "damage": 6,
+      "range": 380,
+      "muzzleOffset": { "x": -12, "y": -36 }
     }
   }
 }

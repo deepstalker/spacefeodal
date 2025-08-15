@@ -17,6 +17,7 @@ export default class UIScene extends Phaser.Scene {
   private playerHp: number | null = null;
   private shipNameText?: Phaser.GameObjects.Text;
   private shipIcon?: Phaser.GameObjects.Image;
+  private weaponSlotsContainer?: Phaser.GameObjects.Container;
   private gameOverGroup?: Phaser.GameObjects.Container;
   private systemMenu?: any;
   constructor() {
@@ -58,6 +59,7 @@ export default class UIScene extends Phaser.Scene {
 
       // HUD bottom area
       this.createHUD(payload);
+      this.createWeaponBar();
       // Подписываемся на урон игрока
       const star = this.scene.get('StarSystemScene') as any;
       star.events.on('player-damaged', (hp: number) => {
@@ -169,6 +171,52 @@ export default class UIScene extends Phaser.Scene {
     // store refs for dynamic values
     (this as any).__hudSpeedValue = speedValue;
     (this as any).__hudHullValue = hullValue;
+  }
+
+  private createWeaponBar() {
+    if (!this.configRef) return;
+    const sw = this.scale.width; const sh = this.scale.height; const pad = 12;
+    const slotSize = 96; const slotBgColor = 0x2c2a2d; const outline = 0xA28F6E;
+    const container = this.add.container(0, 0).setDepth(1500);
+    container.setScrollFactor(0);
+    const cx = sw / 2; const cy = sh - pad - 110;
+    const spacing = 8;
+    const totalW = 6 * slotSize + 5 * spacing;
+    const startX = cx - totalW / 2;
+    const playerSlots = this.configRef.player?.weapons ?? [];
+    const defs = this.configRef.weapons?.defs ?? {} as any;
+    const rarityMap = (this.configRef.items?.rarities ?? {}) as any;
+    for (let i = 0; i < 6; i++) {
+      const x = startX + i * (slotSize + spacing);
+      const y = cy;
+      // base slot background
+      const slotBg = this.add.rectangle(x, y, slotSize, slotSize, slotBgColor, 1).setOrigin(0, 0).setDepth(1500).setScrollFactor(0);
+      slotBg.setStrokeStyle(2, outline, 1);
+      container.add(slotBg);
+      // rarity underlay (94x94 inside with 75% alpha)
+      const key = playerSlots[i];
+      if (key && defs[key]) {
+        const rarityKey = defs[key].rarity as string | undefined;
+        const rarityColorHex = rarityKey && rarityMap[rarityKey]?.color ? Number(rarityMap[rarityKey].color.replace('#','0x')) : 0x000000;
+        const under = this.add.rectangle(x + 1, y + 1, slotSize - 2, slotSize - 2, rarityColorHex, 0.75).setOrigin(0, 0).setDepth(1500).setScrollFactor(0);
+        container.add(under);
+        // icon fit
+        const iconKey = defs[key].icon ?? key;
+        if (this.textures.exists(iconKey)) {
+          const img = this.add.image(x + slotSize/2, y + slotSize/2, iconKey).setDepth(1501).setScrollFactor(0);
+          img.setDisplaySize(slotSize - 6, slotSize - 6);
+          img.setOrigin(0.5);
+          container.add(img);
+        }
+      }
+      // number badge (top-left)
+      const badge = this.add.rectangle(x + 4, y + 4, 32, 32, 0x2c2a2d, 1).setOrigin(0, 0).setDepth(1502).setScrollFactor(0);
+      badge.setStrokeStyle(1, outline, 1);
+      const num = this.add.text(x + 4 + 16, y + 4 + 16, `${i + 1}`, { color: '#e2e8f0', fontSize: '16px' }).setOrigin(0.5).setDepth(1503).setScrollFactor(0);
+      container.add(badge);
+      container.add(num);
+    }
+    this.weaponSlotsContainer = container;
   }
 
   private updateHUD() {
