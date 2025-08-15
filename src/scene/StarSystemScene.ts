@@ -420,7 +420,12 @@ export default class StarSystemScene extends Phaser.Scene {
               (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
               (o as any).__state = 'undocking';
               const ang = Math.random() * Math.PI * 2;
-              this.tweens.add({ targets: o, x: tx + Math.cos(ang) * 200, y: ty + Math.sin(ang) * 200, scaleX: bsx, scaleY: bsy, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
+              // recompute current planet position at undock time
+              const cur = (sys.planets as any[]).find((p: any) => p.id === target.id) as any;
+              const cx = (cur?._x ?? (sys.star.x + target.orbit.radius));
+              const cy = (cur?._y ?? sys.star.y);
+              o.x = cx; o.y = cy;
+              this.tweens.add({ targets: o, x: cx + Math.cos(ang) * 200, y: cy + Math.sin(ang) * 200, scaleX: bsx, scaleY: bsy, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
                 (o as any).__state = 'travel';
               }});
             });
