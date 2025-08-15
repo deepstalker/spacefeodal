@@ -410,17 +410,28 @@ export default class StarSystemScene extends Phaser.Scene {
       heading += turn;
       o.rotation = heading + noseOffsetRad;
       const speed = 140;
+      const prevX = o.x, prevY = o.y;
       o.x += Math.cos(heading) * speed * dt;
       o.y += Math.sin(heading) * speed * dt;
       // clamp to system bounds with 20% margin
       const sz2 = this.config.system?.size as any;
       if (sz2) {
-        const mx = Math.max(0, sz2.width * 0.2);
-        const my = Math.max(0, sz2.height * 0.2);
-        const maxX = Math.max(mx, sz2.width - mx);
-        const maxY = Math.max(my, sz2.height - my);
-        o.x = Phaser.Math.Clamp(o.x, mx, maxX);
-        o.y = Phaser.Math.Clamp(o.y, my, maxY);
+        const minX = Math.max(0, sz2.width * 0.2);
+        const minY = Math.max(0, sz2.height * 0.2);
+        const maxX = sz2.width - minX;
+        const maxY = sz2.height - minY;
+        const clampedX = Phaser.Math.Clamp(o.x, minX, maxX);
+        const clampedY = Phaser.Math.Clamp(o.y, minY, maxY);
+        const hitBoundary = (clampedX !== o.x) || (clampedY !== o.y);
+        o.x = clampedX; o.y = clampedY;
+        // если упёрлись в границу — сменим цель, чтобы не «змейкой» по краю
+        if (hitBoundary) {
+          (o as any).__targetPatrol = null;
+          // Повернём в сторону центра, чтобы уйти с края
+          const cx = sz2.width * 0.5, cy = sz2.height * 0.5;
+          const away = Math.atan2(cy - o.y, cx - o.x);
+          o.rotation = away + noseOffsetRad;
+        }
       }
       const dist = Math.hypot(dx, dy);
       if (dist < 160) (o as any).__targetPatrol = null;
@@ -463,17 +474,27 @@ export default class StarSystemScene extends Phaser.Scene {
         heading += turn;
         o.rotation = heading + noseOffsetRad;
         const speed = 120;
+        const prevX = o.x, prevY = o.y;
         o.x += Math.cos(heading) * speed * dt;
         o.y += Math.sin(heading) * speed * dt;
         // clamp to system bounds with 20% margin
         const sz = this.config.system?.size as any;
         if (sz) {
-          const mx = Math.max(0, sz.width * 0.2);
-          const my = Math.max(0, sz.height * 0.2);
-          const maxX = Math.max(mx, sz.width - mx);
-          const maxY = Math.max(my, sz.height - my);
-          o.x = Phaser.Math.Clamp(o.x, mx, maxX);
-          o.y = Phaser.Math.Clamp(o.y, my, maxY);
+          const minX = Math.max(0, sz.width * 0.2);
+          const minY = Math.max(0, sz.height * 0.2);
+          const maxX = sz.width - minX;
+          const maxY = sz.height - minY;
+          const clampedX = Phaser.Math.Clamp(o.x, minX, maxX);
+          const clampedY = Phaser.Math.Clamp(o.y, minY, maxY);
+          const hitBoundary = (clampedX !== o.x) || (clampedY !== o.y);
+          o.x = clampedX; o.y = clampedY;
+          if (hitBoundary) {
+            (o as any).__targetPlanet = this.pickRandomPlanet();
+            // Развернём в сторону центра для плавного ухода от края
+            const cx = sz.width * 0.5, cy = sz.height * 0.5;
+            const away = Math.atan2(cy - o.y, cx - o.x);
+            o.rotation = away + noseOffsetRad;
+          }
         }
         if (dist < dockRange) {
           // Start docking
