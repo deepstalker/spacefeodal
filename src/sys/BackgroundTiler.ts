@@ -9,7 +9,7 @@ export class BackgroundTiler {
   private worldH = 0;
   private tileW = 1024;
   private tileH = 1024;
-  private overdrawTiles = 2; // draw extra tiles around viewport to avoid popping on scroll/zoom
+  private overdrawTiles = 3; // draw extra tiles around viewport to avoid popping on scroll/zoom
   private pool: Phaser.GameObjects.Image[] = [];
   private activeKeys = new Set<string>();
   private rotationByKey = new Map<string, number>();
@@ -84,7 +84,9 @@ export class BackgroundTiler {
       const [sx, sy] = key.split(':').map(n => parseInt(n, 10));
       const offX = ((px % this.tileW) + this.tileW) % this.tileW;
       const offY = ((py % this.tileH) + this.tileH) % this.tileH;
-      spr.setPosition(sx * this.tileW - offX, sy * this.tileH - offY);
+      const posX = sx * this.tileW - offX;
+      const posY = sy * this.tileH - offY;
+      spr.setPosition(Math.round(posX), Math.round(posY));
       // Disable rotation to avoid checkerboard artifacts with non-rotatable seamless tiles
       spr.setAngle(0);
       spr.setVisible(true);
