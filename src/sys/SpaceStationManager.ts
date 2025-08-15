@@ -26,6 +26,15 @@ export class SpaceStationManager {
     (rect as any).__hp = 5000; (rect as any).__alive = true;
     this.stations.push({ type: 'pirate_base', obj: rect, label: lbl });
 
+    // register as target in combat system so it can be attacked
+    const cm: any = (this.scene as any).combat;
+    if (cm && Array.isArray(cm['targets'])) {
+      const bg = this.scene.add.rectangle(rect.x - 64, rect.y - 260, 128, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.15);
+      const fill = this.scene.add.rectangle(rect.x - 64, rect.y - 260, 128, 8, 0xef4444).setOrigin(0, 0.5).setDepth(0.16);
+      bg.setVisible(false); fill.setVisible(false);
+      cm['targets'].push({ obj: rect, hp: 5000, hpMax: 5000, hpBarBg: bg, hpBarFill: fill, ai: { type: 'static', preferRange: 0, retreatHpPct: 0 }, faction: 'pirate' });
+    }
+
     // simple base turret
     const baseRadar = 1400;
     const baseFireCooldownMs = 600; let baseLastShot = 0;
@@ -84,6 +93,19 @@ export class SpaceStationManager {
     };
     this.scene.time.delayedCall(initialDelayMs, spawnWave);
     this.scene.time.addEvent({ delay: intervalMs, loop: true, callback: spawnWave });
+
+    // handle base destruction: when hp <= 0, remove, stop waves
+    const checkAlive = (_t:number, _dt:number) => {
+      const cmAny: any = (this.scene as any).combat;
+      const entry = cmAny?.targets?.find((t: any) => t.obj === rect);
+      if (!entry) return;
+      if (entry.hp <= 0 && (rect as any).__alive) {
+        (rect as any).__alive = false;
+        rect.destroy(); lbl.destroy();
+        entry.hpBarBg.destroy(); entry.hpBarFill.destroy();
+      }
+    };
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, checkAlive);
   }
 }
 

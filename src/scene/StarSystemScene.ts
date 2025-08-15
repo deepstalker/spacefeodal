@@ -291,18 +291,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updatePatrolNPCs(dt));
 
-    // Test: spawn 3 pirates 5000 units below the sun
-    const testY = system.star.y + 5000;
-    const p1 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x - 120, testY) as any;
-    const p2 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x, testY + 60) as any;
-    const p3 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x + 120, testY - 60) as any;
-    [p1, p2, p3].forEach((p: any) => {
-      if (!p) return;
-      (p as any).__behavior = 'patrol';
-      (p as any).__targetPatrol = null;
-      (this.combat as any).setAIProfileFor?.(p, 'patrol');
-      this.npcs.push(p);
-    });
+    // Test pirate spawns removed — use encounters or stations to introduce pirates
   }
 
   public applyDamageToPlayer(amount: number) {
