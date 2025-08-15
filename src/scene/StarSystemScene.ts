@@ -162,6 +162,7 @@ export default class StarSystemScene extends Phaser.Scene {
         ;(npc as any).__despawnAt = this.time.now + pirateLifetimeMs;
         // mark base home
         ;(npc as any).__homeBase = pirateBase;
+        ;(npc as any).__returningHome = false;
         this.npcs.push(npc);
       }
     };
@@ -580,6 +581,9 @@ export default class StarSystemScene extends Phaser.Scene {
         // return to base and despawn
         const hb: any = (o as any).__homeBase;
         const hx = hb?.x ?? 0, hy = hb?.y ?? 0;
+        // clear combat intent
+        (this.combat as any).clearIntentFor?.(o);
+        (o as any).__returningHome = true;
         const ang = Math.atan2(hy - o.y, hx - o.x);
         o.rotation = ang + noseOffsetRad;
         const retSpeed = baseSpeed * 1.1;

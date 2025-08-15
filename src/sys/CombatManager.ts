@@ -31,6 +31,11 @@ export class CombatManager {
     this.config = config;
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
+
+  public clearIntentFor(obj: any) {
+    const entry = this.targets.find(t => t.obj === obj);
+    if (entry) (entry as any).intent = null;
+  }
   public setAIProfileFor(obj: any, profileKey: string) {
     const entry = this.targets.find(t => t.obj === obj);
     if (!entry) return;
@@ -166,6 +171,8 @@ export class CombatManager {
     const dt = deltaMs / 1000;
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
+      // If object is returning home (e.g., wave despawn), skip combat steering
+      if ((t.obj as any).__returningHome) continue;
       // If no combat intent and behavior isn't aggressive — let regular logic handle
       if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') continue;
       const obj: any = t.obj;
