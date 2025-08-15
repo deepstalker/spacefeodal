@@ -1,7 +1,7 @@
 {
   "prefabs": {
     "trader": { "shipId": "trader", "aiProfile": "planet_trader", "combatAI": "coward", "faction": "planet_traders", "weapons": [] },
-    "pirate": { "shipId": "fighter", "aiProfile": "aggressive", "combatAI": "default_aggressive", "faction": "pirate", "weapons": ["laser","cannon"] }
+    "pirate": { "shipId": "fighter", "aiProfile": "patrol", "combatAI": "default_aggressive", "faction": "pirate", "weapons": ["laser","cannon"] }
   }
 }
 

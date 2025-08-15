@@ -12,7 +12,19 @@ export class CombatManager {
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
-  private targets: Array<{ obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number }; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }; weaponSlots?: string[]; shipId?: string; faction?: string; combatAI?: string }>=[];
+  private targets: Array<{
+    obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
+    hp: number; hpMax: number;
+    hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle;
+    ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string };
+    weaponSlots?: string[];
+    shipId?: string;
+    faction?: string;
+    combatAI?: string;
+    aiProfileKey?: string;
+    intent?: { type: 'attack' | 'flee'; target: any } | null;
+    overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> };
+  }>=[];
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -57,38 +69,13 @@ export class CombatManager {
     const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
     const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static', startDisposition: 'neutral' } as any;
     const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI };
+    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI, aiProfileKey: aiProfileName, intent: null };
     if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);
     return obj as Target;
   }
 
-  spawnEnemyFromConfig(enemyId: string, worldX: number, worldY: number) {
-    const def = this.config.enemies.defs[enemyId];
-    if (!def) return null;
-    const ship = this.config.ships.defs[def.shipId] ?? this.config.ships.defs[this.config.ships.current];
-    let obj: any;
-    const s = ship.sprite;
-    const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
-    obj = this.scene.add.image(worldX, worldY, texKey).setDepth(0.4);
-    obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
-    obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
-    obj.setRotation(Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0));
-    (obj as any).__noseOffsetRad = Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0);
-    (obj as any).__baseScaleX = obj.scaleX;
-    (obj as any).__baseScaleY = obj.scaleY;
-    const barW = 128;
-    const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
-    const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
-    const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
-    bg.setVisible(false); fill.setVisible(false);
-    const profile = this.config.aiProfiles.profiles[def.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral' } as any;
-    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: def.shipId, behavior: profile.behavior, faction: undefined };
-    if (def.weapons && Array.isArray(def.weapons)) entry.weaponSlots = def.weapons.slice(0);
-    this.targets.push(entry);
-    return obj as Target;
-  }
+  // enemies-by-config removed — use spawnNPCPrefab with stardwellers prefabs
 
   bindInput(inputMgr: any) {
     inputMgr.onLeftClick((wx: number, wy: number) => {
@@ -139,7 +126,9 @@ export class CombatManager {
 
     // auto logic
     if (!this.ship) return;
-    // simple AI move for enemies marked as ship
+    // sensors + intent resolution
+    this.updateSensors(deltaMs);
+    // AI steering
     this.updateEnemiesAI(deltaMs);
 
     // player auto fire at selected target — use player's equipped weapons
@@ -150,24 +139,25 @@ export class CombatManager {
       this.autoFire(this.ship, this.selectedTarget as any);
       this.weaponSlots = saved;
     }
-    // enemies auto fire at player (use per-enemy weapons if set), only if disposition is 'enemy'
+    // enemies auto fire by intent
     for (const t of this.targets) {
-      if (!t.ai || t.ai.disposition !== 'enemy') continue;
+      if (!t.ai || !t.intent || t.intent.type !== 'attack') continue;
+      const targetObj = t.intent.target;
+      if (!targetObj || !targetObj.active) continue;
       const saved = this.weaponSlots;
       const slots = (t as any).weaponSlots as string[] | undefined;
       if (slots && slots.length) this.weaponSlots = slots;
-      this.autoFire(t.obj as any, this.ship);
+      this.autoFire(t.obj as any, targetObj);
       this.weaponSlots = saved;
     }
   }
 
   private updateEnemiesAI(deltaMs: number) {
     const dt = deltaMs / 1000;
-    const player = this.ship;
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
-      // Split logic: regular vs combat
-      if (t.ai.behavior && t.ai.behavior !== 'aggressive') continue; // non-combat regular behavior handled in StarSystemScene
+      // If no combat intent and behavior isn't aggressive — let regular logic handle
+      if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') continue;
       const obj: any = t.obj;
       const retreat = ((): number => {
         if (t.combatAI) {
@@ -177,17 +167,19 @@ export class CombatManager {
         return t.ai.retreatHpPct ?? 0;
       })();
       const noseOffsetRad = (obj.__noseOffsetRad ?? 0) as number;
-      const dx = player.x - obj.x;
-      const dy = player.y - obj.y;
+      const targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : this.ship;
+      const fleeObj = (t.intent && t.intent.type === 'flee') ? t.intent.target : null;
+      const dx = (fleeObj ? (obj.x - fleeObj.x) : (targetObj.x - obj.x));
+      const dy = (fleeObj ? (obj.y - fleeObj.y) : (targetObj.y - obj.y));
       const dist = Math.hypot(dx, dy);
       let desired = 0; // -1 retreat, 0 hold, 1 approach
       if (t.hp / t.hpMax <= retreat) desired = -1;
-      else desired = 1; // approach by default (range now handled via sensors/targeting)
+      else desired = 1; // approach by default
 
       // steer towards/away, constant turn rate and speed
       const turnSpeed = 1.6; // rad/s
       let heading = (obj.rotation ?? 0) - noseOffsetRad;
-      const desiredAngle = Math.atan2(dy, dx) + (desired < 0 ? Math.PI : 0);
+      const desiredAngle = Math.atan2(dy, dx) + (desired < 0 ? 0 : 0); // dx,dy already flipped for flee
       let diff = desiredAngle - heading;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
@@ -348,6 +340,55 @@ export class CombatManager {
     const w = (typeof obj.width === 'number' ? obj.width : 128);
     const h = (typeof obj.height === 'number' ? obj.height : 128);
     return Math.max(w, h) * 0.5;
+  }
+
+  private getRadarRangeFor(obj: any): number {
+    const entry = this.targets.find(t => t.obj === obj);
+    const shipId = entry?.shipId ?? (obj === this.ship ? (this.config.player?.shipId ?? this.config.ships.current) : undefined);
+    const def = shipId ? this.config.ships.defs[shipId] : undefined;
+    // Пока используем combat.sensorRadius как радарный радиус
+    const r = def?.combat?.sensorRadius ?? 800;
+    return r;
+  }
+
+  private getRelation(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'>): 'ally'|'neutral'|'confrontation' {
+    if (!ofFaction || !otherFaction) return 'neutral';
+    if (overrides && overrides[otherFaction]) return overrides[otherFaction];
+    const rel = this.config.factions?.factions?.[ofFaction]?.relations?.[otherFaction];
+    return rel ?? 'neutral';
+  }
+
+  private updateSensors(deltaMs: number) {
+    // Build list of sensed intents
+    for (const t of this.targets) {
+      t.intent = null;
+      const myFaction = t.faction;
+      const radar = this.getRadarRangeFor(t.obj);
+      // scan all potential targets (other NPCs + player)
+      const sensed: any[] = [];
+      for (const o of this.targets) {
+        if (o === t) continue;
+        const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, o.obj.x, o.obj.y);
+        if (d <= radar) sensed.push(o);
+      }
+      // include player
+      const playerObj = this.ship as any;
+      const dp = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, playerObj.x, playerObj.y);
+      if (dp <= radar) sensed.push({ obj: playerObj, faction: 'player' });
+
+      // derive intent by reactions
+      const profileKey = t.aiProfileKey;
+      const profile = profileKey ? this.config.aiProfiles.profiles[profileKey] : undefined;
+      const reactions = profile?.sensors?.react?.onFaction;
+      let decided: { type: 'attack'|'flee'; target: any } | null = null;
+      for (const s of sensed) {
+        const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions);
+        const act = reactions?.[rel] ?? 'ignore';
+        if (act === 'attack') { decided = { type: 'attack', target: s.obj }; break; }
+        if (act === 'flee') { decided = { type: 'flee', target: s.obj }; break; }
+      }
+      t.intent = decided;
+    }
   }
 
   private getAimedTargetPoint(shooter: any, target: any, w: any) {

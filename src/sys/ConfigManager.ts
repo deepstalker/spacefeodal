@@ -105,14 +105,7 @@ export type WeaponsConfig = {
   }>;
 };
 
-export type EnemiesConfig = {
-  defs: Record<string, {
-    displayName: string;
-    shipId: string;
-    weapons: string[];
-    aiProfile: string;
-  }>;
-};
+// Enemies config removed — all NPC are defined in stardwellers
 
 export type StardwellersConfig = {
   prefabs: Record<string, { shipId: string; aiProfile: string; combatAI?: string; faction?: string; weapons: string[] }>;
@@ -147,7 +140,6 @@ export class ConfigManager {
   persistence!: PersistenceConfig;
   ships!: ShipConfig;
   weapons!: WeaponsConfig;
-  enemies!: EnemiesConfig;
   aiProfiles!: AIProfilesConfig;
   player!: PlayerConfig;
   stardwellers!: StardwellersConfig;
@@ -162,7 +154,7 @@ export class ConfigManager {
 
   async loadAll() {
     const base = '/configs';
-    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, enemies, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
+    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
       fetch(`${base}/settings.json`).then(r => r.json()),
       fetch(`${base}/gameplay.json`).then(r => r.json()),
       fetch(`${base}/system.json`).then(r => r.json()),
@@ -172,7 +164,6 @@ export class ConfigManager {
       fetch(`${base}/persistence.json`).then(r => r.json()),
       fetch(`${base}/ships.json`).then(r => r.json()),
       fetch(`${base}/weapons.json`).then(r => r.json()),
-      fetch(`${base}/enemies.json`).then(r => r.json()),
       fetch(`${base}/player.json`).then(r => r.json()),
       fetch(`${base}/ai_profiles.json`).then(r => r.json()),
       fetch(`${base}/systems.json`).then(r => r.json()),
@@ -190,7 +181,6 @@ export class ConfigManager {
     this.persistence = persistence;
     this.ships = ships;
     this.weapons = weapons;
-    this.enemies = enemies;
     this.player = player;
     this.aiProfiles = aiProfiles;
     this.stardwellers = stardwellers;

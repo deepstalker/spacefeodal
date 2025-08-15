@@ -263,6 +263,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updatePatrolNPCs(dt));
 
     // Test: spawn 3 pirates 5000 units below the sun
     const testY = system.star.y + 5000;
@@ -360,15 +361,47 @@ export default class StarSystemScene extends Phaser.Scene {
         if (e.typeId === 'lost_treasure') {
           this.add.rectangle(e.x, e.y, 48, 48, 0xffe066).setDepth(0.4);
         } else if (e.typeId === 'pirates') {
-          // spawn 3 hostile ships
-          const ids = ['hostile_ship','hostile_ship','hostile_ship'];
+          // spawn 3 pirates from stardwellers
           const offs = [[0,0],[40,20],[-40,-20]];
-          ids.forEach((id, idx)=> this.combat.spawnEnemyFromConfig(id, e.x + offs[idx][0], e.y + offs[idx][1]));
+          offs.forEach((o, idx)=> (this.combat as any).spawnNPCPrefab('pirate', e.x + o[0], e.y + o[1]));
         }
         // remove from list
         this.encounterMarkers = this.encounterMarkers.filter(m => m !== e);
         break;
       }
+    }
+  }
+
+  private updatePatrolNPCs(deltaMs: number) {
+    const dt = deltaMs / 1000;
+    const sys = this.config?.system as any;
+    if (!sys || !Array.isArray(sys.planets)) return;
+    for (const o of this.npcs) {
+      if ((o as any).__behavior !== 'patrol') continue;
+      const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
+      let target = (o as any).__targetPatrol;
+      if (!target) {
+        const choice = Math.random() < 0.2 ? { _isStar: true } : this.pickRandomPlanet();
+        (o as any).__targetPatrol = choice;
+        target = choice;
+      }
+      const tx = (target._isStar ? sys.star.x : (target._x ?? (sys.star.x + target.orbit.radius)));
+      const ty = (target._isStar ? sys.star.y : (target._y ?? sys.star.y));
+      const dx = tx - o.x;
+      const dy = ty - o.y;
+      const desiredHeading = Math.atan2(dy, dx);
+      let heading = (o.rotation ?? 0) - noseOffsetRad;
+      let diff = desiredHeading - heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.3 * dt);
+      heading += turn;
+      o.rotation = heading + noseOffsetRad;
+      const speed = 140;
+      o.x += Math.cos(heading) * speed * dt;
+      o.y += Math.sin(heading) * speed * dt;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 120) (o as any).__targetPatrol = null;
     }
   }
 
@@ -445,20 +478,13 @@ export default class StarSystemScene extends Phaser.Scene {
   }
 
   private spawnPlanetTrader(x: number, y: number) {
-    // synthetic enemy-def like object
-    const def = { shipId: 'trader', weapons: [], aiProfile: 'planet_trader' } as any;
-    // Temporarily inject into enemies table to reuse spawn
-    const id = `npc_trader_${Math.floor(Math.random()*1e6)}`;
-    (this.config.enemies.defs as any)[id] = def;
-    const npc = (this.combat as any).spawnEnemyFromConfig(id, x, y) as any;
-    delete (this.config.enemies.defs as any)[id];
-    if (npc) {
-      (npc as any).__behavior = 'planet_trader';
-      (npc as any).__targetPlanet = this.pickNearestPlanet(x, y) ?? this.pickRandomPlanet();
-      (npc as any).__orbitUntil = 0;
-      (npc as any).__state = 'travel';
-      this.npcs.push(npc);
-    }
+    const npc = (this.combat as any).spawnNPCPrefab('trader', x, y) as any;
+    if (!npc) return;
+    (npc as any).__behavior = 'planet_trader';
+    (npc as any).__targetPlanet = this.pickNearestPlanet(x, y) ?? this.pickRandomPlanet();
+    (npc as any).__orbitUntil = 0;
+    (npc as any).__state = 'travel';
+    this.npcs.push(npc);
   }
 
   private pickRandomPlanet() {

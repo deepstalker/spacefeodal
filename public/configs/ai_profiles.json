@@ -18,6 +18,13 @@
       "sensors": { "react": { "onFaction": { "confrontation": "flee", "ally": "seekEscort", "neutral": "ignore" } } },
       "combat": { "retreatHpPct": 0.99 }
     }
+    ,
+    "patrol": {
+      "behavior": "patrol",
+      "startDisposition": "enemy",
+      "sensors": { "react": { "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore" } } },
+      "combat": { "retreatHpPct": 0.3 }
+    }
   }
 }
 
