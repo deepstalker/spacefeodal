@@ -8,7 +8,7 @@
         "key": "ship_explorer",
         "displaySize": { "width": 128, "height": 256 },
         "origin": { "x": 0.5, "y": 0.5 },
-        "noseOffsetDeg": 0
+        "noseOffsetDeg": 90
       },
       "combat": {
         "weaponSlots": 3,
@@ -37,7 +37,7 @@
         "key": "ship_trader",
         "displaySize": { "width": 96, "height": 192 },
         "origin": { "x": 0.5, "y": 0.5 },
-        "noseOffsetDeg": 0
+        "noseOffsetDeg": 90
       },
       "combat": {
         "weaponSlots": 3,

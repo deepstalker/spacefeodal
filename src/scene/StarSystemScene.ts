@@ -137,9 +137,10 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__state = 'travel';
             (npc as any).__dockLockUntil = this.time.now + 8000; // avoid instant docking
             (npc as any).setAlpha?.(1);
-            (npc as any).setScale?.(1);
             this.npcs.push(npc);
-            this.tweens.add({ targets: npc, scaleX: { from: 0.6, to: 1 }, scaleY: { from: 0.6, to: 1 }, duration: 250, ease: 'Sine.easeOut' });
+            const sx = (npc as any).scaleX ?? 1;
+            const sy = (npc as any).scaleY ?? 1;
+            this.tweens.add({ targets: npc, scaleX: { from: sx * 0.6, to: sx }, scaleY: { from: sy * 0.6, to: sy }, duration: 250, ease: 'Sine.easeOut' });
             const mark = this.add.circle(npc.x, npc.y, 10, 0xff00ff, 0.7).setDepth(2000).setScrollFactor(1);
             this.tweens.add({ targets: mark, alpha: 0, duration: 1200, onComplete: () => mark.destroy() });
           }
@@ -159,9 +160,10 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__state = 'travel';
             (npc as any).__dockLockUntil = this.time.now + 8000;
             (npc as any).setAlpha?.(1);
-            (npc as any).setScale?.(1);
             this.npcs.push(npc);
-            this.tweens.add({ targets: npc, scaleX: { from: 0.6, to: 1 }, scaleY: { from: 0.6, to: 1 }, duration: 250, ease: 'Sine.easeOut' });
+            const sx2 = (npc as any).scaleX ?? 1;
+            const sy2 = (npc as any).scaleY ?? 1;
+            this.tweens.add({ targets: npc, scaleX: { from: sx2 * 0.6, to: sx2 }, scaleY: { from: sy2 * 0.6, to: sy2 }, duration: 250, ease: 'Sine.easeOut' });
             const mark = this.add.circle(npc.x, npc.y, 10, 0xff00ff, 0.7).setDepth(2000).setScrollFactor(1);
             this.tweens.add({ targets: mark, alpha: 0, duration: 1200, onComplete: () => mark.destroy() });
           }
@@ -181,9 +183,10 @@ export default class StarSystemScene extends Phaser.Scene {
       (near as any).__state = 'travel';
       (near as any).__dockLockUntil = this.time.now + 8000;
       (near as any).setAlpha?.(1);
-      (near as any).setScale?.(1);
       this.npcs.push(near);
-      this.tweens.add({ targets: near, scaleX: { from: 0.6, to: 1 }, scaleY: { from: 0.6, to: 1 }, duration: 250, ease: 'Sine.easeOut' });
+      const nsx = (near as any).scaleX ?? 1;
+      const nsy = (near as any).scaleY ?? 1;
+      this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
       console.log('[NPC] Guaranteed trader spawned and registered', { x: near.x, y: near.y, state: (near as any).__state });
       const m = this.add.circle(nearX, nearY, 18, 0x00ff00, 0.6).setDepth(3000).setScrollFactor(1);
       this.tweens.add({ targets: m, alpha: 0, duration: 1500, onComplete: () => m.destroy() });
