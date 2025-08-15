@@ -18,7 +18,9 @@ export class MovementManager {
   followPath(obj: Phaser.GameObjects.GameObject & { x: number; y: number; rotation: number }, path: PlannedPath) {
     const last = path.points[path.points.length - 1];
     this.target = new Phaser.Math.Vector2(last.x, last.y);
-    const noseOffsetRad = Phaser.Math.DegToRad(this.config.assets.sprites?.ship?.noseOffsetDeg ?? 0);
+    // Use player's ship nose offset from ships.json
+    const shipId = this.config.player?.shipId ?? this.config.ships?.current;
+    const noseOffsetRad = Phaser.Math.DegToRad(this.config.ships?.defs?.[shipId!]?.sprite?.noseOffsetDeg ?? 0);
     this.headingRad = obj.rotation - noseOffsetRad;
     (obj as any).__moveRef = this;
   }
@@ -46,11 +48,11 @@ export class MovementManager {
     const obj = this.scene.children.getAll().find(o => (o as any)['__moveRef'] === this) as any;
     if (!obj) return;
 
-    // Параметры движения могут переопределяться выбранным кораблём
-    const selectedId = this.config.ships?.current;
+    // Параметры движения и визуальный сдвиг носа берём из выбранного корабля игрока
+    const selectedId = this.config.player?.shipId ?? this.config.ships?.current;
     const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
     const mv = selected?.movement ?? this.config.gameplay.movement;
-    const noseOffsetRad = Phaser.Math.DegToRad(this.config.assets.sprites?.ship?.noseOffsetDeg ?? 0);
+    const noseOffsetRad = Phaser.Math.DegToRad(selected?.sprite?.noseOffsetDeg ?? 0);
     if (this.headingRad == null) this.headingRad = obj.rotation - noseOffsetRad;
     let speed = this.speed;
     if (!this.target) {

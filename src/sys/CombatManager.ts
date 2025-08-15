@@ -44,10 +44,11 @@ export class CombatManager {
     obj = this.scene.add.image(x, y, texKey).setDepth(0.8);
     obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
     obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
-    obj.setRotation(Phaser.Math.DegToRad(0));
+    // Начальная ориентация — по носу из конфига
+    obj.setRotation(Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0));
     obj.setAlpha(1);
     obj.setVisible(true);
-    (obj as any).__noseOffsetRad = 0;
+    (obj as any).__noseOffsetRad = Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0);
     const barW = 128;
     const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
     const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
@@ -69,7 +70,8 @@ export class CombatManager {
     const ship = this.config.ships.defs[def.shipId] ?? this.config.ships.defs[this.config.ships.current];
     let obj: any;
     const s = ship.sprite;
-    obj = this.scene.add.image(worldX, worldY, s.key).setDepth(0.4);
+    const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
+    obj = this.scene.add.image(worldX, worldY, texKey).setDepth(0.4);
     obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
     obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
     obj.setRotation(Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0));

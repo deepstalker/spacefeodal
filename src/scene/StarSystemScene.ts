@@ -200,20 +200,20 @@ export default class StarSystemScene extends Phaser.Scene {
       headingDeg: cfgStart.headingDeg ?? fallbackStart.headingDeg,
       zoom: cfgStart.zoom ?? fallbackStart.zoom
     };
-    const shipKey = this.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public';
     const selectedId = this.config.player?.shipId ?? this.config.ships.current;
     const selected = this.config.ships.defs[selectedId];
-    const cfg = selected?.sprite ?? this.config.assets.sprites?.ship;
-    const keyToUse = cfg?.key ?? shipKey;
+    const s = selected?.sprite;
+    const fallbackKey = this.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public';
+    const keyToUse = (s?.key && this.textures.exists(s.key)) ? s.key : fallbackKey;
     this.ship = this.add.image(start.x, start.y, keyToUse) as any;
-    const ox = cfg?.origin?.x ?? 0.5;
-    const oy = cfg?.origin?.y ?? 0.5;
+    const ox = s?.origin?.x ?? 0.5;
+    const oy = s?.origin?.y ?? 0.5;
     this.ship.setOrigin(ox, oy);
-    const dw = cfg?.displaySize?.width ?? 64;
-    const dh = cfg?.displaySize?.height ?? 128;
+    const dw = s?.displaySize?.width ?? 64;
+    const dh = s?.displaySize?.height ?? 128;
     this.ship.setDisplaySize(dw, dh);
     this.ship.setDepth(1);
-    const noseOffsetRad = Phaser.Math.DegToRad(cfg?.noseOffsetDeg ?? 0);
+    const noseOffsetRad = Phaser.Math.DegToRad(s?.noseOffsetDeg ?? 0);
     this.ship.setRotation(Phaser.Math.DegToRad(start.headingDeg) + noseOffsetRad);
 
     this.cameraMgr.enableFollow(this.ship);
