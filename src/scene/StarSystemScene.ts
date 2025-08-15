@@ -423,7 +423,9 @@ export default class StarSystemScene extends Phaser.Scene {
           // Start docking
           (o as any).__state = 'docking';
           const dur = 3000 + Math.random() * 1000;
-          this.tweens.add({ targets: o, x: tx, y: ty, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
+          const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
+          const bsy = (o as any).__baseScaleY ?? o.scaleY ?? 1;
+          this.tweens.add({ targets: o, x: tx, y: ty, scaleX: bsx * 0.2, scaleY: bsy * 0.2, alpha: 0, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
             (o as any).__state = 'docked';
             // undock after random dwell
             this.time.delayedCall(10000 + Math.random() * 50000, () => {
@@ -433,7 +435,7 @@ export default class StarSystemScene extends Phaser.Scene {
               (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
               (o as any).__state = 'undocking';
               const ang = Math.random() * Math.PI * 2;
-              this.tweens.add({ targets: o, x: tx + Math.cos(ang) * 200, y: ty + Math.sin(ang) * 200, scaleX: 1, scaleY: 1, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
+              this.tweens.add({ targets: o, x: tx + Math.cos(ang) * 200, y: ty + Math.sin(ang) * 200, scaleX: bsx, scaleY: bsy, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
                 (o as any).__state = 'travel';
               }});
             });
