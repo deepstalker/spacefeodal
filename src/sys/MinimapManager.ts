@@ -56,10 +56,10 @@ export class MinimapManager {
     const scaleX = this.width / this.worldW;
     const scaleY = this.height / this.worldH;
     this.g.clear();
-    // background panel
-    this.g.fillStyle(0x000000, 0.6);
+    // background panel (lighter and less transparent)
+    this.g.fillStyle(0x0a0f1a, 0.8);
     this.g.fillRect(x - 4, y - 4, this.width + 8, this.height + 8);
-    this.g.lineStyle(1, 0x99aaff);
+    this.g.lineStyle(1, 0xb3c7ff);
     this.g.strokeRect(x, y, this.width, this.height);
 
     // Clipping to minimap rect
@@ -99,18 +99,39 @@ export class MinimapManager {
       }
     }
 
-    // Ship
+    // Player ship (green square)
     if (this.shipRef) {
       const s: any = this.shipRef;
       if (inRect(s.x, s.y)) {
         const { sx, sy } = toScreen(s.x, s.y);
-        this.g.fillStyle(0x7fd1f3, 1);
-        this.g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+        this.g.fillStyle(0x22c55e, 1);
+        this.g.fillRect(sx - 2, sy - 2, 4, 4);
+      }
+    }
+
+    // NPCs by status (ally/neutral/confrontation)
+    const starScene: any = this.scene.scene.get('StarSystemScene');
+    const combat: any = starScene?.combat;
+    if (combat && Array.isArray(combat['targets'])) {
+      for (const t of combat['targets']) {
+        const o: any = t.obj;
+        if (!o || !o.active) continue;
+        if (o === this.shipRef) continue;
+        if (!inRect(o.x, o.y)) continue;
+        const { sx, sy } = toScreen(o.x, o.y);
+        // derive relation to player
+        const factionPlayer = 'player';
+        const factionNpc = t.faction;
+        const rel = combat['getRelation'] ? combat['getRelation'](factionPlayer, factionNpc, undefined) : 'neutral';
+        let color = 0xfacc15; // neutral yellow
+        if (rel === 'ally') color = 0x22c55e;
+        else if (rel === 'confrontation') color = 0xef4444;
+        this.g.fillStyle(color, 1);
+        this.g.fillCircle(sx, sy, 2.2);
       }
     }
 
     // Camera viewport rectangle (use world camera from StarSystemScene, not UI camera)
-    const starScene: any = this.scene.scene.get('StarSystemScene');
     const worldCam = starScene?.cameras?.main;
     const vw = worldCam?.worldView;
     if (vw) {
