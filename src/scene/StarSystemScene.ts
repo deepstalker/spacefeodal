@@ -40,9 +40,15 @@ export default class StarSystemScene extends Phaser.Scene {
     this.config = new ConfigManager(this);
     await this.config.loadAll();
 
-    // Определяем текущую систему: статичная или процедурная
-    const systemsIndex = (this.cache.json.get('systems_index') as any) ?? await fetch('/configs/systems.json').then(r=>r.json());
-    const systemProfiles = (this.cache.json.get('system_profiles') as any) ?? await fetch('/configs/system_profiles.json').then(r=>r.json());
+    // Определяем текущую систему: статичная или процедурная (новые пути с фолбэком)
+    const systemsIndex = (this.cache.json.get('systems_index') as any) ?? await (async()=>{
+      try { return await (await fetch('/configs/systems/systems.json')).json(); } catch {}
+      return await (await fetch('/configs/systems.json')).json();
+    })();
+    const systemProfiles = (this.cache.json.get('system_profiles') as any) ?? await (async()=>{
+      try { return await (await fetch('/configs/systems/system_profiles.json')).json(); } catch {}
+      return await (await fetch('/configs/system_profiles.json')).json();
+    })();
     const stored = (()=>{ try { return localStorage.getItem('sf_selectedSystem'); } catch { return null; } })();
     const currentId = stored || systemsIndex.current;
     const sysDef = systemsIndex.defs[currentId];

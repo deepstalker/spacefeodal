@@ -29,9 +29,14 @@ export default class PreloadScene extends Phaser.Scene {
       sizer.destroy();
     });
 
-    // Загрузка ассетов и конфигов
-    this.load.json('systems_index', '/configs/systems.json');
-    this.load.json('system_profiles', '/configs/system_profiles.json');
+    // Загрузка ассетов и конфигов (новые пути с фолбэком)
+    const tryJson = (key: string, primary: string, fallback: string) => {
+      // Phaser Loader не поддерживает два URL на один ключ, поэтому грузим primary под key, а fallback под key+"_fb",
+      // а чтение делает ConfigManager напрямую через fetch. Здесь оставим только primary.
+      this.load.json(key, primary);
+    };
+    tryJson('systems_index', '/configs/systems/systems.json', '/configs/systems.json');
+    tryJson('system_profiles', '/configs/systems/system_profiles.json', '/configs/system_profiles.json');
 
     // Загрузка ассетов: сначала пробуем из src/assets через ESM URL, затем public fallback
     // Пробуем загрузить из src (ESM) и из public (fallback)
