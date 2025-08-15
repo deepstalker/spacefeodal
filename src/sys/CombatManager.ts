@@ -432,9 +432,16 @@ export class CombatManager {
       } else {
         (t as any).intent = decided;
       }
-      // debug: pirates intents
-      if ((t.faction === 'pirate') && decided && Math.random() < 0.1) {
-        try { console.debug('[AI] Pirate intent', decided.type, 'to', decided.target?.x, decided.target?.y); } catch {}
+      // debug: pirates intents — только при изменении
+      if (t.faction === 'pirate') {
+        const lastType = (t as any).__lastIntentType;
+        const lastObj = (t as any).__lastIntentObj;
+        const changed = (!!decided?.type !== !!lastType) || (decided?.type !== lastType) || (decided?.target !== lastObj);
+        if (decided && changed) {
+          try { console.debug('[AI] Pirate intent', decided.type, 'to', decided.target?.x, decided.target?.y); } catch {}
+        }
+        (t as any).__lastIntentType = decided?.type;
+        (t as any).__lastIntentObj = decided?.target ?? null;
       }
 
       if (!seesPlayer) {

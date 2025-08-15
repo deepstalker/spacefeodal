@@ -154,24 +154,33 @@ export class ConfigManager {
   }
 
   async loadAll() {
-    const base = '/configs';
+    const tryFetch = async (paths: string[]) => {
+      for (const p of paths) {
+        try {
+          const r = await fetch(p);
+          if (r.ok) return await r.json();
+        } catch {}
+      }
+      // last resort: return empty object to avoid hard crash
+      return {} as any;
+    };
     const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
-      fetch(`${base}/settings.json`).then(r => r.json()),
-      fetch(`${base}/gameplay.json`).then(r => r.json()),
-      fetch(`${base}/system.json`).then(r => r.json()),
-      fetch(`${base}/assets.json`).then(r => r.json()),
-      fetch(`${base}/keybinds.json`).then(r => r.json()),
-      fetch(`${base}/modules.json`).then(r => r.json()),
-      fetch(`${base}/persistence.json`).then(r => r.json()),
-      fetch(`${base}/ships.json`).then(r => r.json()),
-      fetch(`${base}/weapons.json`).then(r => r.json()),
-      fetch(`${base}/player.json`).then(r => r.json()),
-      fetch(`${base}/ai_profiles.json`).then(r => r.json()),
-      fetch(`${base}/systems.json`).then(r => r.json()),
-      fetch(`${base}/system_profiles.json`).then(r => r.json()),
-      fetch(`${base}/stardwellers.json`).then(r => r.json()),
-      fetch(`${base}/factions.json`).then(r => r.json()),
-      fetch(`${base}/combat_ai_profiles.json`).then(r => r.json())
+      tryFetch(['/configs/general/settings.json', '/configs/settings.json']),
+      tryFetch(['/configs/general/gameplay.json', '/configs/gameplay.json']),
+      tryFetch(['/configs/systems/system.json', '/configs/system.json']),
+      tryFetch(['/configs/general/assets.json', '/configs/assets.json']),
+      tryFetch(['/configs/general/keybinds.json', '/configs/keybinds.json']),
+      tryFetch(['/configs/general/modules.json', '/configs/modules.json']),
+      tryFetch(['/configs/general/persistence.json', '/configs/persistence.json']),
+      tryFetch(['/configs/ships/ships.json', '/configs/ships.json']),
+      tryFetch(['/configs/ships/weapons.json', '/configs/weapons.json']),
+      tryFetch(['/configs/general/player.json', '/configs/player.json']),
+      tryFetch(['/configs/npc/ai_profiles.json', '/configs/ai_profiles.json']),
+      tryFetch(['/configs/systems/systems.json', '/configs/systems.json']),
+      tryFetch(['/configs/systems/system_profiles.json', '/configs/system_profiles.json']),
+      tryFetch(['/configs/npc/stardwellers.json', '/configs/stardwellers.json']),
+      tryFetch(['/configs/npc/factions.json', '/configs/factions.json']),
+      tryFetch(['/configs/npc/combat_ai_profiles.json', '/configs/combat_ai_profiles.json'])
     ]);
     this.settings = settings;
     this.gameplay = gameplay;
