@@ -267,9 +267,15 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Test: spawn 3 pirates 5000 units below the sun
     const testY = system.star.y + 5000;
-    (this.combat as any).spawnNPCPrefab('pirate', system.star.x - 120, testY);
-    (this.combat as any).spawnNPCPrefab('pirate', system.star.x, testY + 60);
-    (this.combat as any).spawnNPCPrefab('pirate', system.star.x + 120, testY - 60);
+    const p1 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x - 120, testY) as any;
+    const p2 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x, testY + 60) as any;
+    const p3 = (this.combat as any).spawnNPCPrefab('pirate', system.star.x + 120, testY - 60) as any;
+    [p1, p2, p3].forEach((p: any) => {
+      if (!p) return;
+      (p as any).__behavior = 'patrol';
+      (p as any).__targetPatrol = null;
+      this.npcs.push(p);
+    });
   }
 
   public applyDamageToPlayer(amount: number) {
@@ -378,6 +384,10 @@ export default class StarSystemScene extends Phaser.Scene {
     if (!sys || !Array.isArray(sys.planets)) return;
     for (const o of this.npcs) {
       if ((o as any).__behavior !== 'patrol') continue;
+      // Skip patrol steering if combat intent exists (CombatManager handles it)
+      const cm: any = (this as any).combat;
+      const entry = cm?.targets?.find((t: any) => t.obj === o);
+      if (entry && entry.intent) continue;
       const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
       let target = (o as any).__targetPatrol;
       if (!target) {
@@ -406,10 +416,18 @@ export default class StarSystemScene extends Phaser.Scene {
       let diff = desiredHeading - heading;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.3 * dt);
+      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.1 * dt);
       heading += turn;
       o.rotation = heading + noseOffsetRad;
-      const speed = 140;
+      // derive base speed from ship definition to keep consistent pacing
+      const maxSpeed = (() => {
+        if (entry?.shipId) return (this.config.ships.defs[entry.shipId]?.movement?.MAX_SPEED ?? 1.0);
+        return 1.0;
+      })();
+      const baseSpeed = maxSpeed * 120; // px/s
+      // ease-in near target to reduce overshoot/zigzag
+      const arriveFactor = Phaser.Math.Clamp(Math.hypot(dx, dy) / 300, 0.5, 1);
+      const speed = baseSpeed * arriveFactor;
       const prevX = o.x, prevY = o.y;
       o.x += Math.cos(heading) * speed * dt;
       o.y += Math.sin(heading) * speed * dt;
