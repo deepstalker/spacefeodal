@@ -1,0 +1,27 @@
+{
+  "factions": {
+    "player": {
+      "relations": {
+        "player": "ally",
+        "pirate": "confrontation",
+        "planet_traders": "neutral"
+      }
+    },
+    "pirate": {
+      "relations": {
+        "player": "confrontation",
+        "pirate": "confrontation",
+        "planet_traders": "confrontation"
+      }
+    },
+    "planet_traders": {
+      "relations": {
+        "player": "neutral",
+        "pirate": "confrontation",
+        "planet_traders": "ally"
+      }
+    }
+  }
+}
+
+

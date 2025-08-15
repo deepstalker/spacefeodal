@@ -1,8 +1,23 @@
 {
   "profiles": {
-    "aggressive": { "behavior": "aggressive", "startDisposition": "enemy", "combat": { "preferRange": 700, "retreatHpPct": 0.5 } },
-    "static": { "behavior": "static", "startDisposition": "neutral", "combat": { "preferRange": 0, "retreatHpPct": 0 } },
-    "planet_trader": { "behavior": "planet_trader", "startDisposition": "neutral", "combat": { "preferRange": 0, "retreatHpPct": 0.99 } }
+    "aggressive": {
+      "behavior": "aggressive",
+      "startDisposition": "enemy",
+      "sensors": { "react": { "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore" } } },
+      "combat": { "retreatHpPct": 0.5 }
+    },
+    "static": {
+      "behavior": "static",
+      "startDisposition": "neutral",
+      "sensors": { "react": { "onFaction": { "confrontation": "ignore", "ally": "ignore", "neutral": "ignore" } } },
+      "combat": { "retreatHpPct": 0 }
+    },
+    "planet_trader": {
+      "behavior": "planet_trader",
+      "startDisposition": "neutral",
+      "sensors": { "react": { "onFaction": { "confrontation": "flee", "ally": "seekEscort", "neutral": "ignore" } } },
+      "combat": { "retreatHpPct": 0.99 }
+    }
   }
 }
 

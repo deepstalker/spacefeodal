@@ -115,11 +115,19 @@ export type EnemiesConfig = {
 };
 
 export type StardwellersConfig = {
-  prefabs: Record<string, { shipId: string; aiProfile: string; weapons: string[] }>;
+  prefabs: Record<string, { shipId: string; aiProfile: string; combatAI?: string; faction?: string; weapons: string[] }>;
 };
 
 export type AIProfilesConfig = {
-  profiles: Record<string, { behavior: string; startDisposition: 'neutral' | 'enemy' | 'ally'; combat: { preferRange: number; retreatHpPct: number } }>;
+  profiles: Record<string, { behavior: string; startDisposition: 'neutral' | 'enemy' | 'ally'; sensors?: { react?: { onFaction?: Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> } }; combat?: { retreatHpPct?: number } }>;
+};
+
+export type FactionsConfig = {
+  factions: Record<string, { relations: Record<string, 'ally'|'neutral'|'confrontation'> }>;
+};
+
+export type CombatAIProfilesConfig = {
+  profiles: Record<string, { retreatHpPct?: number }>;
 };
 
 export type PlayerConfig = {
@@ -145,6 +153,8 @@ export class ConfigManager {
   stardwellers!: StardwellersConfig;
   systemsIndex!: SystemsIndexConfig;
   systemProfiles!: SystemProfilesConfig;
+  factions!: FactionsConfig;
+  combatAI!: CombatAIProfilesConfig;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -152,7 +162,7 @@ export class ConfigManager {
 
   async loadAll() {
     const base = '/configs';
-    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, enemies, player, aiProfiles, systemsIndex, systemProfiles, stardwellers] = await Promise.all([
+    const [settings, gameplay, system, assets, keybinds, modules, persistence, ships, weapons, enemies, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
       fetch(`${base}/settings.json`).then(r => r.json()),
       fetch(`${base}/gameplay.json`).then(r => r.json()),
       fetch(`${base}/system.json`).then(r => r.json()),
@@ -167,7 +177,9 @@ export class ConfigManager {
       fetch(`${base}/ai_profiles.json`).then(r => r.json()),
       fetch(`${base}/systems.json`).then(r => r.json()),
       fetch(`${base}/system_profiles.json`).then(r => r.json()),
-      fetch(`${base}/stardwellers.json`).then(r => r.json())
+      fetch(`${base}/stardwellers.json`).then(r => r.json()),
+      fetch(`${base}/factions.json`).then(r => r.json()),
+      fetch(`${base}/combat_ai_profiles.json`).then(r => r.json())
     ]);
     this.settings = settings;
     this.gameplay = gameplay;
@@ -184,6 +196,8 @@ export class ConfigManager {
     this.stardwellers = stardwellers;
     this.systemsIndex = systemsIndex;
     this.systemProfiles = systemProfiles;
+    this.factions = factions;
+    this.combatAI = combatAI;
   }
 }
 

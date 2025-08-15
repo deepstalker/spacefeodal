@@ -12,7 +12,7 @@ export class CombatManager {
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
-  private targets: Array<{ obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number }; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }; weaponSlots?: string[]; shipId?: string }>=[];
+  private targets: Array<{ obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number }; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string }; weaponSlots?: string[]; shipId?: string; faction?: string; combatAI?: string }>=[];
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -55,9 +55,9 @@ export class CombatManager {
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
     const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
-    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
-    const ai = { preferRange: profile.combat?.preferRange ?? 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId };
+    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static', startDisposition: 'neutral' } as any;
+    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
+    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI };
     if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);
     return obj as Target;
@@ -82,9 +82,9 @@ export class CombatManager {
     const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
-    const profile = this.config.aiProfiles.profiles[def.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral', combat: { preferRange: 0, retreatHpPct: 0 } } as any;
-    const ai = { preferRange: profile.combat?.preferRange ?? 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: def.shipId, behavior: profile.behavior };
+    const profile = this.config.aiProfiles.profiles[def.aiProfile] ?? { behavior: 'static', startDisposition: 'neutral' } as any;
+    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', disposition: profile.startDisposition ?? 'neutral', behavior: profile.behavior } as any;
+    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: def.shipId, behavior: profile.behavior, faction: undefined };
     if (def.weapons && Array.isArray(def.weapons)) entry.weaponSlots = def.weapons.slice(0);
     this.targets.push(entry);
     return obj as Target;
@@ -166,19 +166,23 @@ export class CombatManager {
     const player = this.ship;
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
-      if (t.ai.behavior && t.ai.behavior !== 'aggressive') continue; // let non-aggressive (e.g., traders) be moved elsewhere
+      // Split logic: regular vs combat
+      if (t.ai.behavior && t.ai.behavior !== 'aggressive') continue; // non-combat regular behavior handled in StarSystemScene
       const obj: any = t.obj;
-      const prefer = t.ai.preferRange;
-      const retreat = t.ai.retreatHpPct;
+      const retreat = ((): number => {
+        if (t.combatAI) {
+          const cp = this.config.combatAI?.profiles?.[t.combatAI];
+          if (cp && typeof cp.retreatHpPct === 'number') return cp.retreatHpPct;
+        }
+        return t.ai.retreatHpPct ?? 0;
+      })();
       const noseOffsetRad = (obj.__noseOffsetRad ?? 0) as number;
       const dx = player.x - obj.x;
       const dy = player.y - obj.y;
       const dist = Math.hypot(dx, dy);
       let desired = 0; // -1 retreat, 0 hold, 1 approach
       if (t.hp / t.hpMax <= retreat) desired = -1;
-      else if (dist > prefer * 1.10) desired = 1; // too far — approach
-      else if (dist < prefer * 0.60) desired = -1; // way too close — back off
-      else desired = 0; // hold band
+      else desired = 1; // approach by default (range now handled via sensors/targeting)
 
       // steer towards/away, constant turn rate and speed
       const turnSpeed = 1.6; // rad/s

@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "default_aggressive": { "retreatHpPct": 0.3 },
+    "coward": { "retreatHpPct": 0.8 },
+    "brave": { "retreatHpPct": 0.1 }
+  }
+}
+
+

@@ -263,6 +263,12 @@ export default class StarSystemScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
+
+    // Test: spawn 3 pirates 5000 units below the sun
+    const testY = system.star.y + 5000;
+    (this.combat as any).spawnNPCPrefab('pirate', system.star.x - 120, testY);
+    (this.combat as any).spawnNPCPrefab('pirate', system.star.x, testY + 60);
+    (this.combat as any).spawnNPCPrefab('pirate', system.star.x + 120, testY - 60);
   }
 
   public applyDamageToPlayer(amount: number) {
