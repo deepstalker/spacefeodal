@@ -1,6 +1,10 @@
 {
   "profiles": {
-    "default_aggressive": { "retreatHpPct": 0.3 },
+    "default_aggressive": { 
+      "retreatHpPct": 0.3,
+      "movementMode": "orbit",
+      "movementDistance": 700
+    },
     "coward": { "retreatHpPct": 0.8 },
     "brave": { "retreatHpPct": 0.1 }
   }

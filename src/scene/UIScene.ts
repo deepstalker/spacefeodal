@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { HUDManager } from '@/ui/hud/HUDManager';
+import { RadialMenuManager } from '@/ui/RadialMenuManager';
 import type { ConfigManager } from '@/sys/ConfigManager';
 
 export default class UIScene extends Phaser.Scene {
@@ -8,6 +9,7 @@ export default class UIScene extends Phaser.Scene {
   private configRef?: ConfigManager;
   private uiTextResolution: number = 1;
   private systemMenu?: any;
+  private radialMenu!: RadialMenuManager;
   constructor() {
     super('UIScene');
   }
@@ -22,6 +24,9 @@ export default class UIScene extends Phaser.Scene {
     this.debugText = this.add.text(32, 80, '', { color: '#F5F0E9', fontSize: '28px' }).setScrollFactor(0).setDepth(1000);
     try { (this.debugText as any).setResolution?.(this.uiTextResolution); } catch {}
 
+    // Инициализация радиального меню
+    this.radialMenu = new RadialMenuManager(this);
+    
     // Инициализация UI компонентов: ждём готовности StarSystemScene
     const starScene = this.scene.get('StarSystemScene') as Phaser.Scene & any;
     const onReady = (payload: { config: ConfigManager; ship: Phaser.GameObjects.GameObject }) => {
@@ -85,6 +90,27 @@ export default class UIScene extends Phaser.Scene {
       buttons.push(btn);
     });
     this.systemMenu = this.add.container(0,0,[bg,title,...buttons]).setDepth(4000);
+  }
+
+  // Методы для управления радиальным меню
+  showRadialMenu(x: number, y: number) {
+    this.radialMenu.show(x, y);
+  }
+
+  hideRadialMenu() {
+    this.radialMenu.hide();
+  }
+
+  updateRadialMenuSelection(mouseY: number) {
+    this.radialMenu.updateSelection(mouseY);
+  }
+
+  getRadialMenuSelection() {
+    return this.radialMenu.getSelectedItem();
+  }
+
+  isRadialMenuVisible(): boolean {
+    return this.radialMenu.isMenuVisible();
   }
 }
 

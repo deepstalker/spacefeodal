@@ -3,7 +3,7 @@
   "defs": {
     "explorer": {
       "displayName": "Explorer",
-      "hull": 3000,
+      "hull": 10000,
       "sprite": {
         "key": "ship_explorer",
         "displaySize": { "width": 128, "height": 256 },
@@ -21,18 +21,18 @@
       },
       "sensors": { "radar_range": 1200 },
       "movement": {
-        "MAX_SPEED": 2.0,
-        "ACCELERATION": 0.05,
-        "DECELERATION": 0.08,
+        "MAX_SPEED": 3,
+        "ACCELERATION": 0.01,
+        "DECELERATION": 0.015,
         "TURN_SPEED": 0.03,
         "SLOWING_RADIUS": 150,
-        "TURN_PENALTY_MULTIPLIER": 1.3,
+        "TURN_PENALTY_MULTIPLIER": 1.2,
         "TURN_DECELERATION_FACTOR": 0.2
       }
     },
     "trader": {
       "displayName": "Trader",
-      "hull": 600,
+      "hull": 6000,
       "sprite": {
         "key": "ship_trader",
         "displaySize": { "width": 96, "height": 192 },
@@ -50,10 +50,10 @@
       },
       "sensors": { "radar_range": 1400 },
       "movement": {
-        "MAX_SPEED": 0.5,
-        "ACCELERATION": 0.02,
-        "DECELERATION": 0.05,
-        "TURN_SPEED": 0.06,
+        "MAX_SPEED": 1.5,
+        "ACCELERATION": 0.5,
+        "DECELERATION": 0.75,
+        "TURN_SPEED": 0.02,
         "SLOWING_RADIUS": 160,
         "TURN_PENALTY_MULTIPLIER": 1.2,
         "TURN_DECELERATION_FACTOR": 0.22
@@ -61,7 +61,7 @@
     },
     "fighter": {
       "displayName": "Fighter",
-      "hull": 80,
+      "hull": 8000,
       "sprite": {
         "key": "ship_alpha",
         "displaySize": { "width": 64, "height": 128 },
@@ -79,12 +79,12 @@
       },
       "sensors": { "radar_range": 1000 },
       "movement": {
-        "MAX_SPEED": 1.2,
-        "ACCELERATION": 0.03,
-        "DECELERATION": 0.09,
-        "TURN_SPEED": 0.024,
+        "MAX_SPEED": 1.75,
+        "ACCELERATION": 0.025,
+        "DECELERATION": 0.25,
+        "TURN_SPEED": 0.01,
         "SLOWING_RADIUS": 140,
-        "TURN_PENALTY_MULTIPLIER": 1.4,
+        "TURN_PENALTY_MULTIPLIER": 1.5,
         "TURN_DECELERATION_FACTOR": 0.18
       }
     }

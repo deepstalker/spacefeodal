@@ -17,6 +17,13 @@ export default class StarSystemScene extends Phaser.Scene {
   private movement!: MovementManager;
   private combat!: CombatManager;
   private npcs: any[] = [];
+  
+  // Состояние для удержания правой кнопки мыши
+  private rightMouseHoldStart = 0;
+  private isRightMouseDown = false;
+  private rightMouseStartPos = { x: 0, y: 0 };
+  private rightClickTargetNPC: any | null = null; // Захваченная цель при клике
+  private lastPointerWorld?: { x: number; y: number };
 
   private ship!: Phaser.GameObjects.Image;
   private playerHp!: number;
@@ -251,21 +258,9 @@ export default class StarSystemScene extends Phaser.Scene {
     // Сообщаем другим сценам, что система готова (конфиги загружены, корабль создан)
     this.events.emit('system-ready', { config: this.config, ship: this.ship });
 
-    const onSelect = async (worldX: number, worldY: number) => {
-      // Показать маркер клика
-      if (!this.clickMarker) {
-        // Маркер цели под кораблём
-        this.clickMarker = this.add.circle(worldX, worldY, 10, 0x00ff88).setDepth(0.55).setAlpha(0.7);
-      } else {
-        this.clickMarker.setPosition(worldX, worldY).setVisible(true);
-      }
-      // Строим сценарный план тем же алгоритмом, что и исполнитель, чтобы не было расхождений
-      this.movement.followPath(this.ship as any, { points: [ new Phaser.Math.Vector2(worldX, worldY) ] } as any);
-      this.drawAimLine();
-    };
-    this.inputMgr.onRightClick(onSelect);
+    // Настраиваем обработку мыши для радиального меню
+    this.setupMouseControls();
     this.combat.bindInput(this.inputMgr);
-    // Только правая кнопка ставит цель
 
     // Toggle follow camera (F)
     const followKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.F);
@@ -677,6 +672,175 @@ export default class StarSystemScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.bgTile.tilePositionX = -cam.scrollX * this.bgParallax;
     this.bgTile.tilePositionY = -cam.scrollY * this.bgParallax;
+  }
+
+  private getUIScene(): any {
+    return this.scene.get('UIScene');
+  }
+
+  private findNPCAt(worldX: number, worldY: number): any {
+    for (const npc of this.npcs) {
+      if (!npc.active) continue;
+
+      // Используем displayWidth/Height, так как они учитывают scale объекта.
+      const radius = Math.max(npc.displayWidth, npc.displayHeight) * 0.5 + 15; // +15 пикселей для удобства.
+      
+      const distance = Math.hypot(npc.x - worldX, npc.y - worldY);
+      if (distance <= radius) {
+        return npc;
+      }
+    }
+    
+    return null;
+  }
+
+  private setupMouseControls() {
+    // Обработка нажатия правой кнопки мыши
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown()) {
+        this.isRightMouseDown = true;
+        this.rightMouseHoldStart = this.time.now;
+        this.rightMouseStartPos = { x: pointer.worldX, y: pointer.worldY };
+        // Захватываем цель в момент клика
+        this.rightClickTargetNPC = this.findNPCAt(pointer.worldX, pointer.worldY);
+      }
+    });
+
+    // Обработка отпускания правой кнопки мыши
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonReleased()) {
+
+        
+        if (this.isRightMouseDown) {
+          this.isRightMouseDown = false;
+          
+          const holdTime = this.time.now - this.rightMouseHoldStart;
+
+          
+          if (this.getUIScene().isRadialMenuVisible()) {
+            // Меню открыто - выбираем пункт
+            const selectedItem = this.getUIScene().getRadialMenuSelection();
+            this.getUIScene().hideRadialMenu();
+            
+            if (selectedItem) {
+              // Передаем захваченную цель в команду
+              this.executeMovementCommand(selectedItem, pointer.worldX, pointer.worldY, this.rightClickTargetNPC);
+            }
+          } else if (holdTime < 200) {
+            // Быстрый клик - простое движение к точке
+            this.executeSimpleMoveTo(pointer.worldX, pointer.worldY);
+          }
+        } else {
+          // Fallback для случаев когда поinterdown не сработал
+          this.executeSimpleMoveTo(pointer.worldX, pointer.worldY);
+        }
+        
+        // Сбрасываем захваченную цель после использования
+        this.rightClickTargetNPC = null;
+      }
+    });
+
+    // Обработка движения мыши при удержании
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (this.isRightMouseDown && pointer.rightButtonDown()) {
+        const holdTime = this.time.now - this.rightMouseHoldStart;
+        
+        // Показываем меню, только если при клике был захвачен NPC
+        if (holdTime > 200 && this.rightClickTargetNPC && !this.getUIScene().isRadialMenuVisible()) {
+          // Показываем радиальное меню в экранных координатах
+          this.getUIScene().showRadialMenu(pointer.x, pointer.y);
+        }
+        
+        if (this.getUIScene().isRadialMenuVisible()) {
+          // Обновляем выбор в меню на основе движения мыши
+          this.getUIScene().updateRadialMenuSelection(pointer.y);
+          // Запоминаем последние мировые координаты указателя, пока меню открыто
+          this.lastPointerWorld = { x: pointer.worldX, y: pointer.worldY };
+        }
+      }
+    });
+  }
+
+  private executeSimpleMoveTo(worldX: number, worldY: number) {
+    // Проверяем, нет ли NPC в точке клика
+    const targetNPC = this.findNPCAt(worldX, worldY);
+    
+    if (targetNPC) {
+      // Клик по NPC - включаем режим преследования
+      this.movement.pursueTarget(targetNPC, this.ship as any);
+      
+      // Скрываем маркер клика для преследования - цель и так видна
+      if (this.clickMarker) {
+        this.clickMarker.setVisible(false);
+      }
+    } else {
+      // Обычный клик по пустому месту - простое движение
+      if (!this.clickMarker) {
+        this.clickMarker = this.add.circle(worldX, worldY, 10, 0x00ff88).setDepth(0.55).setAlpha(0.7);
+      } else {
+        this.clickMarker.setPosition(worldX, worldY).setVisible(true);
+        this.clickMarker.setFillStyle(0x00ff88);
+        this.clickMarker.setRadius(10);
+      }
+      
+      // Простое движение к точке
+      this.movement.moveTo(new Phaser.Math.Vector2(worldX, worldY), this.ship as any);
+    }
+    
+    this.drawAimLine();
+  }
+
+  private executeMovementCommand(item: any, worldX: number, worldY: number, capturedTarget: any | null) {
+    // Приоритет цели: захваченный NPC > поиск по координатам.
+    const targetNPC = capturedTarget || this.findNPCAt(worldX, worldY);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Scene] executeMovementCommand: mode=${item.mode}, distance=${item.distance}, targetNPC=${!!targetNPC}, captured=${!!capturedTarget}`);
+    }
+    
+    if (targetNPC) {
+      // Клик по NPC - скрываем маркер, объект и так виден
+      if (this.clickMarker) {
+        this.clickMarker.setVisible(false);
+      }
+    } else {
+      // Показать маркер клика для статических точек
+      if (!this.clickMarker) {
+        this.clickMarker = this.add.circle(worldX, worldY, 10, 0x00ff88).setDepth(0.55).setAlpha(0.7);
+      } else {
+        this.clickMarker.setPosition(worldX, worldY).setVisible(true);
+        this.clickMarker.setFillStyle(0x00ff88);
+        this.clickMarker.setRadius(10);
+      }
+    }
+
+    const target = new Phaser.Math.Vector2(worldX, worldY);
+    
+    switch (item.mode) {
+      case 'follow':
+        if (targetNPC) {
+          // Следование за объектом (динамическая цель)
+          this.movement.followObject(targetNPC, item.distance, this.ship as any);
+        } else {
+          this.movement.followTarget(target, item.distance, this.ship as any);
+        }
+        break;
+      case 'orbit':
+        if (targetNPC) {
+          // Орбита вокруг объекта (динамическая цель)
+          this.movement.orbitObject(targetNPC, item.distance, this.ship as any);
+        } else {
+          this.movement.orbitTarget(target, item.distance, this.ship as any);
+        }
+        break;
+      default:
+        this.movement.moveTo(target, this.ship as any);
+        break;
+    }
+    
+    this.drawAimLine();
+    // Сбрасываем запомненные координаты после выбора
+    this.lastPointerWorld = undefined;
   }
 }
 

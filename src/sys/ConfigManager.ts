@@ -27,6 +27,7 @@ export type GameplayConfig = {
     SLOWING_RADIUS: number;         // 150
     TURN_PENALTY_MULTIPLIER: number;// 1.3
     TURN_DECELERATION_FACTOR: number;// 0.2
+    TARGET_UPDATE_INTERVAL_MS?: number; // 100 (частота обновления динамических целей)
   };
   fov: {
     radiusUnits: number;

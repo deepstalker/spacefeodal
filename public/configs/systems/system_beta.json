@@ -13,7 +13,7 @@
     { "id": "enc_1", "name": "Пираты", "x": 11000, "y": 11000, "discovered": false }
   ],
   "stations": [
-  { "type": "pirate_base", "x": 7000, "y": 6000, "wave": { "count": 2, "lifespanMs": 120000, "intervalMs": 60000, "initialDelayMs": 6000 } }
+  { "type": "pirate_base", "x": 10000, "y": 10000, "wave": { "count": 2, "lifespanMs": 120000, "intervalMs": 60000, "initialDelayMs": 6000 } }
 ],
   "npcs": [
     { "prefab": "trader", "planetId": "pl_1", "aiProfile": "planet_trader" },

@@ -1,10 +1,12 @@
 import type { ConfigManager } from './ConfigManager';
+import { NPCMovementManager } from './NPCMovementManager';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
 export class CombatManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
+  private npcMovement: NPCMovementManager;
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
@@ -33,6 +35,7 @@ export class CombatManager {
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
     this.config = config;
+    this.npcMovement = new NPCMovementManager(scene, config);
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
 
@@ -91,6 +94,10 @@ export class CombatManager {
     const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI, aiProfileKey: aiProfileName, intent: null };
     if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
     this.targets.push(entry);
+    
+    // Регистрируем NPC в системе движения
+    this.npcMovement.registerNPC(obj, prefab?.combatAI);
+    
     return obj as Target;
   }
 
@@ -330,13 +337,16 @@ export class CombatManager {
   }
 
   private updateEnemiesAI(deltaMs: number) {
-    const dt = deltaMs / 1000;
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
       // If object is returning home (e.g., wave despawn), skip combat steering
       if ((t.obj as any).__returningHome) continue;
       // If no combat intent and behavior isn't aggressive — let regular logic handle
-      if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') { this.updateHpBar(t as any); continue; }
+      if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') { 
+        this.updateHpBar(t as any); 
+        continue; 
+      }
+      
       const obj: any = t.obj;
       const retreat = ((): number => {
         if (t.combatAI) {
@@ -345,35 +355,44 @@ export class CombatManager {
         }
         return t.ai.retreatHpPct ?? 0;
       })();
-      const noseOffsetRad = (obj.__noseOffsetRad ?? 0) as number;
+      
       const targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : this.ship;
       const fleeObj = (t.intent && t.intent.type === 'flee') ? t.intent.target : null;
-      const dx = (fleeObj ? (obj.x - fleeObj.x) : (targetObj.x - obj.x));
-      const dy = (fleeObj ? (obj.y - fleeObj.y) : (targetObj.y - obj.y));
-      const dist = Math.hypot(dx, dy);
-      let desired = 0; // -1 retreat, 0 hold, 1 approach
-      if (t.hp / t.hpMax <= retreat) desired = -1;
-      else desired = 1; // approach by default
-
-      // steer towards/away, constant turn rate and speed
-      const turnSpeed = 1.6; // rad/s
-      let heading = (obj.rotation ?? 0) - noseOffsetRad;
-      const desiredAngle = Math.atan2(dy, dx) + (desired < 0 ? 0 : 0); // dx,dy already flipped for flee
-      let diff = desiredAngle - heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
-      heading += turn;
-      obj.rotation = heading + noseOffsetRad;
-      // derive base speed from ship movement profile for consistency across flee/attack
-      const speedScalePxPerSec = 120; // 1.0 MAX_SPEED ~= 120 px/s
-      const shipDef = this.config.ships.defs[t.shipId ?? (this.config.ships.current)];
-      const maxSpeed = shipDef?.movement?.MAX_SPEED ?? 1.0;
-      const baseSpeed = maxSpeed * speedScalePxPerSec;
-      const speed = (desired !== 0) ? baseSpeed : 0;
-      obj.x += Math.cos(heading) * speed * dt;
-      obj.y += Math.sin(heading) * speed * dt;
-      // clamp to system bounds with 20% margin
+      
+      let target: { x: number; y: number };
+      if (fleeObj) {
+        // Flee: отлетаем от источника угрозы
+        const dx = obj.x - fleeObj.x;
+        const dy = obj.y - fleeObj.y;
+        const dist = Math.hypot(dx, dy);
+        const fleeDistance = 1000; // дистанция бегства
+        target = {
+          x: fleeObj.x + (dx / dist) * fleeDistance,
+          y: fleeObj.y + (dy / dist) * fleeDistance
+        };
+        this.npcMovement.setNPCTarget(obj, target);
+      } else if (targetObj) {
+        // Attack: используем режим движения из профиля ИИ
+        const shouldRetreat = t.hp / t.hpMax <= retreat;
+        if (shouldRetreat) {
+          // Отступаем
+          const dx = obj.x - targetObj.x;
+          const dy = obj.y - targetObj.y;
+          const dist = Math.hypot(dx, dy);
+          const retreatDistance = 800;
+          target = {
+            x: targetObj.x + (dx / dist) * retreatDistance,
+            y: targetObj.y + (dy / dist) * retreatDistance
+          };
+          this.npcMovement.setNPCTarget(obj, target);
+        } else {
+          // Атакуем с использованием режима из профиля ИИ
+          target = { x: targetObj.x, y: targetObj.y };
+          this.npcMovement.setNPCTarget(obj, target);
+        }
+      }
+      
+      // Ограничиваем движение границами системы
       const sz = this.config.system?.size;
       if (sz) {
         const mx = Math.max(0, sz.width * 0.2);
@@ -383,6 +402,7 @@ export class CombatManager {
         obj.x = Phaser.Math.Clamp(obj.x, mx, maxX);
         obj.y = Phaser.Math.Clamp(obj.y, my, maxY);
       }
+      
       // update HP bar follow
       this.updateHpBar(t as any);
     }
@@ -529,6 +549,8 @@ export class CombatManager {
         if (removedSlots.length) {
           try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
         }
+        // убираем из системы движения NPC
+        this.npcMovement.unregisterNPC(target);
         // вычистить из массива целей
         this.targets = this.targets.filter(rec => rec.obj !== target);
         return;
