@@ -17,7 +17,7 @@ export default class UIScene extends Phaser.Scene {
     this.uiTextResolution = 2;
     // keep subpixel positioning for UI (crisper with setResolution)
     try { this.cameras.main.setRoundPixels(false); } catch {}
-    const label = this.add.text(32, 32, 'SF A2', { color: '#F5F0E9', fontFamily: 'HooskaiChamferedSquare', fontSize: '48px' }).setScrollFactor(0).setDepth(1000);
+    const label = this.add.text(32, 32, 'Space is feodal', { color: '#F5F0E9', fontFamily: 'HooskaiChamferedSquare', fontSize: '48px' }).setScrollFactor(0).setDepth(1000);
     try { (label as any).setResolution?.(this.uiTextResolution); } catch {}
     this.debugText = this.add.text(32, 80, '', { color: '#F5F0E9', fontSize: '28px' }).setScrollFactor(0).setDepth(1000);
     try { (this.debugText as any).setResolution?.(this.uiTextResolution); } catch {}

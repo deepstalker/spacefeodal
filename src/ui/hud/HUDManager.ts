@@ -50,6 +50,27 @@ export class HUDManager {
     const sh = this.scene.scale.height;
     const pad = 24;
     const hudY = sh - pad;
+    
+    // Проверяем доступность шрифта Request
+    console.log('Creating HUD - fonts should be loaded by PreloadScene');
+    
+    // Простая проверка загрузки шрифта
+    const fontCheck = () => {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.font = '16px Request';
+        const requestWidth = context.measureText('test').width;
+        context.font = '16px Arial';
+        const arialWidth = context.measureText('test').width;
+        const isLoaded = requestWidth !== arialWidth;
+        console.log('Request font status in HUD:', isLoaded, 'fonts available');
+        return isLoaded;
+      }
+      return false;
+    };
+    
+    const isRequestLoaded = fontCheck();
 
     // Speed numeric readout
     const speedValue = this.scene.add.text(pad + 16, hudY - 52, '0 U/S', { 
@@ -58,8 +79,23 @@ export class HUDManager {
       fontFamily: 'Request',
       padding: { top: 8, bottom: 4, left: 2, right: 2 }
     }).setOrigin(0, 0.8).setScrollFactor(0).setDepth(1502);
+    
     try { (speedValue as any).setResolution?.(this.uiTextResolution); } catch {}
     this.speedText = speedValue;
+    
+    // Если шрифт не загружен при старте, принудительно устанавливаем через задержку
+    if (!isRequestLoaded) {
+      console.warn('Request font not loaded in HUD creation - applying with delay');
+      this.scene.time.delayedCall(100, () => {
+        if (speedValue && speedValue.active) {
+          speedValue.setFontFamily('Request');
+          console.log('Applied Request font to speed text with delay');
+        }
+      });
+    }
+    
+    // Сохраняем ссылку для обновлений
+    (this.scene as any).__hudSpeedValue = speedValue;
     
     // underline under speed text (120x4)
     const underline = this.scene.add.rectangle(pad + 36 + 76, hudY - 34, 200, 4, 0xA28F6E).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1502);
@@ -195,9 +231,12 @@ export class HUDManager {
       const num = this.scene.add.text(x + badgePadding + badgeSize/2, y + slotSize - badgePadding - badgeSize/2, `${i + 1}`, { 
         color: '#F5F0E9', 
         fontSize: `${fontSize}px`, 
-        fontFamily: 'HooskaiChamferedSquare',
+        fontFamily: 'Request',
         padding: { top: Math.max(2, fontSize * 0.15), bottom: 2, left: 2, right: 2 }
       }).setOrigin(0.5, 0.45).setDepth(1503).setScrollFactor(0);
+      
+      // Явно устанавливаем шрифт для цифр на значках
+      num.setFontFamily('Request');
       try { (num as any).setResolution?.(this.uiTextResolution); } catch {}
       container.add(badge);
       container.add(num);
@@ -206,7 +245,7 @@ export class HUDManager {
 
     // HP bar - фиксированные размеры и позиция
     const hpX = (sw - fixedHpBarW) / 2; // центрируем HP бар
-    const hpY = panelY + fixedPanelH - 80; // фиксированная позиция от низа панели
+    const hpY = panelY + fixedPanelH - 100; // фиксированная позиция от низа панели
     
     const hpOutline = this.scene.add.rectangle(hpX, hpY, fixedHpBarW, fixedHpBarH, 0x000000, 0).setOrigin(0,0).setScrollFactor(0).setDepth(1500);
     hpOutline.setStrokeStyle(2, outline, 1);
@@ -222,8 +261,31 @@ export class HUDManager {
       fontFamily: 'Request',
       padding: { top: 6, bottom: 2, left: 2, right: 2 }
     }).setOrigin(0, 0.4).setScrollFactor(0).setDepth(1502);
+    
     try { (hpText as any).setResolution?.(this.uiTextResolution); } catch {}
     (this.scene as any).__hudHullValue = hpText;
+    
+    // Проверяем шрифт и применяем с задержкой если нужно
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    let fontLoaded = false;
+    if (context) {
+      context.font = '16px Request';
+      const requestWidth = context.measureText('test').width;
+      context.font = '16px Arial';
+      const arialWidth = context.measureText('test').width;
+      fontLoaded = requestWidth !== arialWidth;
+    }
+    
+    if (!fontLoaded) {
+      console.warn('Request font not loaded for HP text - applying with delay');
+      this.scene.time.delayedCall(100, () => {
+        if (hpText && hpText.active) {
+          hpText.setFontFamily('Request');
+          console.log('Applied Request font to HP text with delay');
+        }
+      });
+    }
     this.hullRect = { x: hpX, y: hpY, w: fixedHpBarW, h: fixedHpBarH };
   }
 

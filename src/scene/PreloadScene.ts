@@ -39,10 +39,28 @@ export default class PreloadScene extends Phaser.Scene {
           console.warn(`Не удалось установить фильтр для ${key}:`, e);
         }
       });
+      
+      // Ждем загрузки всех шрифтов перед запуском сцен
+      this.waitForFontsAndStart();
     });
 
     // Конфиги грузим напрямую в StarSystemScene/ConfigManager через fetch — убираем JSON из Loader,
     // чтобы не падать, если сервер отдаёт HTML на 404
+
+    // Принудительная загрузка шрифтов
+    const fontPromises = [
+      new FontFace('Request', 'url(/fonts/Request\\ Regular.ttf)').load(),
+      new FontFace('HooskaiChamferedSquare', 'url(/fonts/HooskaiChamferedSquare.ttf)').load()
+    ];
+    
+    Promise.all(fontPromises).then(fonts => {
+      fonts.forEach(font => {
+        (document.fonts as any).add(font);
+        console.log(`Loaded font: ${font.family}`);
+      });
+    }).catch(error => {
+      console.warn('Failed to preload fonts:', error);
+    });
 
     // Загрузка ассетов: сначала пробуем из src/assets через ESM URL, затем public fallback
     // Пробуем загрузить из src (ESM) и из public (fallback)
@@ -77,9 +95,56 @@ export default class PreloadScene extends Phaser.Scene {
     }
   }
 
-  create() {
+  private async waitForFontsAndStart() {
+    console.log('Waiting for fonts to load...');
+    
+    // Проверяем, загружены ли наши шрифты
+    const checkFont = (fontFamily: string): boolean => {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) return false;
+      
+      context.font = `16px ${fontFamily}`;
+      const customWidth = context.measureText('test').width;
+      context.font = '16px Arial';
+      const arialWidth = context.measureText('test').width;
+      
+      return customWidth !== arialWidth;
+    };
+    
+    // Ждем загрузки шрифтов
+    try {
+      await document.fonts.ready;
+      console.log('Fonts ready event fired');
+      
+      // Дополнительная проверка наших шрифтов
+      const requestLoaded = checkFont('Request');
+      const hooskaiLoaded = checkFont('HooskaiChamferedSquare');
+      
+      console.log('Font status:', { 
+        Request: requestLoaded, 
+        HooskaiChamferedSquare: hooskaiLoaded
+      });
+      
+      // Если шрифты не загружены, ждем еще немного
+      if (!requestLoaded || !hooskaiLoaded) {
+        console.log('Fonts not ready, waiting additional 500ms...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+    } catch (error) {
+      console.warn('Font loading error:', error);
+      // Продолжаем даже при ошибке, но с задержкой
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    console.log('Starting game scenes...');
     this.scene.start('StarSystemScene');
     this.scene.launch('UIScene');
+  }
+
+  create() {
+    // create() теперь пустой, все происходит в waitForFontsAndStart
   }
 }
 
