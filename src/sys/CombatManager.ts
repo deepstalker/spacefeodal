@@ -116,14 +116,24 @@ export class CombatManager {
   }
 
   public findTargetAt(wx: number, wy: number) {
+    // Фильтруем цели в состоянии docking/docked/undocking - их нельзя выбирать для боя
+    const availableTargets = this.targets.filter(t => {
+      const state = (t.obj as any).__state;
+      const isDockingState = state === 'docking' || state === 'docked' || state === 'undocking';
+      if (isDockingState) {
+        try { console.debug('[Combat] findTargetAt: filtering out target in state', state, { x: (t.obj as any).x, y: (t.obj as any).y }); } catch {}
+      }
+      return !isDockingState;
+    });
+    
     // Сначала проверим попадание по кругу вокруг объекта
-    let hit = this.targets.find(t => {
+    let hit = availableTargets.find(t => {
       const rad = this.getEffectiveRadius(t.obj as any) + 12;
       return Phaser.Math.Distance.Between(t.obj.x, t.obj.y, wx, wy) <= rad;
     });
     if (hit) return hit;
     // Также считаем попаданием клики по области HP-бара
-    hit = this.targets.find(t => {
+    hit = availableTargets.find(t => {
       const bg = t.hpBarBg;
       if (!bg || !bg.visible) return false;
       const x1 = bg.x, y1 = bg.y - bg.height * 0.5;
@@ -132,7 +142,7 @@ export class CombatManager {
     }) as any;
     if (hit) return hit;
     // Последняя попытка: клик рядом с объектом в прямоугольнике дисплея
-    hit = this.targets.find(t => {
+    hit = availableTargets.find(t => {
       const obj: any = t.obj;
       const w = obj.displayWidth ?? obj.width ?? 128;
       const h = obj.displayHeight ?? obj.height ?? 128;
@@ -164,7 +174,15 @@ export class CombatManager {
   }
 
   public clearPlayerWeaponTargets() {
-    this.playerWeaponTargets.clear();
+    if (this.playerWeaponTargets.size > 0) {
+      try { console.debug('[Combat] clearPlayerWeaponTargets: clearing', this.playerWeaponTargets.size, 'assignments'); } catch {}
+      // Уведомляем UI о сбросе всех назначений
+      const clearedSlots = Array.from(this.playerWeaponTargets.keys());
+      this.playerWeaponTargets.clear();
+      if (clearedSlots.length > 0) {
+        try { this.scene.events.emit('player-weapon-target-cleared', null, clearedSlots); } catch {}
+      }
+    }
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
