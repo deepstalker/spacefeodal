@@ -570,6 +570,13 @@ export class HUDManager {
         const slotKey = playerSlots[idx];
         if (!slotKey) return;
         const targetObj = (hit as any).obj ?? hit;
+        
+        // Если у этого оружия уже была назначенная цель, удаляем иконку с предыдущей цели
+        const currentTarget = star.combat.getPlayerWeaponTargets().get(slotKey);
+        if (currentTarget && currentTarget !== targetObj) {
+          this.removeAssignedIcon(slotKey);
+        }
+        
         star.combat.setPlayerWeaponTarget(slotKey, targetObj);
         // сделать эту цель текущей выделенной
         star.combat.forceSelectTarget(targetObj);
@@ -615,7 +622,10 @@ export class HUDManager {
 
   private createAssignedIcon(slotKey: string, target: any) {
     const existing = this.assignedIconsBySlot.get(slotKey);
-    if (existing) { existing.target = target; return; }
+    if (existing) { 
+      // Если оружие переназначается на новую цель, сначала удаляем старую иконку
+      this.removeAssignedIcon(slotKey);
+    }
     const size = 48;
     const defs: any = this.configRef!.weapons.defs;
     const items: any = this.configRef!.items?.rarities;

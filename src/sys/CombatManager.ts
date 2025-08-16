@@ -148,13 +148,16 @@ export class CombatManager {
   }
 
   public setPlayerWeaponTarget(slotKey: string, target: Target | null) {
+    const oldTarget = this.playerWeaponTargets.get(slotKey);
+    
     if (target) {
       this.playerWeaponTargets.set(slotKey, target);
-      try { console.debug('[Combat] setPlayerWeaponTarget', slotKey, { tx: (target as any).x, ty: (target as any).y }); } catch {}
+      try { console.debug('[Combat] setPlayerWeaponTarget', slotKey, { tx: (target as any).x, ty: (target as any).y, hadOldTarget: !!oldTarget }); } catch {}
     } else {
       this.playerWeaponTargets.delete(slotKey);
       try { console.debug('[Combat] clearPlayerWeaponTarget', slotKey); } catch {}
     }
+    
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
