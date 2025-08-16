@@ -140,6 +140,16 @@ export default class StarSystemScene extends Phaser.Scene {
       const px0 = system.star.x + Math.cos(rad) * p.orbit.radius;
       const py0 = system.star.y + Math.sin(rad) * p.orbit.radius;
       c.x = px0; c.y = py0;
+      
+      const label = this.add.text(px0, py0 - 180, p.id, {
+        fontFamily: 'HooskaiChamferedSquare',
+        fontSize: '36px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 6
+      }).setOrigin(0.5).setDepth(2);
+      record.label = label;
+      
       const confPlanet = (system.planets as any[]).find(pl => pl.id === p.id) as any;
       if (confPlanet) { confPlanet._x = px0; confPlanet._y = py0; }
     }
@@ -339,6 +349,12 @@ export default class StarSystemScene extends Phaser.Scene {
       const py = sys.star.y + Math.sin(rad) * pl.data.orbit.radius;
       pl.obj.x = px;
       pl.obj.y = py;
+      
+      // Обновляем позицию метки
+      if (pl.label) {
+        pl.label.setPosition(px, py - 180);
+      }
+      
       // проксируем текущие координаты планет обратно в конфиг (для миникарты)
       const confPlanet = (sys.planets as Array<any>).find((q: any) => q.id === pl.data.id) as any;
       if (confPlanet) { confPlanet._x = px; confPlanet._y = py; }
@@ -544,8 +560,39 @@ export default class StarSystemScene extends Phaser.Scene {
       let target = (o as any).__targetPlanet;
       if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
       const confPlanet = (sys.planets as any[]).find(p => p.id === target.id) as any;
-      const tx = (confPlanet?._x ?? (sys.star.x + target.orbit.radius));
-      const ty = (confPlanet?._y ?? sys.star.y);
+      
+      // Обработка случая, когда планета-цель не найдена
+      if (!confPlanet) {
+          if (process.env.NODE_ENV === 'development') {
+              const shipId = cmEntry?.shipId ?? 'trader';
+              const uniqueId = (o as any).__uniqueId || '';
+              console.error(`[AI Trader] ${shipId} #${uniqueId} could not find target planet '${target.id}'. Assigning a new random planet.`);
+          }
+          (o as any).__targetPlanet = this.pickRandomPlanet();
+          (o as any).__targetOffset = null; // Сбрасываем смещение, чтобы оно пересчиталось для новой планеты
+          continue; // Пропускаем текущий кадр, чтобы логика выполнилась заново
+      }
+      
+      // Каждый торговец получает уникальное смещение от центра планеты, которое сохраняется до смены цели.
+      if (!(o as any).__targetOffset) {
+        (o as any).__targetOffset = {
+          angle: Math.random() * Math.PI * 2,
+          radius: (this.config.gameplay.dock_range ?? 220) * (0.8 + Math.random() * 0.4),
+        };
+        // Логируем установку новой цели
+        if (process.env.NODE_ENV === 'development') {
+          const shipId = cmEntry?.shipId ?? 'trader';
+          const uniqueId = (o as any).__uniqueId || '';
+          console.log(`[AI Trader] ${shipId} #${uniqueId} (${o.x.toFixed(0)},${o.y.toFixed(0)}) setting new target: planet '${target.id}'`);
+        }
+      }
+      
+      // Каждый кадр пересчитываем точку назначения на основе текущего положения планеты.
+      const planetPos = this.getPlanetWorldPosById(target.id) ?? { x: confPlanet?._x, y: confPlanet?._y };
+      const offset = (o as any).__targetOffset;
+      const tx = planetPos.x + Math.cos(offset.angle) * offset.radius;
+      const ty = planetPos.y + Math.sin(offset.angle) * offset.radius;
+      
       const dx = tx - o.x;
       const dy = ty - o.y;
       const dist = Math.hypot(dx, dy);
@@ -591,6 +638,7 @@ export default class StarSystemScene extends Phaser.Scene {
         if (dist < dockRange) {
           // Start docking
           (o as any).__state = 'docking';
+          (o as any).__targetOffset = null; // Сбрасываем смещение для выбора новой цели
           const dur = 3000 + Math.random() * 1000;
           const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
           const bsy = (o as any).__baseScaleY ?? o.scaleY ?? 1;
@@ -599,9 +647,13 @@ export default class StarSystemScene extends Phaser.Scene {
             // undock after random dwell
             this.time.delayedCall(10000 + Math.random() * 50000, () => {
               if (!o.active) return;
-              // pick new planet
-              const planets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
-              (o as any).__targetPlanet = planets[Math.floor(Math.random() * planets.length)];
+              // pick new planet, ensuring it's not the same one
+              const otherPlanets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
+              if (otherPlanets.length > 0) {
+                (o as any).__targetPlanet = otherPlanets[Math.floor(Math.random() * otherPlanets.length)];
+              } else {
+                (o as any).__targetPlanet = target; // Fallback if only one planet exists
+              }
               (o as any).__state = 'undocking';
               const ang = Math.random() * Math.PI * 2;
               // recompute current planet position at undock time
@@ -795,7 +847,7 @@ export default class StarSystemScene extends Phaser.Scene {
     const targetNPC = capturedTarget || this.findNPCAt(worldX, worldY);
     
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[Scene] executeMovementCommand: mode=${item.mode}, distance=${item.distance}, targetNPC=${!!targetNPC}, captured=${!!capturedTarget}`);
+      // console.log(`[Scene] executeMovementCommand: mode=${item.mode}, distance=${item.distance}, targetNPC=${!!targetNPC}, captured=${!!capturedTarget}`);
     }
     
     if (targetNPC) {

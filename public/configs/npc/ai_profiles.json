@@ -12,7 +12,7 @@
     },
     "planet_trader": {
       "behavior": "planet_trader",
-      "sensors": { "react": { "onFaction": { "confrontation": "flee", "ally": "seekEscort", "neutral": "ignore" } } },
+      "sensors": { "react": { "onFaction": { "confrontation": "ignore", "ally": "seekEscort", "neutral": "ignore" } } },
       "combat": { "retreatHpPct": 0.99 }
     }
     ,

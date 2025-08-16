@@ -5,7 +5,7 @@
       "movementMode": "orbit",
       "movementDistance": 700
     },
-    "coward": { "retreatHpPct": 0.8 },
+    "coward": { "retreatHpPct": 0.99 },
     "brave": { "retreatHpPct": 0.1 }
   }
 }

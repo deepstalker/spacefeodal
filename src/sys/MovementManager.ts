@@ -23,6 +23,7 @@ export class MovementManager {
   private orbitAngle = 0; // текущий угол орбиты
   private lastTargetUpdate = 0; // время последнего обновления цели
   private controlledObject: any = null; // ссылка на управляемый объект
+  private targetVelocity: Phaser.Math.Vector2 = new Phaser.Math.Vector2(0, 0);
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -162,8 +163,13 @@ export class MovementManager {
     const updateInterval = this.command?.mode === 'orbit' ? Math.min(baseInterval, 50) : baseInterval;
     
     if (time - this.lastTargetUpdate > updateInterval) {
-      this.updateDynamicTarget();
+      this.updateDynamicTarget(time - this.lastTargetUpdate);
       this.lastTargetUpdate = time;
+    }
+
+    // Если updateDynamicTarget обнулил команду (цель умерла), выходим.
+    if (!this.command) {
+      return;
     }
 
     // Выполняем движение в зависимости от режима
@@ -178,43 +184,33 @@ export class MovementManager {
     }
   }
 
-  private updateDynamicTarget() {
-    if (!this.command || !this.command.targetObject) return;
-    
-    // Проверяем, что объект-цель все еще существует и активен
-    if (!this.command.targetObject.active) {
-      console.log('[Movement] Target object became inactive, clearing command');
-      this.command = null;
-      this.target = null;
+  private updateDynamicTarget(dtMs: number) {
+    if (!this.command || !this.command.targetObject) {
+      this.targetVelocity.set(0, 0);
       return;
     }
     
-    // Обновляем позицию цели
+    // Проверяем, что объект-цель все еще существует и активен
+    if (!this.command.targetObject.active) {
+      this.command = null;
+      this.target = null;
+      this.targetVelocity.set(0, 0);
+      return;
+    }
+    
     const oldX = this.target!.x;
     const oldY = this.target!.y;
     this.target!.x = this.command.targetObject.x;
     this.target!.y = this.command.targetObject.y;
     
-    // Вычисляем дистанцию движения цели
-    const distMoved = Math.hypot(this.target!.x - oldX, this.target!.y - oldY);
-    
-    // Для орбиты нужно пересчитать угол относительно новой позиции цели
-    /*
-    // BUG: This code incorrectly resets the orbit angle, preventing the ship from circling a moving target.
-    // The orbit center IS correctly updated by setting this.target, and executeOrbitMode handles the circling.
-    if (this.command.mode === 'orbit' && this.controlledObject) {
-      const dx = this.controlledObject.x - this.target!.x;
-      const dy = this.controlledObject.y - this.target!.y;
-      const oldAngle = this.orbitAngle;
-      this.orbitAngle = Math.atan2(dy, dx);
-      
-      if (process.env.NODE_ENV === 'development' && distMoved > 0.1) {
-        console.log(`[Movement] Orbit angle updated from ${(oldAngle * 180 / Math.PI).toFixed(1)}° to ${(this.orbitAngle * 180 / Math.PI).toFixed(1)}°`);
-        console.log(`[Movement] Ship at (${this.controlledObject.x.toFixed(1)}, ${this.controlledObject.y.toFixed(1)}), Target at (${this.target!.x.toFixed(1)}, ${this.target!.y.toFixed(1)})`);
-      }
+    const dtSec = dtMs / 1000;
+    if (dtSec > 0) {
+        const vx = (this.target!.x - oldX) / dtSec;
+        const vy = (this.target!.y - oldY) / dtSec;
+        this.targetVelocity.set(vx, vy);
     }
-    */
     
+    const distMoved = Math.hypot(this.target!.x - oldX, this.target!.y - oldY);
     // Отладочный вывод при значительном изменении позиции (только в dev режиме)
     if (distMoved > 5 && process.env.NODE_ENV === 'development') {
       // console.log(`[Movement] Target moved ${distMoved.toFixed(1)} units to (${this.target!.x.toFixed(1)}, ${this.target!.y.toFixed(1)}) - Mode: ${this.command.mode}`);
@@ -286,9 +282,22 @@ export class MovementManager {
     const distanceError = distance - followDistance;
     
     // "Мертвая зона" для предотвращения дрожания на идеальной дистанции.
-    if (Math.abs(distanceError) < 15) {
-      // Находясь на дистанции, плавно сбрасываем скорость.
-      this.speed = Math.max(0, this.speed - mv.DECELERATION);
+    if (Math.abs(distanceError) < 20) {
+      // Находясь на дистанции, стремимся к скорости и направлению цели.
+      const targetSpeed = this.targetVelocity.length();
+      
+      // Плавно меняем скорость до скорости цели
+      if (this.speed < targetSpeed) {
+        this.speed = Math.min(this.speed + mv.ACCELERATION, targetSpeed);
+      } else {
+        this.speed = Math.max(this.speed - mv.DECELERATION, targetSpeed);
+      }
+      
+      // Если цель движется, поворачиваем в ее направлении.
+      if (targetSpeed > 1) {
+        const targetAngle = this.targetVelocity.angle();
+        this.turnTowardsOriginal(targetAngle, mv);
+      }
       return;
     }
 
