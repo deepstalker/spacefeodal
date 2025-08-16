@@ -15,7 +15,11 @@ export class MinimapManager {
     this.config = config;
   }
 
-  init(containerX: number, containerY: number) {
+  init(containerX: number, containerY: number, width?: number, height?: number) {
+    // Обновляем размеры миникарты если переданы
+    if (width) this.width = width;
+    if (height) this.height = height;
+    
     const sys = (this.config as any)?.system;
     if (sys?.size) {
       this.worldW = sys.size.width;
@@ -57,7 +61,7 @@ export class MinimapManager {
     const scaleY = this.height / this.worldH;
     this.g.clear();
     // background panel
-    this.g.fillStyle(0x2c2a2d, 0.8);
+    this.g.fillStyle(0x2c2a2d, 0.97);
     this.g.fillRect(x - 4, y - 4, this.width + 8, this.height + 8);
     this.g.lineStyle(1, 0xA28F6E);
     this.g.strokeRect(x, y, this.width, this.height);
@@ -139,8 +143,24 @@ export class MinimapManager {
       const ry = y + vw.y * scaleY;
       const rw = vw.width * scaleX;
       const rh = vw.height * scaleY;
-      this.g.lineStyle(2, 0x66ff66, 1);
-      this.g.strokeRect(rx, ry, rw, rh);
+      
+      // Проверяем, что рамка viewport пересекается с областью миникарты
+      const minimapLeft = x;
+      const minimapTop = y;
+      const minimapRight = x + this.width;
+      const minimapBottom = y + this.height;
+      
+      // Проверка пересечения прямоугольников
+      const intersects = !(rx > minimapRight || 
+                          rx + rw < minimapLeft || 
+                          ry > minimapBottom || 
+                          ry + rh < minimapTop);
+      
+      // Рисуем зеленую рамку только если она пересекается с миникартой
+      if (intersects) {
+        this.g.lineStyle(2, 0x66ff66, 1);
+        this.g.strokeRect(rx, ry, rw, rh);
+      }
     }
   }
 }

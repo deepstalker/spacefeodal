@@ -10,10 +10,18 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: 'app',
   backgroundColor: '#0b0f1a',
   scale: {
-    mode: Phaser.Scale.RESIZE,
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: 1920,
-    height: 1080
+    width: 3840,
+    height: 2160,
+    min: {
+      width: 1920,
+      height: 1080
+    },
+    max: {
+      width: 3840,
+      height: 2160
+    }
   },
   render: { antialias: true, pixelArt: false, roundPixels: false },
   plugins: { scene: [ { key: 'rexUI', plugin: UIPlugin, mapping: 'rexUI' } ] },

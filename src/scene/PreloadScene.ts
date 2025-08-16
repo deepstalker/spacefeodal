@@ -27,6 +27,18 @@ export default class PreloadScene extends Phaser.Scene {
 
     this.load.on('complete', () => {
       sizer.destroy();
+      
+      // Устанавливаем линейную фильтрацию для всех иконок оружия для лучшего качества
+      const weaponIcons = ['weapon_laser', 'weapon_cannon', 'weapon_missile', 'weapon_railgun', 'weapon_plasma', 'weapon_flak'];
+      weaponIcons.forEach(key => {
+        try {
+          if (this.textures.exists(key)) {
+            this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+          }
+        } catch (e) {
+          console.warn(`Не удалось установить фильтр для ${key}:`, e);
+        }
+      });
     });
 
     // Конфиги грузим напрямую в StarSystemScene/ConfigManager через fetch — убираем JSON из Loader,
@@ -51,6 +63,7 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');
     this.load.image('bg_stars1', '/assets/Stars-Big_1_1_PC.png');
     // Weapons icons (mapped to available files in public/assets/weapons)
+    // Загружаем с оптимизированными настройками для высокого качества
     this.load.image('weapon_laser', '/assets/weapons/laser_cannon.png');
     this.load.image('weapon_cannon', '/assets/weapons/heavy_laser_cannon.png');
     this.load.image('weapon_missile', '/assets/weapons/imperial_photon_cannon.png');

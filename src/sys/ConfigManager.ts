@@ -6,6 +6,11 @@ export type SettingsConfig = {
     fontFamily: string;
     baseFontSize: number;
     spacing: Record<string, number>;
+    weaponSlots?: {
+      size: number;
+      iconPadding: number;
+      highQualityRendering: boolean;
+    };
   };
   camera: { minZoom: number; maxZoom: number; edgePanMargin: number; edgePanSpeed: number };
 };

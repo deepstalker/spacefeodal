@@ -40,75 +40,107 @@
 
 Каждый модуль имеет публичный API и тесты; подключается через реестр модулей и конфиги.
 
-### 3.2 Каркас каталогов
+### 3.2 Каркас каталогов (актуальная структура)
 ```
 src/
-  main.ts                      # Vite entry
-  game/
-    scenes/
-      BootScene.ts
-      PreloadScene.ts
-      StarSystemScene.ts
-      UIScene.ts
-    core/
-      mediator/GameMediator.ts
-      managers/
-        AssetManager.ts
-        ConfigManager.ts
-        SaveManager.ts
-        CameraManager.ts
-        PathfindingManager.ts
-        MovementManager.ts
-        FOVManager.ts
-        FogManager.ts
-        DiscoveryManager.ts
-        MinimapManager.ts
-        InputManager.ts
-      store/MetaStore.ts
-    modules/
-      navigation-exploration/
-        path/PathPlanner.ts
-        path/PathFollower.ts
-        camera/EdgePanController.ts
-      combat/
-        Ship.ts
-        Bullet.ts
-        effects/Effects.ts   # Flash/Shake фасады
-      fov/
-        GridFOV.ts
-        FogOfWarLayer.ts
-      ui/
-        hud/HUDRoot.ts       # только rexUI компоненты
-        minimap/Minimap.ts
-      narrative-llm/Stub.ts  # заглушка
-    ui/theme/
-      typography.ts          # типографика и размеры
-      dimensions.ts          # базовые отступы, брейкпоинты
-  configs/
-    settings.json
-    gameplay.json
-    system.json
-    assets.json
-    keybinds.json
-    modules.json
-    persistence.json
-  spine/
-    README.md                # инструкции по добавлению .skel/.atlas/.png
+  main.ts                      # Vite entry точка
+  scene/                       # Phaser сцены
+    BootScene.ts
+    PreloadScene.ts
+    StarSystemScene.ts         # Основная игровая сцена
+    UIScene.ts                 # Экранные UI элементы (миникарта, системное меню)
+  sys/                         # Системные менеджеры
+    BackgroundTiler.ts         # Фон звездного поля
+    CameraManager.ts           # Управление камерой и масштабированием
+    CombatManager.ts           # Боевая система
+    ConfigManager.ts           # Чтение и валидация конфигов
+    FogOfWar.ts               # Туман войны
+    InputManager.ts           # Обработка пользовательского ввода
+    MinimapManager.ts         # Логика миникарты
+    MovementManager.ts        # Кинематика движения корабля
+    PathfindingManager.ts     # Построение маршрутов
+    SaveManager.ts            # Сохранение/загрузка состояния
+    SpaceStationManager.ts    # Управление космическими станциями
+    SystemGenerator.ts        # Процедурная генерация систем
+  modules/                     # Модульная архитектура
+    navigation-exploration/
+      path/
+        FlightPlanner.ts      # Планирование полётных траекторий
+        PathFollower.ts       # Следование по маршруту
+        TrajectoryPlanner.ts  # Расчёт траекторий
+  ui/                         # UI компоненты
+    hud/
+      HUDManager.ts          # Игровой HUD (скорость, HP, оружие, Game Over)
+    theme/
+      typography.ts          # Типографика
+      dimensions.ts          # Размеры и отступы
+  types/
+    assets.d.ts             # TypeScript типы для ассетов
+  assets/                   # Статические ассеты
+    ships/alpha/
+    weapons/
+public/                     # Публичные ресурсы
+  configs/                  # JSON конфигурации
+    general/
+      settings.json         # Основные настройки игры
+      gameplay.json         # Игровая механика
+      items.json           # Предметы и редкости
+      keybinds.json        # Привязки клавиш
+      modules.json         # Модули
+      persistence.json     # Настройки сохранения
+      player.json          # Конфигурация игрока
+      assets.json          # Ресурсы
+    npc/
+      ai_profiles.json     # ИИ профили NPC
+      combat_ai_profiles.json  # Боевые ИИ профили
+      factions.json        # Фракции
+      stardwellers.json    # Обитатели звёзд
+    ships/
+      ships.json           # Конфигурации кораблей
+      weapons.json         # Конфигурации оружия
+    systems/
+      systems.json         # Индекс звёздных систем
+      system_profiles.json # Профили систем
+      system_*.json        # Конкретные системы
+  assets/                  # Графические ресурсы
+    ships/alpha/           # Корабли
+    weapons/               # Иконки оружия
+    *.png                  # Фоны, планеты
+  fonts/                   # Шрифты
+    HooskaiChamferedSquare.ttf
+    Request Regular.ttf
 ```
 
-### 3.3 Менеджеры и медиатор
-- **GameMediator**: связывает менеджеры/сцены, маршрутизирует события (shipMoveRequested, poiDiscovered и т.д.).
-- **AssetManager**: реестр ассетов, загрузка через Phaser Loader, знание о Spine и rex-плагинах.
-- **ConfigManager**: чтение/валидирование JSON-конфигов, предоставление констант.
-- **SaveManager**: persistance (localStorage на прототипе), последняя позиция/курс/открытые POI.
-- **PathfindingManager**: построение маршрута с учётом курса и ограничений движения.
-- **MovementManager**: профиль скорости (ускорение/торможение), доведение до нулевой скорости в целевой точке.
-- **FOVManager**: расчёт видимости на сетке.
-- **FogManager**: визуал тумана войны, маски/шейпы.
-- **DiscoveryManager**: логика открытия POI, события «локация открыта».
-- **MinimapManager**: отрисовка/обновление миникарты, учёт тумана.
-- **InputManager**: ПК-инпут, ПКМ для маршрута, хоткеи, edge-pan.
-- **CameraManager**: масштабирование/слежение/панорамирование.
+### 3.3 Менеджеры и архитектура UI
+
+#### Системные менеджеры (src/sys/)
+- **ConfigManager**: Централизованное чтение и валидация JSON-конфигураций, типизированные интерфейсы.
+- **CameraManager**: Управление масштабированием, панорамированием, режимом следования за кораблём.
+- **MovementManager**: Кинематическое движение корабля без физического движка.
+- **PathfindingManager**: Построение маршрутов с учётом поворотов и препятствий.
+- **CombatManager**: Боевая система (таргетинг, урон, автоатака).
+- **MinimapManager**: Рендеринг миникарты, отображение объектов и тумана войны.
+- **InputManager**: Обработка пользовательского ввода (клики, перетаскивание).
+- **SaveManager**: Persistence через localStorage, сохранение состояния игры.
+- **SystemGenerator**: Процедурная генерация звёздных систем.
+- **FogOfWar**: Система тумана войны и исследования.
+
+#### UI архитектура
+**Разделение ответственности:**
+- **UIScene**: Только экранные элементы интерфейса (миникарта, системное меню, debug информация)
+- **HUDManager**: Игровые HUD элементы, связанные с геймплеем:
+  - Индикатор скорости корабля
+  - HP бар игрока с анимацией урона
+  - Панель оружия с иконками и горячими клавишами
+  - Кнопка режима следования
+  - Game Over экран
+  - Информация о корабле (название, иконка)
+
+**Преимущества нового разделения:**
+- Четкое разделение экранных и игровых элементов
+- HUD автоматически обновляется через события игры
+- Упрощение UIScene для фокуса на навигации
+- Модульность и переиспользуемость компонентов
 
 ### 3.4 Store для метаданных
 - Простой типобезопасный store (`src/game/core/store/MetaStore.ts`) для метаданных (последняя позиция, открытые POI, настройки UI, флаги модулей). Абстракция над `SaveManager`.
@@ -269,8 +301,11 @@ src/
 - LocalStorage (прототип): позиция/курс игрока, зум камеры, открытые POI, базовые настройки. Ключ — из `persistence.json`.
 
 ## 15) Масштабирование/адаптация экрана
-- Таргет 1920×1080, режим Scale: `RESIZE`.
-- UI-лейауты через rexUI Sizers; относительные проценты/минимальные размеры.
+- **Целевое разрешение**: 4K (3840×2160), режим Scale: `FIT` для фиксированных пропорций.
+- **Совместимость**: минимальное разрешение 1920×1080, масштабирование с сохранением соотношения сторон.
+- **UI-лейауты**: через rexUI Sizers; адаптивные размеры на основе конфигурации.
+- **Качество текстур**: линейная фильтрация для иконок оружия, высокое разрешение UI текста.
+- **Типографика**: Использование кастомных шрифтов (HooskaiChamferedSquare, Request) с настройкой padding и origin для корректного отображения.
 
 ## 16) Тестирование (Vitest)
 - Юнит-тесты: PathPlanner (стоимость, развороты, профиль скорости), FOV (видимость), Store/SaveManager, DiscoveryManager, Minimap-проекции.

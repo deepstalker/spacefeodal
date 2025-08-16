@@ -1,13 +1,18 @@
 {
-  "resolution": { "width": 1920, "height": 1080 },
-  "scaleMode": "RESIZE",
+  "resolution": { "width": 3840, "height": 2160 },
+  "scaleMode": "FIT",
   "ui": {
     "theme": "dark",
     "fontFamily": "Inter, Arial, sans-serif",
-    "baseFontSize": 18,
-    "spacing": { "xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24 }
+    "baseFontSize": 36,
+    "spacing": { "xs": 8, "sm": 16, "md": 24, "lg": 32, "xl": 48 },
+    "weaponSlots": {
+      "size": 128,
+      "iconPadding": 8,
+      "highQualityRendering": true
+    }
   },
-  "camera": { "minZoom": 0.3, "maxZoom": 2.5, "edgePanMargin": 24, "edgePanSpeed": 600 }
+  "camera": { "minZoom": 0.3, "maxZoom": 2.5, "edgePanMargin": 48, "edgePanSpeed": 1200 }
 }
 
 
