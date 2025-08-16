@@ -257,7 +257,7 @@ export class HUDManager {
         if (this.scene.textures.exists(iconKey)) {
           try { this.scene.textures.get(iconKey).setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
           const img = this.scene.add.image(x + slotSize/2, y + slotSize/2, iconKey).setDepth(1501).setScrollFactor(0);
-          img.setOrigin(0.5);
+          img.setOrigin(0.5, 0);
           
           // Правильное масштабирование с сохранением пропорций
           const iconPadding = this.configRef.settings?.ui?.weaponSlots?.iconPadding ?? 8;
@@ -296,8 +296,8 @@ export class HUDManager {
         color: '#F5F0E9', 
         fontSize: `${fontSize}px`, 
         fontFamily: 'Request',
-        padding: { top: Math.max(2, fontSize * 0.15), bottom: 2, left: 2, right: 2 }
-      }).setOrigin(0.5, 0.45).setDepth(1503).setScrollFactor(0);
+        padding: { top: Math.max(2, fontSize * 0.15), bottom: 4, left: 2, right: 2 }
+      }).setOrigin(0.5, 0.5).setDepth(1503).setScrollFactor(0);
       
       // Явно устанавливаем шрифт для цифр на значках
       num.setFontFamily('Request');
@@ -442,8 +442,20 @@ export class HUDManager {
     rec.outline.setStrokeStyle(2, 0x00ff66, 1);
     // поднимем слот, если он ещё не поднят
     const targetY = rec.baseY - 20;
-    const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
-    if (Math.abs((rec.bg as any).y - targetY) > 1) this.scene.tweens.add({ targets: toMove, y: targetY, duration: 90, ease: 'Sine.easeOut' });
+    const mainToMove = [rec.bg, rec.outline, rec.under, rec.icon].filter(Boolean);
+    if (Math.abs((rec.bg as any).y - targetY) > 1) {
+      this.scene.tweens.add({ targets: mainToMove, y: targetY, duration: 90, ease: 'Sine.easeOut' });
+      // Для бейджа анимируем к правильной позиции относительно нового положения слота
+      const badge = (rec as any).badge;
+      const badgeText = (rec as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = rec.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        this.scene.tweens.add({ targets: badge, y: targetY + slotSize - badgePadding - badgeSize, duration: 90, ease: 'Sine.easeOut' });
+        this.scene.tweens.add({ targets: badgeText, y: targetY + slotSize - badgePadding - badgeSize/2, duration: 90, ease: 'Sine.easeOut' });
+      }
+    }
     // иконка на курсоре
     this.addCursorIcon(rec);
     this.realignCursorIcons();
@@ -456,14 +468,34 @@ export class HUDManager {
     const isAssigned = Array.from(this.assignedIconsBySlot.keys()).includes(rec.slotKey);
     if (!isAssigned) {
       rec.outline.setStrokeStyle(0, 0x00ff66, 1);
-      const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
+      const mainToMove = [rec.bg, rec.outline, rec.under, rec.icon].filter(Boolean);
       // вернём ровно к baseY
-      this.scene.tweens.add({ targets: toMove, y: rec.baseY, duration: 90, ease: 'Sine.easeOut' });
+      this.scene.tweens.add({ targets: mainToMove, y: rec.baseY, duration: 90, ease: 'Sine.easeOut' });
+      // Для бейджа анимируем к правильной позиции относительно базового положения слота
+      const badge = (rec as any).badge;
+      const badgeText = (rec as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = rec.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        this.scene.tweens.add({ targets: badge, y: rec.baseY + slotSize - badgePadding - badgeSize, duration: 90, ease: 'Sine.easeOut' });
+        this.scene.tweens.add({ targets: badgeText, y: rec.baseY + slotSize - badgePadding - badgeSize/2, duration: 90, ease: 'Sine.easeOut' });
+      }
     } else {
       // активный слот остаётся поднятым и красным
       rec.outline.setStrokeStyle(2, 0xA93226, 1);
-      const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
-      toMove.forEach((g: any) => { if (g) g.y = rec.baseY - 20; });
+      const mainToMove = [rec.bg, rec.outline, rec.under, rec.icon].filter(Boolean);
+      mainToMove.forEach((g: any) => { if (g) g.y = rec.baseY - 20; });
+      // Для бейджа устанавливаем позицию относительно поднятого положения слота
+      const badge = (rec as any).badge;
+      const badgeText = (rec as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = rec.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        badge.y = rec.baseY - 20 + slotSize - badgePadding - badgeSize;
+        badgeText.y = rec.baseY - 20 + slotSize - badgePadding - badgeSize/2;
+      }
     }
     this.removeCursorIcon(rec.slotIndex);
     this.realignCursorIcons();
@@ -623,8 +655,18 @@ export class HUDManager {
     if (recSlot) {
       recSlot.outline.setStrokeStyle(2, 0xA93226, 1);
       const targetY = recSlot.baseY - 20;
-      const toMove = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon, (recSlot as any).badge, (recSlot as any).badgeText].filter(Boolean);
-      toMove.forEach((g: any) => { if (g) g.y = targetY; });
+      const mainToMove = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon].filter(Boolean);
+      mainToMove.forEach((g: any) => { if (g) g.y = targetY; });
+      // Для бейджа устанавливаем позицию относительно поднятого положения слота
+      const badge = (recSlot as any).badge;
+      const badgeText = (recSlot as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = recSlot.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        badge.y = targetY + slotSize - badgePadding - badgeSize;
+        badgeText.y = targetY + slotSize - badgePadding - badgeSize/2;
+      }
     }
 
     (cont as any).__flash = outlineFlash;
@@ -643,8 +685,18 @@ export class HUDManager {
     if (recSlot) {
       const selected = this.selectedSlots.has(recSlot.slotIndex);
       const targetY = recSlot.baseY + (selected ? -20 : 0);
-      const nodes = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon, (recSlot as any).badge, (recSlot as any).badgeText].filter(Boolean);
-      nodes.forEach((n: any) => { if (n) n.y = targetY; });
+      const mainNodes = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon].filter(Boolean);
+      mainNodes.forEach((n: any) => { if (n) n.y = targetY; });
+      // Для бейджа устанавливаем позицию относительно нового положения слота
+      const badge = (recSlot as any).badge;
+      const badgeText = (recSlot as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = recSlot.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        badge.y = targetY + slotSize - badgePadding - badgeSize;
+        badgeText.y = targetY + slotSize - badgePadding - badgeSize/2;
+      }
       // обводка: если выбран, зелёная; иначе убрать
       if (selected) recSlot.outline.setStrokeStyle(2, 0x00ff66, 1);
       else recSlot.outline.setStrokeStyle(0, 0x00ff66, 1);
@@ -792,8 +844,24 @@ export class HUDManager {
       const selected = this.selectedSlots.has(rec.slotIndex);
       const lifted = assigned || selected;
       const targetY = rec.baseY + (lifted ? -20 : 0);
-      const nodes = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
-      for (const n of nodes) { if ((n as any).y !== targetY) (n as any).y = targetY; }
+      
+      // Для основных элементов слота просто меняем Y
+      const mainNodes = [rec.bg, rec.outline, rec.under, rec.icon].filter(Boolean);
+      for (const n of mainNodes) { if ((n as any).y !== targetY) (n as any).y = targetY; }
+      
+      // Для бейджа пересчитываем позицию относительно нового положения слота
+      const badge = (rec as any).badge;
+      const badgeText = (rec as any).badgeText;
+      if (badge && badgeText) {
+        const slotSize = rec.size;
+        const badgeSize = Math.max(32, slotSize * 0.35);
+        const badgePadding = Math.max(4, slotSize * 0.05);
+        
+        // Позиция бейджа всегда в нижнем левом углу слота
+        badge.y = targetY + slotSize - badgePadding - badgeSize;
+        badgeText.y = targetY + slotSize - badgePadding - badgeSize/2;
+      }
+      
       // обводка: assigned -> red, selected (без assigned) -> green, иначе без обводки
       if (assigned) rec.outline.setStrokeStyle(2, 0xA93226, 1);
       else if (selected) rec.outline.setStrokeStyle(2, 0x00ff66, 1);
