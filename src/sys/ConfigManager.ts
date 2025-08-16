@@ -11,6 +11,9 @@ export type SettingsConfig = {
       iconPadding: number;
       highQualityRendering: boolean;
     };
+    combat?: {
+      rightClickCancelSelectedWeapons?: boolean;
+    };
   };
   camera: { minZoom: number; maxZoom: number; edgePanMargin: number; edgePanSpeed: number };
 };

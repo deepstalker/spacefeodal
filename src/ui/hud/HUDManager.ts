@@ -22,6 +22,24 @@ export class HUDManager {
   private followLabel?: Phaser.GameObjects.Text;
   private minimap?: MinimapManager;
   private minimapHit?: Phaser.GameObjects.Zone;
+  // Combat UI state
+  private slotRecords: Array<{
+    slotIndex: number;
+    slotKey: string;
+    baseX: number; baseY: number;
+    size: number;
+    bg: Phaser.GameObjects.Rectangle;
+    outline: Phaser.GameObjects.Rectangle;
+    under?: Phaser.GameObjects.Rectangle;
+    icon?: Phaser.GameObjects.Image;
+    badge?: Phaser.GameObjects.Rectangle;
+    badgeText?: Phaser.GameObjects.Text;
+  }> = [];
+  private selectedSlots: Set<number> = new Set();
+  private cursorIcons: Map<number, Phaser.GameObjects.Container> = new Map();
+  private cursorOrder: number[] = [];
+  private assignedIconsBySlot: Map<string, { target: any; container: Phaser.GameObjects.Container; updater: () => void }>= new Map();
+  private assignedBlinkTweens: Map<string, Phaser.Tweens.Tween[]> = new Map();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -29,19 +47,54 @@ export class HUDManager {
 
   init(config: ConfigManager, ship: Phaser.GameObjects.GameObject) {
     this.configRef = config;
+    // сброс локального UI-состояния
+    this.selectedSlots.clear();
+    this.cursorOrder = [];
+    this.assignedIconsBySlot.clear();
+
     this.createHUD(ship);
     this.createWeaponBar();
     this.createMinimap(ship);
-    
-    // Подписываемся на события
+
     const starScene = this.scene.scene.get('StarSystemScene') as any;
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
-    
-    // Обновление HUD каждый кадр
+    starScene.events.on('player-weapon-fired', (slotKey: string) => this.flashAssignedIcon(slotKey));
+    starScene.events.on('player-weapon-target-cleared', (_target: any, slots: string[]) => slots.forEach(s => this.removeAssignedIcon(s)));
+
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
-    
-    // Обновление режима следования
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.realignCursorIcons());
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.syncSlotsVisual());
+
+    // Клавиши
+    const kb = this.scene.input.keyboard;
+    const numberKeys = [
+      Phaser.Input.Keyboard.KeyCodes.ONE,
+      Phaser.Input.Keyboard.KeyCodes.TWO,
+      Phaser.Input.Keyboard.KeyCodes.THREE,
+      Phaser.Input.Keyboard.KeyCodes.FOUR,
+      Phaser.Input.Keyboard.KeyCodes.FIVE,
+      Phaser.Input.Keyboard.KeyCodes.SIX,
+      Phaser.Input.Keyboard.KeyCodes.SEVEN,
+      Phaser.Input.Keyboard.KeyCodes.EIGHT,
+      Phaser.Input.Keyboard.KeyCodes.NINE
+    ];
+    numberKeys.forEach((code, idx) => {
+      const key = kb?.addKey(code);
+      key?.on('down', () => this.toggleSelectSlotByIndex(idx));
+    });
+    const backtick = kb?.addKey((Phaser.Input.Keyboard.KeyCodes as any).BACKTICK ?? 192);
+    backtick?.on('down', () => {
+      const allSelected = this.selectedSlots.size === this.slotRecords.length && this.slotRecords.length > 0;
+      if (allSelected) this.clearAllSelections();
+      else this.selectAllWeapons();
+    });
+
+    // Клики
+    this.scene.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (p.leftButtonReleased()) this.handleLeftClickForWeapons(p);
+      if (p.rightButtonReleased()) this.handleRightClickForWeapons();
+    });
   }
 
   private createHUD(ship: Phaser.GameObjects.GameObject) {
@@ -153,17 +206,17 @@ export class HUDManager {
     container.setScrollFactor(0);
     
     // Получаем только экипированное оружие (фильтруем undefined/null)
-    const playerSlots = this.configRef.player?.weapons ?? [];
-    const equippedWeapons = playerSlots.filter(weapon => weapon && weapon.trim() !== '');
+    const playerSlots = (this.configRef.player?.weapons ?? []).filter(w => w && w.trim() !== '');
+    const equippedWeapons = playerSlots;
     const actualSlotsCount = Math.max(1, equippedWeapons.length); // минимум 1 слот для отображения
     
     // Фиксированные размеры панели и HP бара
-    const fixedPanelW = 800; // фиксированная ширина панели
+    const fixedPanelW = 900; // фиксированная ширина панели
     const fixedPanelH = 200; // фиксированная высота панели
     const fixedHpBarW = 600; // фиксированная ширина HP бара
     const fixedHpBarH = 60;  // фиксированная высота HP бара
     
-    const panelOffset = 40;
+    const panelOffset = 20;
     const panelX = (sw - fixedPanelW) / 2; 
     const panelY = sh - panelOffset - fixedPanelH;
     
@@ -180,7 +233,8 @@ export class HUDManager {
     const defs = this.configRef.weapons?.defs ?? {} as any;
     const rarityMap = (this.configRef.items?.rarities ?? {}) as any;
     
-    // Отображаем только экипированные слоты
+    // Отображаем только экипированные слоты и делаем их интерактивными
+    this.slotRecords = [];
     for (let i = 0; i < actualSlotsCount; i++) {
       const x = startX + i * (slotSize + spacing);
       const y = slotsY;
@@ -219,6 +273,16 @@ export class HUDManager {
           img.setScale(scale);
           
           container.add(img);
+
+          const rec = { slotIndex: i, slotKey: weaponKey, baseX: x, baseY: y, size: slotSize, bg: slotBg, outline: this.scene.add.rectangle(x, y, slotSize, slotSize, 0x000000, 0).setOrigin(0,0).setDepth(1503).setScrollFactor(0), under, icon: img };
+          rec.outline.setStrokeStyle(0, 0x00ff00, 1);
+          this.slotRecords.push(rec as any);
+          // badge number already below — keep it
+          (rec as any).badge = undefined; (rec as any).badgeText = undefined;
+          // interactivity: toggle select
+          const hitZone = this.scene.add.zone(x, y, slotSize, slotSize).setOrigin(0,0).setScrollFactor(0).setDepth(1504).setInteractive({ useHandCursor: true });
+          hitZone.on('pointerdown', () => this.toggleSelectSlotByIndex(i));
+          container.add(hitZone);
         }
       }
       
@@ -240,6 +304,8 @@ export class HUDManager {
       try { (num as any).setResolution?.(this.uiTextResolution); } catch {}
       container.add(badge);
       container.add(num);
+      const rec = this.slotRecords.find(r => r.slotIndex === i);
+      if (rec) { rec.badge = badge; rec.badgeText = num; }
     }
     this.weaponSlotsContainer = container;
 
@@ -287,6 +353,9 @@ export class HUDManager {
       });
     }
     this.hullRect = { x: hpX, y: hpY, w: fixedHpBarW, h: fixedHpBarH };
+
+    // После сборки баров — принудительно синхронизируем
+    this.syncSlotsVisual();
   }
 
   private onPlayerDamaged(hp: number) {
@@ -358,6 +427,263 @@ export class HUDManager {
     }
   }
 
+  private toggleSelectSlotByIndex(idx: number) {
+    const rec = this.slotRecords[idx];
+    if (!rec) return;
+    if (this.selectedSlots.has(idx)) this.deselectSlot(rec);
+    else this.selectSlot(rec);
+  }
+
+  private selectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
+    this.selectedSlots.add(rec.slotIndex);
+    if (!this.cursorOrder.includes(rec.slotIndex)) this.cursorOrder.push(rec.slotIndex);
+    try { console.debug('[HUD] select slot', rec.slotIndex, rec.slotKey); } catch {}
+    // зелёный аутлайн только на время выбора
+    rec.outline.setStrokeStyle(2, 0x00ff66, 1);
+    // поднимем слот, если он ещё не поднят
+    const targetY = rec.baseY - 20;
+    const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
+    if (Math.abs((rec.bg as any).y - targetY) > 1) this.scene.tweens.add({ targets: toMove, y: targetY, duration: 90, ease: 'Sine.easeOut' });
+    // иконка на курсоре
+    this.addCursorIcon(rec);
+    this.realignCursorIcons();
+  }
+
+  private deselectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
+    this.selectedSlots.delete(rec.slotIndex);
+    this.cursorOrder = this.cursorOrder.filter(i => i !== rec.slotIndex);
+    try { console.debug('[HUD] deselect slot', rec.slotIndex, rec.slotKey); } catch {}
+    const isAssigned = Array.from(this.assignedIconsBySlot.keys()).includes(rec.slotKey);
+    if (!isAssigned) {
+      rec.outline.setStrokeStyle(0, 0x00ff66, 1);
+      const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
+      // вернём ровно к baseY
+      this.scene.tweens.add({ targets: toMove, y: rec.baseY, duration: 90, ease: 'Sine.easeOut' });
+    } else {
+      // активный слот остаётся поднятым и красным
+      rec.outline.setStrokeStyle(2, 0xA93226, 1);
+      const toMove = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
+      toMove.forEach((g: any) => { if (g) g.y = rec.baseY - 20; });
+    }
+    this.removeCursorIcon(rec.slotIndex);
+    this.realignCursorIcons();
+  }
+
+  private addCursorIcon(rec: { slotIndex: number; slotKey: string; size: number; }) {
+    if (this.cursorIcons.has(rec.slotIndex)) return;
+    const size = 48;
+    const defs = this.configRef!.weapons.defs as any;
+    const items = this.configRef!.items?.rarities as any;
+    const rarityKey = defs[rec.slotKey]?.rarity as string | undefined;
+    const rarityColorHex = rarityKey && items?.[rarityKey]?.color ? Number(items[rarityKey].color.replace('#','0x')) : 0x000000;
+    const iconKey = defs[rec.slotKey]?.icon ?? rec.slotKey;
+    const bg = this.scene.add.rectangle(0, 0, size, size, 0x2c2a2d, 1).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
+    bg.setStrokeStyle(2, 0x00ff66, 1);
+    const under = this.scene.add.rectangle(0, 0, size - 6, size - 6, rarityColorHex, 0.8).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
+    const img = this.scene.add.image(0, 0, iconKey).setOrigin(0.5).setScrollFactor(0).setDepth(4003);
+    try { const tx = this.scene.textures.get(iconKey); const scale = Math.min((size - 12) / tx.source[0].width, (size - 12) / tx.source[0].height); img.setScale(scale); } catch {}
+    const cont = this.scene.add.container(0, 0, [under, bg, img]).setDepth(4002).setAlpha(0.95);
+    this.cursorIcons.set(rec.slotIndex, cont);
+    try { console.debug('[HUD] add cursor icon for slot', rec.slotIndex); } catch {}
+    // без пер-иконных апдейтов; глобально двигаем в realignCursorIcons()
+  }
+
+  private removeCursorIcon(slotIndex: number) {
+    const c = this.cursorIcons.get(slotIndex);
+    if (!c) return;
+    this.cursorIcons.delete(slotIndex);
+    c.destroy();
+    try { console.debug('[HUD] remove cursor icon for slot', slotIndex); } catch {}
+  }
+
+  private selectAllWeapons() {
+    for (const rec of this.slotRecords) {
+      if (!this.selectedSlots.has(rec.slotIndex)) this.selectSlot(rec);
+    }
+  }
+
+  private clearAllSelections() {
+    for (const idx of Array.from(this.selectedSlots.values())) {
+      const rec = this.slotRecords[idx];
+      if (rec) this.deselectSlot(rec);
+      this.removeCursorIcon(idx);
+    }
+    this.selectedSlots.clear();
+    this.cursorOrder = [];
+  }
+
+  private handleLeftClickForWeapons(p: Phaser.Input.Pointer) {
+    if (this.selectedSlots.size === 0) return;
+    // Проверим попадание по цели в StarSystemScene
+    const star: any = this.scene.scene.get('StarSystemScene');
+    const cam = star.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined;
+    let wx = p.worldX, wy = p.worldY;
+    if (cam) {
+      const out = new Phaser.Math.Vector2();
+      try {
+        (cam as any).getWorldPoint?.(p.x, p.y, out);
+        if (!Number.isNaN(out.x) && !Number.isNaN(out.y)) { wx = out.x; wy = out.y; }
+      } catch {
+        wx = cam.scrollX + p.x / cam.zoom;
+        wy = cam.scrollY + p.y / cam.zoom;
+      }
+    }
+    const hit = star.combat?.findTargetAt?.(wx, wy);
+    try { console.debug('[HUD] left click with weapons, selected count=', this.selectedSlots.size, { wx, wy, hit: !!hit }); } catch {}
+    if (hit) {
+      // Назначаем выбранные слоты на цель
+      const playerSlots: string[] = (this.configRef!.player?.weapons ?? []).filter((w: string)=>!!w);
+      const bySlotIndex = Array.from(this.selectedSlots.values()).sort((a,b)=>a-b);
+      bySlotIndex.forEach((idx) => {
+        const slotKey = playerSlots[idx];
+        if (!slotKey) return;
+        const targetObj = (hit as any).obj ?? hit;
+        star.combat.setPlayerWeaponTarget(slotKey, targetObj);
+        // сделать эту цель текущей выделенной
+        star.combat.forceSelectTarget(targetObj);
+        this.createAssignedIcon(slotKey, targetObj);
+        // убрать курсор-иконку и снять выделение
+        this.removeCursorIcon(idx);
+        const rec = this.slotRecords[idx];
+        if (rec) this.deselectSlot(rec as any);
+      });
+      // оставим выбор слотов снятым, но НЕ сбрасываем сразу cursorOrder — он очищается в deselectSlot
+      this.selectedSlots.clear();
+    } else {
+      // Клик мимо цели — сбросить только выбранные слоты/цели; информационную цель не трогаем здесь
+      const playerSlots: string[] = (this.configRef!.player?.weapons ?? []).filter((w: string)=>!!w);
+      const bySlotIndex = Array.from(this.selectedSlots.values());
+      bySlotIndex.forEach((idx) => {
+        const slotKey = playerSlots[idx];
+        if (!slotKey) return;
+        // сброс цели
+        star.combat.setPlayerWeaponTarget(slotKey, null);
+        this.removeAssignedIcon(slotKey);
+        this.removeCursorIcon(idx);
+        const rec = this.slotRecords[idx];
+        if (rec) this.deselectSlot(rec as any);
+      });
+      this.selectedSlots.clear();
+      this.cursorOrder = [];
+    }
+  }
+
+  private handleRightClickForWeapons() {
+    // Сброс выбора оружия при ПКМ (если включено в настройках)
+    const enabled = this.configRef?.settings?.ui?.combat?.rightClickCancelSelectedWeapons ?? true;
+    if (!enabled) return;
+    if (this.selectedSlots.size === 0) return;
+    for (const idx of Array.from(this.selectedSlots.values())) {
+      this.removeCursorIcon(idx);
+      const rec = this.slotRecords[idx];
+      if (rec) this.deselectSlot(rec as any);
+    }
+    this.selectedSlots.clear();
+  }
+
+  private createAssignedIcon(slotKey: string, target: any) {
+    const existing = this.assignedIconsBySlot.get(slotKey);
+    if (existing) { existing.target = target; return; }
+    const size = 48;
+    const defs: any = this.configRef!.weapons.defs;
+    const items: any = this.configRef!.items?.rarities;
+    const rarityKey = defs[slotKey]?.rarity as string | undefined;
+    const rarityColorHex = rarityKey && items?.[rarityKey]?.color ? Number(items[rarityKey].color.replace('#','0x')) : 0x000000;
+    const iconKey = defs[slotKey]?.icon ?? slotKey;
+    const star: any = this.scene.scene.get('StarSystemScene');
+    // Добавляем в StarSystemScene, а не в UIScene, и на глубину между HP-баром (0.6) и именем (0.7)
+    const bg = star.add.rectangle(0, 0, size, size, 0x2c2a2d, 1).setOrigin(0.5).setDepth(0.65);
+    bg.setStrokeStyle(2, 0xA93226, 1);
+    const under = star.add.rectangle(0, 0, size - 6, size - 6, rarityColorHex, 0.8).setOrigin(0.5).setDepth(0.65);
+    const img = star.add.image(0, 0, iconKey).setOrigin(0.5).setDepth(0.66);
+    try { const tx = this.scene.textures.get(iconKey); const scale = Math.min((size - 12)/tx.source[0].width, (size - 12)/tx.source[0].height); img.setScale(scale); } catch {}
+    const outlineFlash = star.add.rectangle(0, 0, size, size, 0x000000, 0).setOrigin(0.5).setDepth(0.67).setStrokeStyle(2, 0xA93226, 1).setAlpha(0);
+    const cont = star.add.container(0, 0, [under, bg, img, outlineFlash]).setDepth(0.66);
+
+    const updater = () => {
+      const hp = star.combat?.getHpBarInfoFor?.(target);
+      if (!hp) return;
+      // позиция над именем: над HP баром на высоту иконки + небольшой отступ
+      const sx = hp.x;
+      const sy = hp.y; // world coords
+      const slotsAssigned = Array.from(this.assignedIconsBySlot.entries()).filter(([,v]) => v.target === target).map(([k]) => k);
+      const idx = slotsAssigned.indexOf(slotKey);
+      const spacing = size + 8;
+      const totalW = slotsAssigned.length * spacing - 8;
+      const startX = sx + (hp.width - totalW) / 2 + size/2;
+      cont.x = startX + idx * spacing;
+      cont.y = sy - (size + 16);
+    };
+    star.events.on(Phaser.Scenes.Events.UPDATE, updater);
+    this.assignedIconsBySlot.set(slotKey, { target, container: cont, updater });
+
+    // сделать слот активным (поднять и красный контур)
+    const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
+    const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
+    if (recSlot) {
+      recSlot.outline.setStrokeStyle(2, 0xA93226, 1);
+      const targetY = recSlot.baseY - 20;
+      const toMove = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon, (recSlot as any).badge, (recSlot as any).badgeText].filter(Boolean);
+      toMove.forEach((g: any) => { if (g) g.y = targetY; });
+    }
+
+    (cont as any).__flash = outlineFlash;
+  }
+
+  private removeAssignedIcon(slotKey: string) {
+    const rec = this.assignedIconsBySlot.get(slotKey);
+    if (!rec) return;
+    this.assignedIconsBySlot.delete(slotKey);
+    const star: any = this.scene.scene.get('StarSystemScene');
+    star.events.off(Phaser.Scenes.Events.UPDATE, rec.updater);
+    rec.container.destroy();
+    // вернуть слот в норму/оставить поднятым если всё ещё выбран; всегда убрать красную обводку
+    const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
+    const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
+    if (recSlot) {
+      const selected = this.selectedSlots.has(recSlot.slotIndex);
+      const targetY = recSlot.baseY + (selected ? -20 : 0);
+      const nodes = [recSlot.bg, recSlot.outline, recSlot.under, recSlot.icon, (recSlot as any).badge, (recSlot as any).badgeText].filter(Boolean);
+      nodes.forEach((n: any) => { if (n) n.y = targetY; });
+      // обводка: если выбран, зелёная; иначе убрать
+      if (selected) recSlot.outline.setStrokeStyle(2, 0x00ff66, 1);
+      else recSlot.outline.setStrokeStyle(0, 0x00ff66, 1);
+    }
+  }
+
+  private flashAssignedIcon(slotKey: string) {
+    const rec = this.assignedIconsBySlot.get(slotKey);
+    const cont: any = rec?.container;
+    const flash: Phaser.GameObjects.Rectangle | undefined = cont?.list?.find((c: any) => (c as any).strokeColor === 0xA93226);
+    if (!flash) return;
+    (flash as any).setAlpha(1);
+    this.scene.tweens.add({ targets: flash, alpha: 0, duration: 120 });
+    // мигать КРАСНЫМ контуром слота, и оставить красным
+    const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
+    const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
+    if (recSlot) {
+      recSlot.outline.setStrokeStyle(2, 0xA93226, 1);
+      const tw = this.scene.tweens.add({ targets: recSlot.outline, alpha: 0.2, duration: 80, yoyo: true, onComplete: () => { recSlot.outline.setAlpha(1); recSlot.outline.setStrokeStyle(2, 0xA93226, 1); } });
+      const arr = this.assignedBlinkTweens.get(slotKey) ?? [];
+      arr.push(tw);
+      this.assignedBlinkTweens.set(slotKey, arr);
+    }
+  }
+
+  private realignCursorIcons() {
+    const size = 48;
+    const spacing = size + 4;
+    const order = this.cursorOrder.filter(idx => this.cursorIcons.has(idx));
+    const totalW = order.length * spacing - 4;
+    const p = this.scene.input.activePointer;
+    const startX = p.x - totalW / 2 + size / 2;
+    order.forEach((idx, i) => {
+      const c = this.cursorIcons.get(idx)!;
+      c.x = startX + i * spacing;
+      c.y = p.y - size - 8;
+    });
+  }
+
   private createMinimap(ship: Phaser.GameObjects.GameObject) {
     if (!this.configRef) return;
     
@@ -408,42 +734,30 @@ export class HUDManager {
   }
 
   private destroyElements() {
-    // Уничтожаем все HUD элементы для пересоздания
-    this.speedText?.destroy();
-    this.followToggle?.destroy();
-    this.shipNameText?.destroy();
-    this.shipIcon?.destroy();
-    this.weaponSlotsContainer?.destroy();
-    this.weaponPanel?.destroy();
-    this.hullFill?.destroy();
-    this.followLabel?.destroy();
-    this.gameOverGroup?.destroy();
-    this.minimapHit?.destroy();
-    
-    // Очищаем ссылки
-    this.speedText = undefined;
-    this.followToggle = undefined;
-    this.shipNameText = undefined;
-    this.shipIcon = undefined;
-    this.weaponSlotsContainer = undefined;
-    this.weaponPanel = undefined;
-    this.hullFill = undefined;
-    this.followLabel = undefined;
-    this.gameOverGroup = undefined;
-    this.minimapHit = undefined;
-    
-    // Очищаем дополнительные элементы с глобальными ссылками
-    const hpText = (this.scene as any).__hudHullValue as Phaser.GameObjects.Text | undefined;
-    hpText?.destroy();
-    (this.scene as any).__hudHullValue = undefined;
-    
-    const speedValue = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
-    speedValue?.destroy();
-    (this.scene as any).__hudSpeedValue = undefined;
-    
-    // Сбрасываем состояние HP игрока
-    this.playerHp = null;
-    this.hullRect = undefined;
+    // уничтожить HUD элементы
+    this.speedText?.destroy(); this.followToggle?.destroy(); this.shipNameText?.destroy(); this.shipIcon?.destroy();
+    this.weaponSlotsContainer?.destroy(); this.weaponPanel?.destroy(); this.hullFill?.destroy(); this.followLabel?.destroy(); this.gameOverGroup?.destroy(); this.minimapHit?.destroy();
+
+    // очистить ссылки
+    this.speedText = undefined; this.followToggle = undefined; this.shipNameText = undefined; this.shipIcon = undefined; this.weaponSlotsContainer = undefined; this.weaponPanel = undefined; this.hullFill = undefined; this.followLabel = undefined; this.gameOverGroup = undefined; this.minimapHit = undefined;
+
+    // уничтожить текстовые ref
+    const hpText = (this.scene as any).__hudHullValue as Phaser.GameObjects.Text | undefined; hpText?.destroy(); (this.scene as any).__hudHullValue = undefined;
+    const speedValue = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined; speedValue?.destroy(); (this.scene as any).__hudSpeedValue = undefined;
+
+    // сбросить состояние
+    this.playerHp = null; this.hullRect = undefined;
+
+    // удалить назначенные иконки и события
+    const star: any = this.scene.scene.get('StarSystemScene');
+    for (const { updater, container } of Array.from(this.assignedIconsBySlot.values())) {
+      try { star.events.off(Phaser.Scenes.Events.UPDATE, updater); } catch {}
+      try { container.destroy(); } catch {}
+    }
+    this.assignedIconsBySlot.clear();
+    // очистить выборы
+    this.selectedSlots.clear();
+    this.cursorOrder = [];
   }
 
   public showGameOver() {
@@ -469,5 +783,21 @@ export class HUDManager {
     btn.setPosition(width / 2, height / 2 + 40);
     const group = this.scene.add.container(0, 0, [overlay, title, btn]).setDepth(3000);
     this.gameOverGroup = group;
+  }
+
+  private syncSlotsVisual() {
+    // жёстко выставляем Y и обводку согласно состоянию (selected/assigned)
+    for (const rec of this.slotRecords) {
+      const assigned = Array.from(this.assignedIconsBySlot.keys()).includes(rec.slotKey);
+      const selected = this.selectedSlots.has(rec.slotIndex);
+      const lifted = assigned || selected;
+      const targetY = rec.baseY + (lifted ? -20 : 0);
+      const nodes = [rec.bg, rec.outline, rec.under, rec.icon, (rec as any).badge, (rec as any).badgeText].filter(Boolean);
+      for (const n of nodes) { if ((n as any).y !== targetY) (n as any).y = targetY; }
+      // обводка: assigned -> red, selected (без assigned) -> green, иначе без обводки
+      if (assigned) rec.outline.setStrokeStyle(2, 0xA93226, 1);
+      else if (selected) rec.outline.setStrokeStyle(2, 0x00ff66, 1);
+      else rec.outline.setStrokeStyle(0, 0x00ff66, 1);
+    }
   }
 }

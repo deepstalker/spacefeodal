@@ -8,7 +8,7 @@
       "projectileSpeed": 700,
       "fireRatePerSec": 4,
       "damage": 8,
-      "range": 300,
+      "range": 500,
       "muzzleOffset": { "x": 0, "y": -40 }
     },
     "cannon": {
@@ -19,7 +19,7 @@
       "projectileSpeed": 500,
       "fireRatePerSec": 2,
       "damage": 16,
-      "range": 500,
+      "range": 700,
       "muzzleOffset": { "x": -20, "y": -30 }
     },
     "missile": {
@@ -30,7 +30,7 @@
       "projectileSpeed": 200,
       "fireRatePerSec": 1,
       "damage": 26,
-      "range": 700,
+      "range": 1500,
       "muzzleOffset": { "x": 20, "y": -30 }
     }
     ,
@@ -64,7 +64,7 @@
       "projectileSpeed": 480,
       "fireRatePerSec": 5,
       "damage": 6,
-      "range": 380,
+      "range": 780,
       "muzzleOffset": { "x": -12, "y": -36 }
     }
   }

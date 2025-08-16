@@ -12,10 +12,13 @@ export class CombatManager {
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
+  // Назначения целей для оружия игрока: slotKey -> target
+  private playerWeaponTargets: Map<string, Target> = new Map();
   private targets: Array<{
     obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
     hp: number; hpMax: number;
     hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle;
+    nameLabel?: Phaser.GameObjects.Text;
     ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string };
     weaponSlots?: string[];
     shipId?: string;
@@ -25,6 +28,7 @@ export class CombatManager {
     intent?: { type: 'attack' | 'flee'; target: any } | null;
     overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> };
   }>=[];
+  private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -94,13 +98,83 @@ export class CombatManager {
 
   bindInput(inputMgr: any) {
     inputMgr.onLeftClick((wx: number, wy: number) => {
-      const hit = this.targets.find(t => {
-        const rad = this.getEffectiveRadius(t.obj as any);
-        return Phaser.Math.Distance.Between(t.obj.x, t.obj.y, wx, wy) <= rad;
-      });
-      if (hit) this.selectTarget(hit.obj as any);
-      else this.clearSelection();
+      try { console.debug('[Combat] onLeftClick', { wx, wy }); } catch {}
+      const hit = this.findTargetAt(wx, wy);
+      if (hit) {
+        try { console.debug('[Combat] hit target', { x: hit.obj.x, y: hit.obj.y, shipId: (hit as any).shipId }); } catch {}
+        this.selectTarget(hit.obj as any);
+      } else {
+        // Пустой клик: сбрасываем выбор, только если нет ни одного оружия, нацеленного на текущую выбранную цель
+        if (!this.selectedTarget || !this.isTargetCombatSelected(this.selectedTarget)) {
+          try { console.debug('[Combat] no target, clearSelection'); } catch {}
+          this.clearSelection();
+        } else {
+          try { console.debug('[Combat] no target, keep selected info target (combat-selected)'); } catch {}
+        }
+      }
     });
+  }
+
+  public findTargetAt(wx: number, wy: number) {
+    // Сначала проверим попадание по кругу вокруг объекта
+    let hit = this.targets.find(t => {
+      const rad = this.getEffectiveRadius(t.obj as any) + 12;
+      return Phaser.Math.Distance.Between(t.obj.x, t.obj.y, wx, wy) <= rad;
+    });
+    if (hit) return hit;
+    // Также считаем попаданием клики по области HP-бара
+    hit = this.targets.find(t => {
+      const bg = t.hpBarBg;
+      if (!bg || !bg.visible) return false;
+      const x1 = bg.x, y1 = bg.y - bg.height * 0.5;
+      const x2 = bg.x + bg.width, y2 = bg.y + bg.height * 0.5;
+      return wx >= x1 && wx <= x2 && wy >= y1 && wy <= y2;
+    }) as any;
+    if (hit) return hit;
+    // Последняя попытка: клик рядом с объектом в прямоугольнике дисплея
+    hit = this.targets.find(t => {
+      const obj: any = t.obj;
+      const w = obj.displayWidth ?? obj.width ?? 128;
+      const h = obj.displayHeight ?? obj.height ?? 128;
+      const x1 = obj.x - w * 0.5, y1 = obj.y - h * 0.5;
+      const x2 = obj.x + w * 0.5, y2 = obj.y + h * 0.5;
+      return wx >= x1 && wx <= x2 && wy >= y1 && wy <= y2;
+    }) as any;
+    return hit ?? null;
+  }
+
+  public forceSelectTarget(target: Target) {
+    this.selectTarget(target);
+  }
+
+  public setPlayerWeaponTarget(slotKey: string, target: Target | null) {
+    if (target) {
+      this.playerWeaponTargets.set(slotKey, target);
+      try { console.debug('[Combat] setPlayerWeaponTarget', slotKey, { tx: (target as any).x, ty: (target as any).y }); } catch {}
+    } else {
+      this.playerWeaponTargets.delete(slotKey);
+      try { console.debug('[Combat] clearPlayerWeaponTarget', slotKey); } catch {}
+    }
+    this.refreshSelectionCircleColor();
+    this.refreshCombatRings();
+    this.refreshCombatUIAssigned();
+  }
+
+  public clearPlayerWeaponTargets() {
+    this.playerWeaponTargets.clear();
+    this.refreshSelectionCircleColor();
+    this.refreshCombatRings();
+    this.refreshCombatUIAssigned();
+  }
+
+  public getPlayerWeaponTargets(): ReadonlyMap<string, Target> {
+    return this.playerWeaponTargets;
+  }
+
+  public getHpBarInfoFor(target: Target): { x: number; y: number; width: number; height: number } | null {
+    const t = this.targets.find(tt => tt.obj === target);
+    if (!t) return null;
+    return { x: t.hpBarBg.x, y: t.hpBarBg.y, width: t.hpBarBg.width, height: t.hpBarBg.height };
   }
 
   private selectTarget(target: Target) {
@@ -108,11 +182,14 @@ export class CombatManager {
     const base = this.getEffectiveRadius(target as any) + 5;
     this.selectionBaseRadius = base;
     if (!this.selectionCircle) {
-      this.selectionCircle = this.scene.add.circle(target.x, target.y, base, 0xff0000, 0.15).setDepth(0.45);
-      this.selectionCircle.setStrokeStyle(2, 0xff4d4d, 1);
+      // начально — нейтральный цвет; позже может смениться на красный, если есть цель для оружия
+      this.selectionCircle = this.scene.add.circle(target.x, target.y, base, 0x9e9382, 0.15).setDepth(0.45);
+      this.selectionCircle.setStrokeStyle(2, 0x9e9382, 1);
     } else {
       this.selectionCircle.setPosition(target.x, target.y).setVisible(true);
       this.selectionCircle.setRadius(base);
+      this.selectionCircle.setFillStyle(0x9e9382, 0.15);
+      this.selectionCircle.setStrokeStyle(2, 0x9e9382, 1);
     }
     // toggle HP bars visibility
     for (const t of this.targets) {
@@ -120,14 +197,31 @@ export class CombatManager {
       t.hpBarBg.setVisible(vis);
       t.hpBarFill.setVisible(vis);
       this.updateHpBar(t);
+      // Имя цели над HP баром
+      if (vis) {
+        if (!t.nameLabel) {
+          const name = this.resolveDisplayName(t) || 'Unknown';
+          t.nameLabel = this.scene.add.text(0, 0, name, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
+        }
+        // Цвет имени по отношению к игроку: neutral -> 0x9E9382, enemy -> 0xA93226
+        const rel = this.getRelation('player', t.faction, t.overrides?.factions);
+        const color = (rel === 'confrontation') ? '#A93226' : '#9E9382';
+        t.nameLabel.setText(this.resolveDisplayName(t) || 'Unknown');
+        t.nameLabel.setColor(color);
+        t.nameLabel.setVisible(true);
+        this.updateHpBar(t); // позиция имени обновится внутри
+      } else {
+        t.nameLabel?.setVisible(false);
+      }
     }
+    this.refreshSelectionCircleColor();
   }
 
   private clearSelection() {
     this.selectedTarget = null;
     this.selectionCircle?.setVisible(false);
     // hide all HP bars
-    for (const t of this.targets) { t.hpBarBg.setVisible(false); t.hpBarFill.setVisible(false); }
+    for (const t of this.targets) { t.hpBarBg.setVisible(false); t.hpBarFill.setVisible(false); t.nameLabel?.setVisible(false); }
   }
 
   private update(_time: number, deltaMs: number) {
@@ -146,13 +240,31 @@ export class CombatManager {
     // AI steering
     this.updateEnemiesAI(deltaMs);
 
-    // player auto fire at selected target — use player's equipped weapons
-    if (this.selectedTarget && (this.selectedTarget as any).active) {
-      const saved = this.weaponSlots;
-      const playerSlots = this.config.player?.weapons;
-      if (playerSlots && playerSlots.length) this.weaponSlots = playerSlots;
-      this.autoFire(this.ship, this.selectedTarget as any);
-      this.weaponSlots = saved;
+    // Player fire only по назначенным целям для каждого слота оружия
+    const playerSlots = this.config.player?.weapons ?? [];
+    if (playerSlots.length) {
+      const now = this.scene.time.now;
+      const times = this.getShooterTimes(this.ship);
+      for (let i = 0; i < playerSlots.length; i++) {
+        const slotKey = playerSlots[i];
+        const target = this.playerWeaponTargets.get(slotKey);
+        if (!target || !target.active) continue;
+        const w = this.config.weapons.defs[slotKey];
+        if (!w) continue;
+        const dx = (target as any).x - this.ship.x;
+        const dy = (target as any).y - this.ship.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > w.range) continue;
+        const cooldownMs = 1000 / Math.max(0.001, w.fireRatePerSec);
+        const last = times[slotKey] ?? 0;
+        if (now - last >= cooldownMs) {
+          times[slotKey] = now;
+          const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
+          const w2 = { ...w, muzzleOffset };
+          this.fireWeapon(slotKey, w2, target as any, this.ship);
+          try { console.debug('[Combat] fire', slotKey, { range: w.range, dist }); } catch {}
+        }
+      }
     }
     // enemies auto fire by intent
     for (const t of this.targets) {
@@ -165,6 +277,35 @@ export class CombatManager {
       this.autoFire(t.obj as any, targetObj);
       this.weaponSlots = saved;
     }
+    // update red rings for combat-selected targets
+    for (const [tgt, ring] of this.combatRings.entries()) {
+      if (!tgt || !tgt.active) { ring.destroy(); this.combatRings.delete(tgt); continue; }
+      const base = this.getEffectiveRadius(tgt as any) + 5;
+      ring.setRadius(base);
+      ring.setPosition((tgt as any).x, (tgt as any).y);
+    }
+    // ensure HP bars for all combat targets remain visible
+    this.refreshCombatUIAssigned();
+  }
+
+  private refreshSelectionCircleColor() {
+    const t = this.selectedTarget;
+    if (!t || !this.selectionCircle) return;
+    // если хоть одно оружие нацелено на выбранную цель — выделение красным
+    const anyOnThis = Array.from(this.playerWeaponTargets.values()).some(v => v === t);
+    if (anyOnThis) {
+      this.selectionCircle.setFillStyle(0xA93226, 0.15);
+      this.selectionCircle.setStrokeStyle(2, 0xA93226, 1);
+    } else {
+      this.selectionCircle.setFillStyle(0x9e9382, 0.15);
+      this.selectionCircle.setStrokeStyle(2, 0x9e9382, 1);
+    }
+  }
+
+  private isTargetCombatSelected(target: Target | null): boolean {
+    if (!target) return false;
+    for (const t of this.playerWeaponTargets.values()) { if (t === target) return true; }
+    return false;
   }
 
   private updateEnemiesAI(deltaMs: number) {
@@ -174,7 +315,7 @@ export class CombatManager {
       // If object is returning home (e.g., wave despawn), skip combat steering
       if ((t.obj as any).__returningHome) continue;
       // If no combat intent and behavior isn't aggressive — let regular logic handle
-      if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') continue;
+      if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') { this.updateHpBar(t as any); continue; }
       const obj: any = t.obj;
       const retreat = ((): number => {
         if (t.combatAI) {
@@ -247,7 +388,7 @@ export class CombatManager {
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
 
-    const lifetimeMs = (w.range / speed) * 1000 + 50;
+    const lifetimeMs = Math.min(1500, (w.range / Math.max(1, speed)) * 1000 + 50);
     const onUpdate = (_t: number, dt: number) => {
       (proj as any).x += vx * (dt/1000);
       (proj as any).y += vy * (dt/1000);
@@ -256,6 +397,7 @@ export class CombatManager {
       const hitDist = this.getEffectiveRadius(target as any);
       const d = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
       if (d <= hitDist) {
+        try { console.debug('[Combat] hit target, applyDamage', w.damage); } catch {}
         this.applyDamage(target, w.damage, shooter);
         this.spawnHitEffect((proj as any).x, (proj as any).y, w);
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
@@ -267,6 +409,10 @@ export class CombatManager {
       this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
       (proj as any).destroy?.();
     });
+    // Сигнализируем UI о выстреле игрока для мигания иконки
+    if (shooter === this.ship) {
+      try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
+    }
   }
 
   private getMuzzleWorldPositionFor(shooter: any, offset: { x: number; y: number }) {
@@ -344,10 +490,27 @@ export class CombatManager {
         (t as any).overrides.factions['player'] = 'confrontation';
       }
       if (t.hp <= 0) {
-        target.destroy();
-        t.hpBarBg.destroy();
-        t.hpBarFill.destroy();
+        // Полное удаление NPC: объект, HP элементы, имя, боевые кольца, назначения
+        try { (t.obj as any).destroy?.(); } catch {}
+        try { t.hpBarBg.destroy(); } catch {}
+        try { t.hpBarFill.destroy(); } catch {}
+        try { t.nameLabel?.destroy(); } catch {}
+        // удалить боевое кольцо если было
+        const ring = this.combatRings.get(target);
+        if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
+        // снять информационную цель при необходимости
         if (this.selectedTarget === target) this.clearSelection();
+        // очистить назначения слотов на этот таргет и уведомить UI
+        const removedSlots: string[] = [];
+        for (const [slot, tgt] of this.playerWeaponTargets.entries()) {
+          if (tgt === target) { this.playerWeaponTargets.delete(slot); removedSlots.push(slot); }
+        }
+        if (removedSlots.length) {
+          try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
+        }
+        // вычистить из массива целей
+        this.targets = this.targets.filter(rec => rec.obj !== target);
+        return;
       }
       return;
     }
@@ -367,6 +530,9 @@ export class CombatManager {
     const above = (this.getEffectiveRadius(t.obj as any) + 16);
     t.hpBarBg.setPosition(t.obj.x - barW/2, t.obj.y - above);
     t.hpBarFill.setPosition(t.obj.x - barW/2, t.obj.y - above);
+    if (t.nameLabel) {
+      t.nameLabel.setPosition(t.obj.x, t.hpBarBg.y - 4);
+    }
   }
 
   private getEffectiveRadius(obj: any): number {
@@ -409,7 +575,11 @@ export class CombatManager {
         const st = objAny?.__state;
         const invisible = (typeof objAny?.alpha === 'number' && objAny.alpha <= 0.05) || objAny?.visible === false;
         if (!objAny?.active) continue;
-        if (st === 'docked' || st === 'docking') continue;
+        if (st === 'docked' || st === 'docking') {
+          // авто-сброс назначений игрока на цели, которые начинают док
+          this.clearAssignmentsForTarget(objAny);
+          continue;
+        }
         if (invisible) continue;
         const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, objAny.x, objAny.y);
         if (d <= radar) sensed.push(o);
@@ -522,6 +692,78 @@ export class CombatManager {
   private floatDamageText(x: number, y: number, dmg: number) {
     const t = this.scene.add.text(x, y, `-${dmg}`, { color: '#f87171', fontSize: '16px' }).setOrigin(0.5).setDepth(1.2);
     this.scene.tweens.add({ targets: t, y: y - 24, alpha: 0, duration: 600, onComplete: () => t.destroy() });
+  }
+
+  private resolveDisplayName(t: { shipId?: string; obj: any }): string | null {
+    const sid = t.shipId;
+    if (sid && this.config.ships?.defs?.[sid]?.displayName) return this.config.ships.defs[sid].displayName;
+    return null;
+  }
+
+  private refreshCombatRings() {
+    const assigned = new Set<any>();
+    for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    for (const [t, ring] of this.combatRings.entries()) {
+      if (!assigned.has(t)) { ring.destroy(); this.combatRings.delete(t); }
+    }
+    for (const t of assigned.values()) {
+      if (!this.combatRings.has(t)) {
+        const base = this.getEffectiveRadius(t as any) + 5;
+        const r = this.scene.add.circle((t as any).x, (t as any).y, base, 0xA93226, 0.12).setDepth(0.44);
+        r.setStrokeStyle(2, 0xA93226, 1);
+        this.combatRings.set(t, r);
+      }
+    }
+  }
+  private refreshCombatUIAssigned() {
+    const assigned = new Set<any>();
+    for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    for (const rec of this.targets) {
+      const isAssigned = assigned.has(rec.obj);
+      if (isAssigned) {
+        rec.hpBarBg.setVisible(true);
+        rec.hpBarFill.setVisible(true);
+        if (!rec.nameLabel) {
+          const name = this.resolveDisplayName(rec) || 'Unknown';
+          rec.nameLabel = this.scene.add.text(0, 0, name, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
+        }
+        // Боевой статус — можно оставить нейтральный цвет имени или выделить красным, оставлю нейтральный для читаемости
+        rec.nameLabel.setVisible(true);
+        this.updateHpBar(rec as any);
+      } else {
+        // не скрываем тут — clearSelection управляет инфоцелью; скрытие для невыбранных/небоевых оставляем как было
+        // ничего
+      }
+    }
+  }
+  private clearAssignmentsForTarget(objAny: any) {
+    const clearedSlots: string[] = [];
+    for (const [slot, tgt] of Array.from(this.playerWeaponTargets.entries())) {
+      if (tgt === objAny) { this.playerWeaponTargets.delete(slot); clearedSlots.push(slot); }
+    }
+    if (clearedSlots.length) {
+      try { this.scene.events.emit('player-weapon-target-cleared', objAny, clearedSlots); } catch {}
+      this.refreshCombatRings();
+      this.refreshCombatUIAssigned();
+    }
+  }
+
+  public forceCleanupInactiveTargets() {
+    // вспомогательно: вызывается при необходимости, удаляет все неактивные объекты
+    const removed: any[] = [];
+    for (const rec of this.targets) {
+      if (!rec.obj || !(rec.obj as any).active) {
+        try { (rec.obj as any).destroy?.(); } catch {}
+        try { rec.hpBarBg.destroy(); } catch {}
+        try { rec.hpBarFill.destroy(); } catch {}
+        try { rec.nameLabel?.destroy(); } catch {}
+        removed.push(rec.obj);
+      }
+    }
+    if (removed.length) {
+      this.targets = this.targets.filter(rec => !removed.includes(rec.obj));
+      removed.forEach(t => { const ring = this.combatRings.get(t); if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(t); } });
+    }
   }
 }
 

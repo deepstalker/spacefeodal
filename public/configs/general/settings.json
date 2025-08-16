@@ -8,7 +8,7 @@
     "spacing": { "xs": 8, "sm": 16, "md": 24, "lg": 32, "xl": 48 },
     "weaponSlots": {
       "size": 128,
-      "iconPadding": 8,
+      "iconPadding": 10,
       "highQualityRendering": true
     }
   },
