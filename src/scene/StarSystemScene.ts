@@ -302,6 +302,13 @@ export default class StarSystemScene extends Phaser.Scene {
   public applyDamageToPlayer(amount: number) {
     this.playerHp = Math.max(0, this.playerHp - amount);
     this.events.emit('player-damaged', this.playerHp);
+    // Плавающий урон над игроком
+    try {
+      const ui = this.scene.get('UIScene') as any;
+      const sceneAny: any = this;
+      const t = this.add.text(this.ship.x, this.ship.y - 70, `-${amount}`, { color: '#f87171', fontSize: '24px' }).setOrigin(0.5).setDepth(2.0);
+      this.tweens.add({ targets: t, y: this.ship.y - 100, alpha: 0, duration: 700, ease: 'Sine.easeOut', onComplete: () => t.destroy() });
+    } catch {}
     if (this.playerHp <= 0) {
       this.gameOver();
     }

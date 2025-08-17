@@ -455,11 +455,41 @@ export class CombatManager {
 
     // Рассчитываем время жизни снаряда: дистанция / скорость. Добавляем небольшой буфер (50 мс).
     const lifetimeMs = (w.range / Math.max(1, speed)) * 1000 + 50;
+    // Capture shooter's faction once for friendly-fire filtering
+    const shooterEntry = this.targets.find(t => t.obj === shooter);
+    const shooterFaction = shooterEntry?.faction ?? (shooter === this.ship ? 'player' : undefined);
+    const shooterOverrides = (shooterEntry as any)?.overrides?.factions;
+
     const onUpdate = (_t: number, dt: number) => {
       (proj as any).x += vx * (dt/1000);
       (proj as any).y += vy * (dt/1000);
       // collision simple distance check
-      if (!target.active) return;
+      if (!target || !target.active) {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+        (proj as any).destroy?.();
+        return;
+      }
+      // Check collisions with any other valid enemy target along the path (no ally/neutral hits)
+      for (let i = 0; i < this.targets.length; i++) {
+        const rec = this.targets[i];
+        const obj = rec.obj as any;
+        if (!obj || !obj.active) continue;
+        if (obj === shooter) continue;
+        const hitR = this.getEffectiveRadius(obj);
+        const dAny = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
+        if (dAny <= hitR) {
+          // Relation filter: only damage if shooter considers target as confrontation
+          const victimFaction = rec.faction;
+          const rel = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
+          if (rel === 'confrontation') {
+            this.applyDamage(obj, w.damage, shooter);
+            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+          }
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+          (proj as any).destroy?.();
+          return;
+        }
+      }
       const hitDist = this.getEffectiveRadius(target as any);
       const d = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
       if (d <= hitDist) {
@@ -572,7 +602,7 @@ export class CombatManager {
           if (tgt === target) { this.playerWeaponTargets.delete(slot); removedSlots.push(slot); }
         }
         if (removedSlots.length) {
-          // try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
+          try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
         }
         // убираем из системы движения NPC
         this.npcMovement.unregisterNPC(target);
@@ -758,8 +788,8 @@ export class CombatManager {
   }
 
   private floatDamageText(x: number, y: number, dmg: number) {
-    const t = this.scene.add.text(x, y, `-${dmg}`, { color: '#f87171', fontSize: '16px' }).setOrigin(0.5).setDepth(1.2);
-    this.scene.tweens.add({ targets: t, y: y - 24, alpha: 0, duration: 600, onComplete: () => t.destroy() });
+    const t = this.scene.add.text(x, y, `-${dmg}`, { color: '#f87171', fontSize: '24px' }).setOrigin(0.5).setDepth(1.2);
+    this.scene.tweens.add({ targets: t, y: y - 30, alpha: 0, duration: 700, ease: 'Sine.easeOut', onComplete: () => t.destroy() });
   }
 
   private resolveDisplayName(t: { shipId?: string; obj: any }): string | null {
@@ -810,7 +840,7 @@ export class CombatManager {
       if (tgt === objAny) { this.playerWeaponTargets.delete(slot); clearedSlots.push(slot); }
     }
     if (clearedSlots.length) {
-      // try { this.scene.events.emit('player-weapon-target-cleared', objAny, clearedSlots); } catch {}
+      try { this.scene.events.emit('player-weapon-target-cleared', objAny, clearedSlots); } catch {}
       this.refreshCombatRings();
       this.refreshCombatUIAssigned();
     }

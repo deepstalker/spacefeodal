@@ -3,7 +3,7 @@
     "default_aggressive": { 
       "retreatHpPct": 0.3,
       "movementMode": "orbit",
-      "movementDistance": 700
+      "movementDistance": 500
     },
     "coward": { "retreatHpPct": 0.99 },
     "brave": { "retreatHpPct": 0.1 }

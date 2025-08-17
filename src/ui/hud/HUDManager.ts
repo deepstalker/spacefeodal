@@ -22,6 +22,7 @@ export class HUDManager {
   private followLabel?: Phaser.GameObjects.Text;
   private minimap?: MinimapManager;
   private minimapHit?: Phaser.GameObjects.Zone;
+  private isMinimapDragging: boolean = false;
   // Combat UI state
   private slotRecords: Array<{
     slotIndex: number;
@@ -39,6 +40,7 @@ export class HUDManager {
   private cursorIcons: Map<number, Phaser.GameObjects.Container> = new Map();
   private cursorOrder: number[] = [];
   private assignedIconsBySlot: Map<string, { target: any; container: Phaser.GameObjects.Container; updater: () => void }>= new Map();
+  private cooldownBarsBySlot: Map<string, { bg: Phaser.GameObjects.Rectangle; outline: Phaser.GameObjects.Rectangle; fill: Phaser.GameObjects.Rectangle; width: number; height: number }>= new Map();
   private assignedBlinkTweens: Map<string, Phaser.Tweens.Tween[]> = new Map();
 
   constructor(scene: Phaser.Scene) {
@@ -125,16 +127,29 @@ export class HUDManager {
     
     const isRequestLoaded = fontCheck();
 
-    // Speed numeric readout
-    const speedValue = this.scene.add.text(pad + 16, hudY - 52, '0 U/S', { 
-      color: '#F5F0E9', 
-      fontSize: '32px', 
+    // Speed numeric readout: число и отдельный суффикс U/S меньшим шрифтом
+    const speedValue = this.scene.add.text(pad + 16, hudY - 52, '0', {
+      color: '#F5F0E9',
+      fontSize: '32px',
       fontFamily: 'Request',
       padding: { top: 8, bottom: 4, left: 2, right: 2 }
+    }).setOrigin(0, 0.8).setScrollFactor(0).setDepth(1502);
+    const speedSuffix = this.scene.add.text((pad + 16) + 4, hudY - 52, 'U/S', {
+      color: '#F5F0E9',
+      fontSize: '20px',
+      fontFamily: 'Request',
+      padding: { top: 10, bottom: 4, left: 0, right: 0 }
     }).setOrigin(0, 0.8).setScrollFactor(0).setDepth(1502);
     
     try { (speedValue as any).setResolution?.(this.uiTextResolution); } catch {}
     this.speedText = speedValue;
+    // Связываем суффикс с числом: позиция зависит от ширины числа
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => {
+      if (speedValue && speedValue.active && speedSuffix && speedSuffix.active) {
+        speedSuffix.x = speedValue.x + speedValue.width + 6;
+        speedSuffix.y = speedValue.y;
+      }
+    });
     
     // Если шрифт не загружен при старте, принудительно устанавливаем через задержку
     if (!isRequestLoaded) {
@@ -149,6 +164,7 @@ export class HUDManager {
     
     // Сохраняем ссылку для обновлений
     (this.scene as any).__hudSpeedValue = speedValue;
+    (this.scene as any).__hudSpeedSuffix = speedSuffix;
     
     // underline under speed text (120x4)
     const underline = this.scene.add.rectangle(pad + 36 + 76, hudY - 34, 200, 4, 0xA28F6E).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1502);
@@ -373,7 +389,7 @@ export class HUDManager {
   private updateHUD() {
     if (!this.configRef) return;
     
-    // Speed percentage
+    // Speed actual units per second (умножить на 100)
     const star = this.scene.scene.get('StarSystemScene') as any;
     const ship = star?.ship as Phaser.GameObjects.Image | undefined;
     if (ship && this.speedText) {
@@ -382,11 +398,12 @@ export class HUDManager {
       const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
       const dx = ship.x - prev.x;
       const dy = ship.y - prev.y;
-      const v = Math.hypot(dx, dy);
+      const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
+      const v = Math.hypot(dx, dy) / dt; // px per second
       (ship as any).__prevPos = { x: ship.x, y: ship.y };
-      const u = Math.round((max > 0 ? (v / max) : 0) * 100);
+      const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 100);
       const txt = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
-      if (txt) txt.setText(`${u} U/S`);
+      if (txt) txt.setText(`${u}`);
     }
 
     // HULL percentage
@@ -653,8 +670,10 @@ export class HUDManager {
       const spacing = size + 8;
       const totalW = slotsAssigned.length * spacing - 8;
       const startX = sx + (hp.width - totalW) / 2 + size/2;
-      cont.x = startX + idx * spacing;
-      cont.y = sy - (size + 16);
+      const cx = startX + idx * spacing;
+      const cy = sy - (size + 16);
+      cont.x = cx;
+      cont.y = cy;
     };
     star.events.on(Phaser.Scenes.Events.UPDATE, updater);
     this.assignedIconsBySlot.set(slotKey, { target, container: cont, updater });
@@ -689,6 +708,14 @@ export class HUDManager {
     const star: any = this.scene.scene.get('StarSystemScene');
     star.events.off(Phaser.Scenes.Events.UPDATE, rec.updater);
     rec.container.destroy();
+    // удалить HUD прогресс-бар для этого слота, если есть
+    const bar = this.cooldownBarsBySlot.get(slotKey);
+    if (bar) {
+      try { bar.bg.destroy(); } catch {}
+      try { bar.fill.destroy(); } catch {}
+      try { bar.outline.destroy(); } catch {}
+      this.cooldownBarsBySlot.delete(slotKey);
+    }
     // вернуть слот в норму/оставить поднятым если всё ещё выбран; всегда убрать красную обводку
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
@@ -720,6 +747,8 @@ export class HUDManager {
     if (!flash) return;
     (flash as any).setAlpha(1);
     this.scene.tweens.add({ targets: flash, alpha: 0, duration: 120 });
+    // Показать и анимировать прогресс-бар перезарядки в HUD
+    this.showAndAnimateCooldownBarInHUD(slotKey);
     // мигать КРАСНЫМ контуром слота, и оставить красным
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
@@ -730,6 +759,56 @@ export class HUDManager {
       arr.push(tw);
       this.assignedBlinkTweens.set(slotKey, arr);
     }
+  }
+
+  private showAndAnimateCooldownBarInHUD(slotKey: string) {
+    // Определяем позицию слота в HUD
+    const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
+    if (slotIndex < 0) return;
+    const recSlot = this.slotRecords[slotIndex];
+    if (!recSlot) return;
+    const defs: any = this.configRef!.weapons.defs;
+    const w = defs[slotKey];
+    if (!w) return;
+    const fireRate = Math.max(0.001, w.fireRatePerSec);
+    const cooldownMs = 1000 / fireRate;
+    const barWidth = recSlot.size; // в длину иконки слота
+    const barHeight = 20;
+    const outlineColor = 0xA28F6E;
+    const fillColor = 0xBC5A36; // новый цвет
+    const bgColor = 0x2c2a2d;
+    // создаём, если нет
+    let bar = this.cooldownBarsBySlot.get(slotKey);
+    if (!bar) {
+      const bg = this.scene.add.rectangle(0, 0, barWidth, barHeight, bgColor, 1).setDepth(1502).setOrigin(0, 0).setScrollFactor(0);
+      const outline = this.scene.add.rectangle(0, 0, barWidth, barHeight, 0x000000, 0).setDepth(1503).setOrigin(0, 0).setScrollFactor(0).setStrokeStyle(2, outlineColor, 1);
+      const fill = this.scene.add.rectangle(0, 0, 0, barHeight - 4, fillColor, 1).setDepth(1503).setOrigin(0, 0).setScrollFactor(0);
+      bar = { bg, outline, fill, width: barWidth, height: barHeight };
+      this.cooldownBarsBySlot.set(slotKey, bar);
+    }
+    // позиционирование: под иконкой слота в центре экрана
+    const x = recSlot.baseX;
+    const y = (recSlot as any).bg.y + recSlot.size + 6; // под слотом (учитываем возможно приподнятый слот)
+    bar.bg.setPosition(x, y);
+    bar.outline.setPosition(x, y);
+    bar.fill.setPosition(x + 2, y + 2);
+    // показать и сбросить ширину
+    bar.bg.setVisible(true);
+    bar.outline.setVisible(true);
+    bar.fill.setVisible(true);
+    bar.fill.width = 0;
+    try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
+    this.scene.tweens.add({
+      targets: bar.fill,
+      width: (bar.width - 4),
+      duration: cooldownMs,
+      ease: 'Linear',
+      onComplete: () => {
+        bar.bg.setVisible(false);
+        bar.outline.setVisible(false);
+        bar.fill.setVisible(false);
+      }
+    });
   }
 
   private realignCursorIcons() {
@@ -770,8 +849,24 @@ export class HUDManager {
       const worldX = Phaser.Math.Clamp(relX * sys.size.width, 0, sys.size.width);
       const worldY = Phaser.Math.Clamp(relY * sys.size.height, 0, sys.size.height);
       const star = this.scene.scene.get('StarSystemScene') as any;
+      // клик по мини-карте отключает follow
+      if (star?.cameraMgr?.isFollowing?.()) star.cameraMgr.disableFollow();
+      star.cameras.main.centerOn(worldX, worldY);
+      // начинаем перетаскивание при удержании ЛКМ
+      if (p.leftButtonDown()) this.isMinimapDragging = true;
+    });
+    // Глобальный move: тянем камеру даже если курсор вышел за зону мини-карты, пока ЛКМ зажата
+    this.scene.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!this.isMinimapDragging || !p.leftButtonDown()) return;
+      const sys = this.configRef!.system;
+      const relX = (p.x - minimapX) / minimapW;
+      const relY = (p.y - minimapY) / minimapH;
+      const worldX = Phaser.Math.Clamp(relX * sys.size.width, 0, sys.size.width);
+      const worldY = Phaser.Math.Clamp(relY * sys.size.height, 0, sys.size.height);
+      const star = this.scene.scene.get('StarSystemScene') as any;
       star.cameras.main.centerOn(worldX, worldY);
     });
+    this.scene.input.on('pointerup', () => { this.isMinimapDragging = false; });
   }
 
   private getMovementConfig() {
