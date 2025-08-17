@@ -519,6 +519,9 @@ export class CombatManager {
         const obj = rec.obj as any;
         if (!obj || !obj.active) continue;
         if (obj === shooter) continue;
+        const st = obj.__state;
+        const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof obj.alpha === 'number' && obj.alpha <= 0.05) || obj.visible === false;
+        if (invulnerable) continue;
         const hitR = this.getEffectiveRadius(obj);
         const dAny = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
         if (dAny <= hitR) {
@@ -541,9 +544,14 @@ export class CombatManager {
       const hitDist = this.getEffectiveRadius(target as any);
       const d = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
       if (d <= hitDist) {
-        // try { console.debug('[Combat] hit target, applyDamage', w.damage); } catch {}
-        this.applyDamage(target, w.damage, shooter);
-        this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+        // Пропускаем визуальные эффекты и урон, если цель в доке/андоке или невидима
+        const st = (target as any).__state;
+        const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof (target as any).alpha === 'number' && (target as any).alpha <= 0.05) || (target as any).visible === false;
+        if (!invulnerable) {
+          // try { console.debug('[Combat] hit target, applyDamage', w.damage); } catch {}
+          this.applyDamage(target, w.damage, shooter);
+          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+        }
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
         // Дерегистрируем снаряд из fog of war
         if (this.fogOfWar) {
@@ -629,6 +637,11 @@ export class CombatManager {
   }
 
   private applyDamage(target: any, damage: number, attacker?: any) {
+    // Инвульнера во время докинга/дока/андокинга
+    const state = (target as any)?.__state;
+    if (state === 'docking' || state === 'docked' || state === 'undocking') {
+      return;
+    }
     const t = this.targets.find(tt => tt.obj === target);
     if (t) {
       t.hp -= damage;

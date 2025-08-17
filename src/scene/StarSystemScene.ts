@@ -196,7 +196,7 @@ export default class StarSystemScene extends Phaser.Scene {
           if (!planet) continue;
           const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
           const py = (planet as any)._y ?? system.star.y;
-          const dockRange = this.config.gameplay.dock_range ?? 220;
+          const dockRange = (planet as any).dockRange ?? this.config.gameplay.dock_range ?? 220;
           const offset = dockRange + 300;
           const ang = Math.random() * Math.PI * 2;
           const npc = (this.combat as any).spawnNPCPrefab(d.prefab, px + Math.cos(ang)*offset, py + Math.sin(ang)*offset) as any;
@@ -545,13 +545,16 @@ export default class StarSystemScene extends Phaser.Scene {
       
       const state = (o as any).__state ?? 'travel';
       if (state === 'travel') {
-        cmAny.npcMovement.setNPCTarget(o, { x: planetPos.x, y: planetPos.y });
+        const planetRec = this.planets.find(p => (p as any).data?.id === target.id);
+        cmAny.npcMovement.setNPCTarget(o, { x: planetPos.x, y: planetPos.y, targetObject: planetRec?.obj });
         
         const dist = Math.hypot(planetPos.x - o.x, planetPos.y - o.y);
-        const dockRange = this.config.gameplay.dock_range ?? 220;
+        const dockRange = (target as any).dockRange ?? this.config.gameplay.dock_range ?? 220;
         
         if (dist < dockRange) {
           (o as any).__state = 'docking';
+          // Сбрасываем любые боевые назначения на этот объект
+          try { (cmAny as any).clearAssignmentsForTarget?.(o); } catch {}
           
           const dur = 3000 + Math.random() * 1000;
           const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
@@ -578,10 +581,10 @@ export default class StarSystemScene extends Phaser.Scene {
                 }
                 (o as any).__state = 'undocking';
                 const ang = Math.random() * Math.PI * 2;
-                const cur = (sys.planets as any[]).find((p: any) => p.id === target.id) as any;
-                const cx = (cur?._x ?? (sys.star.x + target.orbit.radius));
-                const cy = (cur?._y ?? sys.star.y);
-                o.x = cx; 
+                const livePos = this.getPlanetWorldPosById(target.id);
+                const cx = livePos?.x ?? (sys.star.x + target.orbit.radius);
+                const cy = livePos?.y ?? sys.star.y;
+                o.x = cx;
                 o.y = cy;
                 this.tweens.add({ 
                   targets: o, 
@@ -665,6 +668,9 @@ export default class StarSystemScene extends Phaser.Scene {
   private findNPCAt(worldX: number, worldY: number): any {
     for (const npc of this.npcs) {
       if (!npc.active) continue;
+      const st = (npc as any).__state;
+      if (st === 'docking' || st === 'docked' || st === 'undocking') continue;
+      if (typeof (npc as any).alpha === 'number' && (npc as any).alpha <= 0.05) continue;
 
       // Используем displayWidth/Height, так как они учитывают scale объекта.
       const radius = Math.max(npc.displayWidth, npc.displayHeight) * 0.5 + 15; // +15 пикселей для удобства.

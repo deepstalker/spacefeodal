@@ -37,7 +37,9 @@ export function generateSystem(profile: SystemProfilesConfig['profiles'][string]
       id: `pl_${i}`,
       name: `${type.name} ${i+1}`,
       orbit: { radius: currentOrbit, angularSpeedDegPerSec: randBetween(1, 8) },
-      color: type.color
+      color: type.color,
+      // дефолтный радиус докинга; может быть переопределён в статике
+      dockRange: 220
     });
   }
 
