@@ -935,8 +935,12 @@ export class CombatManager {
         rec.nameLabel.setVisible(true);
         this.updateHpBar(rec as any);
       } else {
-        // не скрываем тут — clearSelection управляет инфоцелью; скрытие для невыбранных/небоевых оставляем как было
-        // ничего
+        // Hide UI if not assigned and not the player's selected info target
+        if (rec.obj !== this.selectedTarget) {
+          rec.hpBarBg.setVisible(false);
+          rec.hpBarFill.setVisible(false);
+          rec.nameLabel?.setVisible(false);
+        }
       }
     }
   }
