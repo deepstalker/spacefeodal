@@ -31,6 +31,36 @@
         "ACCELERATION_PENALTY_AT_MAX": 0.999
       }
     },
+    "ordo_patrol_gunship": {
+      "displayName": "Patrol Gunship",
+      "hull": 6000,
+      "sprite": {
+        "key": "ship_ordo_patrol_gunship",
+        "displaySize": { "width": 64, "height": 128 },
+        "origin": { "x": 0.5, "y": 0.5 },
+        "noseOffsetDeg": -90
+      },
+      "combat": {
+        "weaponSlots": 3,
+        "accuracy": 0.999,
+        "slots": [
+          { "offset": { "x": -20, "y": -30 } },
+          { "offset": { "x": 0, "y": -40 } },
+          { "offset": { "x": 20, "y": -30 } }
+        ]
+      },
+      "sensors": { "radar_range": 1500 },
+      "movement": {
+        "MAX_SPEED": 1.2,
+        "ACCELERATION": 0.015,
+        "DECELERATION": 0.075,
+        "TURN_SPEED": 0.04,
+        "SLOWING_RADIUS": 300,
+        "TURN_PENALTY_MULTIPLIER": 1.8,
+        "TURN_DECELERATION_FACTOR": 0.05,
+        "ACCELERATION_PENALTY_AT_MAX": 0.999
+      }
+    },
     "trader": {
       "displayName": "Trader",
       "hull": 6000,
@@ -63,7 +93,7 @@
     },
     "fighter": {
       "displayName": "Fighter",
-      "hull": 8000,
+      "hull": 5000,
       "sprite": {
         "key": "ship_alpha",
         "displaySize": { "width": 64, "height": 128 },

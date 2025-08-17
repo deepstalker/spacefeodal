@@ -1,0 +1,7 @@
+{
+  "shipId": "explorer",
+  "weapons": ["laser_blue", "cannon", "missile", "railgun", "plasma", "flak"],
+  "start": { "x": null, "y": null, "headingDeg": 0, "zoom": 1 }
+}
+
+

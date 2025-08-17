@@ -42,16 +42,16 @@
     },
     "cannon": {
       "type": "burst",
-      "accuracy": 0.85,
+      "accuracy": 0.9,
       "icon": "weapon_cannon",
       "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 5, "color": "#fde047" },
       "hitEffect": { "shape": "circle", "radius": 26, "color": "#fbbf24", "durationMs": 180 },
-      "projectileSpeed": 500,
+      "projectileSpeed": 800,
       "fireRatePerSec": 0.25,
       "damage": 16,
       "range": 1000,
-      "burst": { "count": 3, "delayMs": 80 },
+      "burst": { "count": 3, "delayMs": 100 },
       "muzzleOffset": { "x": -20, "y": -30 }
     },
     "missile": {

@@ -150,6 +150,18 @@ export class MovementManager {
     const selectedId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
     const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
     const mv = selected?.movement ?? this.config.gameplay.movement;
+    
+    // ОТЛАДКА: проверяем откуда берутся характеристики движения
+    if (process.env.NODE_ENV === 'development' && Math.random() < 0.001) { // 0.1% логов
+      console.log(`[MovementManager] Ship movement config for ${selectedId}`, {
+        hasShipMovement: !!selected?.movement,
+        hasGameplayMovement: !!this.config.gameplay.movement,
+        usingFallback: !selected?.movement,
+        maxSpeed: mv?.MAX_SPEED,
+        acceleration: mv?.ACCELERATION,
+        turnSpeed: mv?.TURN_SPEED
+      });
+    }
     const noseOffsetRad = Phaser.Math.DegToRad(selected?.sprite?.noseOffsetDeg ?? 0);
     if (this.headingRad == null) this.headingRad = obj.rotation - noseOffsetRad;
     
@@ -207,7 +219,13 @@ export class MovementManager {
     }
     
     // Проверяем, что объект-цель все еще существует и активен
-    if (!this.command.targetObject.active) {
+    if (!this.command.targetObject.active || this.command.targetObject.destroyed) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[MovementManager] Target became invalid`, {
+          active: this.command.targetObject.active,
+          destroyed: this.command.targetObject.destroyed
+        });
+      }
       this.command = null;
       this.target = null;
       this.targetVelocity.set(0, 0);

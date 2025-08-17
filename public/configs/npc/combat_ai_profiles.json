@@ -4,15 +4,18 @@
       "retreatHpPct": 0.3,
       "movementMode": "orbit",
       "movementDistance": 500,
-      "outdistance_attack": "target"
+      "outdistance_attack": "target",
+      "targetPriority": ["top_dps","first_attacker","nearest"]
     },
     "coward": { 
       "retreatHpPct": 0.99,
-      "outdistance_attack": "flee"
+      "outdistance_attack": "flee",
+      "targetPriority": ["nearest","first_attacker","top_dps"]
     },
     "brave": { 
       "retreatHpPct": 0.1,
-      "outdistance_attack": "target"
+      "outdistance_attack": "target",
+      "targetPriority": ["nearest","first_attacker","top_dps"]
     }
   }
 }

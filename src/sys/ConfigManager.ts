@@ -67,6 +67,8 @@ export type GameplayConfig = {
 };
 
 export type SystemConfig = {
+  name?: string;
+  sector?: string;
   size: { width: number; height: number };
   star: { x: number; y: number };
   planets: Array<{ id: string; name: string; orbit: { radius: number; angularSpeedDegPerSec: number }; color?: string; dockRange?: number; spawn?: { quotas?: Record<string, number> } }>;
@@ -183,6 +185,7 @@ export type CombatAIProfilesConfig = {
     movementMode?: 'orbit' | 'pursue' | 'move_to';
     movementDistance?: number;
     outdistance_attack?: 'target' | 'flee' | 'ignore';
+    targetPriority?: Array<'top_dps' | 'first_attacker' | 'nearest'>;
   }>;
 };
 

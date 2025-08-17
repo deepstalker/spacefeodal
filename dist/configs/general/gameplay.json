@@ -1,0 +1,41 @@
+{
+  "movement": {
+    "TARGET_UPDATE_INTERVAL_MS": 100
+  },
+  "fogOfWar": {
+    "enabled": true,
+    "dimming": {
+      "enabled": false,
+      "alpha": 0.4,
+      "color": "#0b1020"
+    },
+    "fadeZone": {
+      "innerRadius": 0.85,
+      "outerRadius": 1.15
+    },
+    "staticObjects": {
+      "alwaysVisible": true,
+      "types": ["star", "planet", "station", "poi_visible", "celestial_body"]
+    },
+    "dynamicObjects": {
+      "hideOutsideRadar": true,
+      "types": ["npc", "projectile", "effect", "debris"]
+    },
+    "performance": {
+      "updateInterval": 50,
+      "maxObjectsPerFrame": 20
+    }
+  },
+  "dock_range": 220,
+  "simulation": {
+    "enabled": true,
+    "initialSpawnRadiusPct": 0.25,
+    "lazySpawnRadarBufferPct": 0.01,
+    "replenish": {
+      "checkIntervalMs": 240000,
+      "spawnDelayMsRange": { "min": 5000, "max": 45000 }
+    }
+  }
+}
+
+

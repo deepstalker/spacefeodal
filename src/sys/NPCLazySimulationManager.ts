@@ -119,7 +119,8 @@ export class NPCLazySimulationManager {
     const pref = this.config.stardwellers?.prefabs?.[p.prefab];
     const aiKey = pref?.aiProfile;
     const aiBehavior = aiKey ? this.config.aiProfiles?.profiles?.[aiKey]?.behavior : undefined;
-    const behavior = aiBehavior ?? (p.prefab === 'pirate' ? 'patrol' : 'planet_trader');
+    // Поведение по умолчанию: для торговцев 'orbital_trade', для пиратов 'patrol'
+    const behavior = aiBehavior ?? (p.prefab === 'pirate' ? 'patrol' : 'orbital_trade');
     (npc as any).__behavior = behavior;
     if (behavior === 'planet_trader') {
       const sys = this.config.system;

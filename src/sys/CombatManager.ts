@@ -2,6 +2,7 @@ import type { ConfigManager } from './ConfigManager';
 import { NPCMovementManager } from './NPCMovementManager';
 import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
 import { DynamicObjectType } from './fog-of-war/types';
+import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -11,12 +12,14 @@ export class CombatManager {
   private config: ConfigManager;
   private npcMovement: NPCMovementManager;
   private fogOfWar?: EnhancedFogOfWar;
+  private npcStateManager: NPCStateManager;
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
   private selectionBaseRadius = 70;
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
+  private lastPirateLogMs: WeakMap<any, number> = new WeakMap();
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
   // Назначения целей для оружия игрока: slotKey -> target
   private playerWeaponTargets: Map<string, Target> = new Map();
@@ -41,6 +44,11 @@ export class CombatManager {
     aiProfileKey?: string;
     intent?: { type: 'attack' | 'flee'; target: any } | null;
     overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> };
+    damageLog?: {
+      firstAttacker?: any;
+      totalDamageBySource?: Map<any, number>;
+      lastDamageTimeBySource?: Map<any, number>;
+    };
   }>=[];
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
 
@@ -48,6 +56,7 @@ export class CombatManager {
     this.scene = scene;
     this.config = config;
     this.npcMovement = new NPCMovementManager(scene, config);
+    this.npcStateManager = new NPCStateManager(scene, config);
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
 
@@ -116,6 +125,9 @@ export class CombatManager {
     
     // Регистрируем NPC в системе движения
     this.npcMovement.registerNPC(obj, shipDefId, prefab?.combatAI);
+    
+    // Регистрируем NPC в новой системе состояний
+    this.npcStateManager.registerNPC(obj, aiProfileName, prefab?.combatAI, prefab?.faction);
     
     // Регистрируем NPC в fog of war как динамический объект
     if (this.fogOfWar) {
@@ -275,7 +287,43 @@ export class CombatManager {
         const color = (rel === 'confrontation') ? '#A93226' : '#9E9382';
         const baseName = this.resolveDisplayName(t) || 'Unknown';
         const uniqueName = `${baseName} #${(t.obj as any).__uniqueId || ''}`;
-        t.nameLabel.setText(uniqueName);
+        
+        // Добавляем отладочную информацию о цели
+        let debugInfo = '';
+        if (process.env.NODE_ENV === 'development') {
+          const currentTarget = t.intent?.target;
+          const stateContext = this.npcStateManager.getContext(t.obj);
+          const stableTarget = stateContext?.targetStabilization?.currentTarget;
+          
+          // КРИТИЧНАЯ ПРОВЕРКА: убеждаемся что контекст принадлежит правильному объекту
+          if (stateContext && stateContext.obj !== t.obj) {
+            debugInfo = `\n❌ CONTEXT MISMATCH! (${(stateContext.obj as any).__uniqueId})`;
+            console.error(`[Display] Context mismatch for ${(t.obj as any).__uniqueId}: got context for ${(stateContext.obj as any).__uniqueId}`);
+          } else if (currentTarget || stableTarget) {
+            const targetToShow = stableTarget || currentTarget;
+            const targetName = targetToShow === this.ship ? 'PLAYER' : 
+                              `#${(targetToShow as any).__uniqueId || 'UNK'}`;
+            const intentType = t.intent?.type || 'none';
+            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
+            
+            // Дополнительная проверка источников урона
+            if (stateContext && stateContext.aggression.sources.size > 0) {
+              const sourcesCount = stateContext.aggression.sources.size;
+              const sourcesInfo = Array.from(stateContext.aggression.sources.entries()).map(([source, data]) => {
+                const sourceId = source === this.ship ? 'PLAYER' : `#${(source as any).__uniqueId || 'UNK'}`;
+                return `${sourceId}:${data.damage}`;
+              }).join(',');
+              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]\nSources(${sourcesCount}): ${sourcesInfo}`;
+            } else {
+              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]`;
+            }
+          } else {
+            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
+            debugInfo = `\n→ NO TARGET [${aggrLevel}]`;
+          }
+        }
+        
+        t.nameLabel.setText(uniqueName + debugInfo);
         t.nameLabel.setColor(color);
         t.nameLabel.setVisible(true);
         this.updateHpBar(t); // позиция имени обновится внутри
@@ -304,9 +352,11 @@ export class CombatManager {
 
     // auto logic
     if (!this.ship) return;
-    // sensors + intent resolution
+    
+    // ВАЖНО: Порядок имеет значение!
+    // 1. Сначала sensors logic - обнаруживает новые цели и устанавливает базовые intent
     this.updateSensors(deltaMs);
-    // AI steering
+    // 2. Затем AI logic - принимает решения о тактике и движении на основе intent
     this.updateEnemiesAI(deltaMs);
 
     // Сброс назначенных оружий и выбранной цели вне радара
@@ -404,12 +454,43 @@ export class CombatManager {
     }
     // enemies auto fire by intent
     for (const t of this.targets) {
-      if (!t.ai || !t.intent || t.intent.type !== 'attack') continue;
+      if (!t.ai || !t.intent || t.intent.type !== 'attack') {
+        // Отладочная информация почему NPC не атакует
+        if (process.env.NODE_ENV === 'development' && Math.random() < 0.005) { // 0.5% логов
+          const hasAI = !!t.ai;
+          const hasIntent = !!t.intent;
+          const intentType = t.intent?.type;
+          console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} not firing`, {
+            hasAI, hasIntent, intentType,
+            reason: !hasAI ? 'no_ai' : !hasIntent ? 'no_intent' : `intent_is_${intentType}`
+          });
+        }
+        continue;
+      }
       const targetObj = t.intent.target;
-      if (!targetObj || !targetObj.active) continue;
+      if (!targetObj || !targetObj.active) {
+        if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) { // 1% логов
+          console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} has attack intent but invalid target`, {
+            hasTarget: !!targetObj,
+            targetActive: targetObj?.active
+          });
+        }
+        continue;
+      }
+      
       const saved = this.weaponSlots;
       const slots = (t as any).weaponSlots as string[] | undefined;
       if (slots && slots.length) this.weaponSlots = slots;
+      
+      // Отладочная информация о стрельбе
+      if (process.env.NODE_ENV === 'development' && Math.random() < 0.02) { // 2% логов
+        const targetName = targetObj === this.ship ? 'PLAYER' : `#${(targetObj as any).__uniqueId}`;
+        console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} firing at ${targetName}`, {
+          weapons: slots || ['default'],
+          distance: Math.hypot(targetObj.x - t.obj.x, targetObj.y - t.obj.y).toFixed(0)
+        });
+      }
+      
       this.autoFire(t.obj as any, targetObj);
       this.weaponSlots = saved;
     }
@@ -449,13 +530,23 @@ export class CombatManager {
       if (!t.ai || t.ai.type !== 'ship') continue;
       // If object is returning home (e.g., wave despawn), skip combat steering
       if ((t.obj as any).__returningHome) continue;
+      const obj: any = t.obj;
+      
       // If no combat intent and behavior isn't aggressive — let regular logic handle
       if ((!t.intent || t.intent.type === undefined) && t.ai.behavior && t.ai.behavior !== 'aggressive') { 
+        // Отладочная информация для не-агрессивного поведения
+        if (process.env.NODE_ENV === 'development' && Math.random() < 0.002) { // 0.2% логов
+          console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} non-aggressive behavior`, {
+            behavior: t.ai.behavior,
+            hasIntent: !!t.intent,
+            intentType: t.intent?.type
+          });
+        }
+        
         this.updateHpBar(t as any); 
         continue; 
       }
       
-      const obj: any = t.obj;
       const retreat = ((): number => {
         if (t.combatAI) {
           const cp = this.config.combatAI?.profiles?.[t.combatAI];
@@ -464,22 +555,65 @@ export class CombatManager {
         return t.ai.retreatHpPct ?? 0;
       })();
       
-      const targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : this.ship;
+      let targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : this.ship;
       const fleeObj = (t.intent && t.intent.type === 'flee') ? t.intent.target : null;
+      
+      // КРИТИЧНО: Проверяем валидность цели перед использованием
+      if (targetObj && (!targetObj.active || targetObj.destroyed)) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} clearing invalid attack target`, {
+            targetActive: targetObj.active,
+            targetDestroyed: targetObj.destroyed
+          });
+        }
+        targetObj = null;
+        t.intent = null;
+        // Очищаем в новой системе тоже
+        const context = this.npcStateManager.getContext(obj);
+        if (context) {
+          context.targetStabilization.currentTarget = null;
+          context.targetStabilization.targetScore = 0;
+        }
+      }
+      
+      if (fleeObj && (!fleeObj.active || fleeObj.destroyed)) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} clearing invalid flee target`);
+        }
+        t.intent = null;
+      }
       
       let target: { x: number; y: number };
       if (fleeObj) {
-        // Flee: отлетаем от источника угрозы
-        const dx = obj.x - fleeObj.x;
-        const dy = obj.y - fleeObj.y;
-        const dist = Math.hypot(dx, dy);
-        const fleeDistance = 1000; // дистанция бегства
-        target = {
-          x: fleeObj.x + (dx / dist) * fleeDistance,
-          y: fleeObj.y + (dy / dist) * fleeDistance
-        };
+        // Flee: фиксируем направление от top-dps источника и не меняем
+        if (!(t as any).__fleeDir) {
+          let source = fleeObj;
+          if (t.damageLog?.totalDamageBySource?.size) {
+            let b: any = null; let v = -1;
+            for (const [src, sum] of t.damageLog.totalDamageBySource.entries()) {
+              if (!src?.active) continue; if (sum > v) { v = sum; b = src; }
+            }
+            if (b) source = b;
+          }
+          const dx0 = obj.x - (source as any).x;
+          const dy0 = obj.y - (source as any).y;
+          const d0 = Math.hypot(dx0, dy0) || 1;
+          (t as any).__fleeDir = { x: dx0 / d0, y: dy0 / d0 };
+          if (t.faction === 'pirate') { try { console.log('[AI] Pirate flee lock dir', { id: (obj as any).__uniqueId }); } catch {} }
+        }
+        const fleeDistance = 1000;
+                          target = { x: obj.x + (t as any).__fleeDir.x * fleeDistance, y: obj.y + (t as any).__fleeDir.y * fleeDistance };
         this.npcMovement.setNPCTarget(obj, target);
-      } else if (targetObj) {
+        
+        // Добавляем команду бегства с высоким приоритетом
+        this.npcStateManager.addMovementCommand(
+          obj, 'move_to', 
+          target, 
+          undefined, 
+          MovementPriority.EMERGENCY_FLEE, 
+          'combat_manager_flee'
+        );
+      } else if (targetObj && targetObj.active && !targetObj.destroyed) {
         // Attack: используем режим движения из профиля ИИ
         const shouldRetreat = t.hp / t.hpMax <= retreat;
         if (shouldRetreat) {
@@ -488,7 +622,11 @@ export class CombatManager {
               if (process.env.NODE_ENV === 'development') {
                   const shipId = t.shipId ?? 'unknown_ship';
                   const uniqueId = (obj as any).__uniqueId || '';
-                  console.log(`[Combat AI] ${shipId} #${uniqueId} starting to flee from ${targetObj.texture.key}`);
+                  const targetName = targetObj === this.ship ? 'PLAYER' : `#${(targetObj as any).__uniqueId}`;
+                  console.log(`[Combat AI] ${shipId} #${uniqueId} starting to flee from ${targetName}`, {
+                    hp: `${t.hp}/${t.hpMax} (${((t.hp/t.hpMax)*100).toFixed(0)}%)`,
+                    retreatThreshold: `${(retreat*100).toFixed(0)}%`
+                  });
               }
           }
           t.intent = { type: 'flee', target: targetObj };
@@ -503,9 +641,151 @@ export class CombatManager {
             y: targetObj.y + (dy / dist) * retreatDistance
           };
           this.npcMovement.setNPCTarget(obj, target);
+          
+          // Добавляем команду отступления с высоким приоритетом
+          this.npcStateManager.addMovementCommand(
+            obj, 'move_to', 
+            target, 
+            undefined, 
+            MovementPriority.EMERGENCY_FLEE, 
+            'combat_manager_retreat'
+          );
         } else {
-          // Атакуем с использованием режима из профиля ИИ
-          this.npcMovement.setNPCTarget(obj, { x: targetObj.x, y: targetObj.y, targetObject: targetObj });
+          // Выбор цели: сначала пробуем новую стабильную систему, затем fallback к старой
+          let best: any = null;
+          const current = (t.intent?.type === 'attack') ? t.intent.target : null;
+          
+          // Пробуем новую систему выбора цели
+          const candidates = this.targets
+            .filter(o => o.obj !== obj && o.obj.active)
+            .filter(o => this.getRelation(t.faction, o.faction, t.overrides?.factions) === 'confrontation')
+            .map(o => o.obj);
+            
+          // КРИТИЧНО: Добавляем игрока в кандидаты если отношения враждебные
+          const playerRelation = this.getRelation(t.faction, 'player', t.overrides?.factions);
+          const shouldIncludePlayer = playerRelation === 'confrontation' && this.ship && this.ship.active;
+          
+          if (shouldIncludePlayer && !candidates.includes(this.ship)) {
+            candidates.push(this.ship);
+          }
+            
+          // ОТЛАДКА: проверяем включен ли игрок в кандидаты
+          if (process.env.NODE_ENV === 'development') {
+            const includesPlayer = candidates.includes(this.ship);
+            console.log(`[Candidates] ${t.shipId} #${(obj as any).__uniqueId} candidate check`, {
+              totalCandidates: candidates.length,
+              includesPlayer,
+              shouldIncludePlayer,
+              playerRelation,
+              faction: t.faction,
+              shipIsActive: this.ship?.active,
+              candidateIds: candidates.map(c => (c === this.ship ? 'PLAYER' : (c as any).__uniqueId))
+            });
+          }
+            
+          const stateContext = this.npcStateManager.getContext(obj);
+          
+          if (stateContext && candidates.length > 0) {
+            // Используем ТОЛЬКО новую стабильную систему выбора цели
+            best = this.npcStateManager.selectStableTarget(stateContext, candidates);
+            
+            if (process.env.NODE_ENV === 'development') {
+              const bestId = !best ? 'null' : 
+                           best === this.ship ? 'PLAYER' : 
+                           `#${(best as any).__uniqueId || 'UNK'}`;
+              const currentId = !current ? 'none' :
+                              current === this.ship ? 'PLAYER' :
+                              `#${(current as any).__uniqueId || 'UNK'}`;
+              
+              console.log(`[TargetSelection] ${t.shipId} #${(obj as any).__uniqueId} stable system result`, {
+                candidates: candidates.length,
+                selectedTarget: bestId,
+                currentTarget: currentId,
+                stabilizationActive: !!stateContext.targetStabilization.currentTarget,
+                hasValidTarget: !!best
+              });
+            }
+          } else if (process.env.NODE_ENV === 'development') {
+            console.warn(`[TargetSelection] ${t.shipId} #${(obj as any).__uniqueId} NO CONTEXT - NPC not registered!`, {
+              hasContext: !!stateContext,
+              candidatesCount: candidates.length
+            });
+          }
+          
+          // КРИТИЧНО: проверяем что best это валидная цель
+          if (best && best !== current && best.active && !best.destroyed) {
+            // Отладочная информация для всех кораблей в dev режиме
+            if (process.env.NODE_ENV === 'development') {
+              try {
+                const now = this.scene.time.now;
+                const lastLog = this.lastPirateLogMs.get(obj) ?? 0;
+                if (now - lastLog > 500) { // 500ms между логами для всех
+                  const bestId = best === this.ship ? 'PLAYER' : `#${(best as any).__uniqueId || 'UNK'}`;
+                  const currentId = current === this.ship ? 'PLAYER' : 
+                                  current ? `#${(current as any).__uniqueId || 'UNK'}` : 'none';
+                  
+                  console.log(`[AI] ${t.shipId || 'Unknown'} #${(obj as any).__uniqueId} target switch`, {
+                    faction: t.faction,
+                    from: currentId,
+                    to: bestId,
+                    system: stateContext ? 'new' : 'legacy',
+                    hp: `${t.hp}/${t.hpMax} (${((t.hp/t.hpMax)*100).toFixed(0)}%)`,
+                    aggressionLevel: stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : 'n/a'
+                  });
+                  this.lastPirateLogMs.set(obj, now);
+                }
+              } catch {}
+            }
+            targetObj = best;
+          }
+          
+          // КРИТИЧНО: Устанавливаем intent только если цель валидна
+          if (targetObj && targetObj.active && !targetObj.destroyed) {
+            const wasAttacking = t.intent?.type === 'attack';
+            const oldTarget = t.intent?.target;
+            t.intent = { type: 'attack', target: targetObj };
+            
+            // Отладочная информация об изменении intent
+            if (process.env.NODE_ENV === 'development' && (!wasAttacking || oldTarget !== targetObj)) {
+              const targetName = targetObj === this.ship ? 'PLAYER' : `#${(targetObj as any).__uniqueId}`;
+              console.log(`[AI] ${t.shipId} #${(t.obj as any).__uniqueId} intent -> ATTACK ${targetName}`, {
+                wasAttacking,
+                targetChanged: oldTarget !== targetObj,
+                hp: `${t.hp}/${t.hpMax}`
+              });
+            }
+          } else {
+            // Если цель невалидна - сбрасываем intent
+            if (t.intent?.type === 'attack') {
+              if (process.env.NODE_ENV === 'development') {
+                console.log(`[AI] ${t.shipId} #${(t.obj as any).__uniqueId} CLEARING INVALID TARGET`, {
+                  hadTarget: !!targetObj,
+                  targetActive: targetObj?.active,
+                  targetDestroyed: targetObj?.destroyed
+                });
+              }
+              t.intent = null;
+            }
+          }
+          
+          // Двигаемся к цели только если intent установлен корректно
+          if (t.intent?.type === 'attack' && t.intent.target && t.intent.target.active && !t.intent.target.destroyed) {
+            // Атакуем: по умолчанию орбита 500, если профиль не переопределяет
+            const atkProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
+            const atkMode = (atkProfile?.movementMode as any) ?? 'orbit';
+            const atkDist = atkProfile?.movementDistance ?? 500;
+            this.npcMovement.setNPCMode(obj, atkMode, atkDist);
+            this.npcMovement.setNPCTarget(obj, { x: t.intent.target.x, y: t.intent.target.y, targetObject: t.intent.target });
+            
+            // Также добавляем команду в новую систему приоритетов
+            this.npcStateManager.addMovementCommand(
+              obj, atkMode, 
+              { x: t.intent.target.x, y: t.intent.target.y, targetObject: t.intent.target }, 
+              atkDist, 
+              MovementPriority.COMBAT, 
+              'combat_manager_attack'
+            );
+          }
         }
       } else if (t.intent?.type === 'flee') {
           // Если мы были в состоянии бегства, но угрозы больше нет — логируем завершение.
@@ -514,7 +794,45 @@ export class CombatManager {
               const uniqueId = (obj as any).__uniqueId || '';
               console.log(`[Combat AI] ${shipId} #${uniqueId} is no longer fleeing and is returning to normal behavior.`);
           }
+          // Возвращаемся к атаке предыдущей цели, если она ещё валидна, иначе нейтральное поведение
+          const prev = (t as any).__lastIntentObj;
+          if (prev && prev.active) {
+            t.intent = { type: 'attack', target: prev };
+            this.npcMovement.setNPCTarget(obj, { x: prev.x, y: prev.y, targetObject: prev });
+            
+            if (process.env.NODE_ENV === 'development') {
+              const targetName = prev === this.ship ? 'PLAYER' : `#${(prev as any).__uniqueId}`;
+              console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} flee ended -> ATTACK ${targetName}`);
+            }
+          } else {
+            const hadIntent = !!t.intent;
+            t.intent = null;
+            
+            if (process.env.NODE_ENV === 'development' && hadIntent) {
+              console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} flee ended -> NO TARGET`);
+            }
+          }
+          // Сбросить патрульную цель, чтобы нейтральная логика задала новую и корабль не «зависал»
+          try { (obj as any).__targetPatrol = null; } catch {}
+      } else {
+        // Нет валидной цели - очищаем intent если он был
+        if (t.intent) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} no valid target, clearing intent`, {
+              hadIntent: t.intent.type,
+              targetStillExists: !!t.intent.target,
+              targetActive: t.intent.target?.active
+            });
+          }
           t.intent = null;
+          
+          // Очищаем в новой системе тоже
+          const context = this.npcStateManager.getContext(obj);
+          if (context) {
+            context.targetStabilization.currentTarget = null;
+            context.targetStabilization.targetScore = 0;
+          }
+        }
       }
       
       // Ограничиваем движение границами системы
@@ -732,29 +1050,128 @@ export class CombatManager {
       if (t.hp < 0) t.hp = 0;
       this.updateHpBar(t);
       this.floatDamageText(target.x, target.y - 70, damage);
-      // Если атаковал игрок и цель — NPC, задаём временную конфронтацию к игроку
-      if (attacker && attacker === this.ship) {
-        // Проверяем, видит ли NPC игрока
-        const npcRadarRange = this.getRadarRangeFor(t.obj);
-        const distToPlayer = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
+      
+      // ОТЛАДКА: логируем все атаки ПЕРЕД registerDamage
+      if (process.env.NODE_ENV === 'development') {
+        const targetId = (target as any).__uniqueId || 'unknown';
+        const attackerId = attacker ? (attacker as any).__uniqueId || 'ATTACKER_CANDIDATE' : 'unknown';
+        const isPlayerAttacker = attacker === this.ship || 
+                                (attacker as any)?.texture?.key === 'ship_alpha' ||
+                                (attacker as any)?.texture?.key === 'ship_alpha_public';
         
-        if (distToPlayer > npcRadarRange) {
-          // Игрок вне зоны радара, применяем логику outdistance_attack
-          const combatProfile = t.combatAI ? this.config.combatAI.profiles[t.combatAI] : null;
-          const reaction = combatProfile?.outdistance_attack ?? 'ignore';
-
-          if (reaction !== 'ignore') {
-            const intentType = reaction === 'flee' ? 'flee' : 'attack';
-            t.intent = { type: intentType, target: this.ship };
-            (t as any).forceIntentUntil = this.scene.time.now + 4000; // Force intent for 4s
+        console.log(`[ApplyDamage] ${targetId} ← ${damage} from ${attackerId}`, {
+          hasAttacker: !!attacker,
+          isPlayerAttacker,
+          attackerIsShip: attacker === this.ship,
+          attackerTexture: (attacker as any)?.texture?.key,
+          shipTexture: (this.ship as any)?.texture?.key,
+          attackerType: attacker?.constructor?.name
+        });
+      }
+      
+      // Регистрируем урон в новой системе состояний
+      this.npcStateManager.registerDamage(target, damage, attacker);
+      // log damage sources for target prioritization
+      if (!t.damageLog) t.damageLog = { firstAttacker: undefined, totalDamageBySource: new Map(), lastDamageTimeBySource: new Map() };
+      if (attacker) {
+        if (!t.damageLog.firstAttacker) t.damageLog.firstAttacker = attacker;
+        const mapA = t.damageLog.totalDamageBySource as Map<any, number>;
+        const mapT = t.damageLog.lastDamageTimeBySource as Map<any, number>;
+        const prev = mapA.get(attacker) ?? 0;
+        mapA.set(attacker, prev + damage);
+        mapT.set(attacker, this.scene.time.now);
+      }
+      // Реакция на урон издалека: проверяем профиль outdistance_attack
+      if (attacker) {
+        const npcRadarRange = this.getRadarRangeFor(t.obj);
+        const ax = (attacker as any).x ?? t.obj.x;
+        const ay = (attacker as any).y ?? t.obj.y;
+        const distToAttacker = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, ax, ay);
+        
+        if (distToAttacker > npcRadarRange) {
+          // Проверяем настройку outdistance_attack из combatAI профиля
+          const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
+          const outdistanceAction = combatProfile?.outdistance_attack ?? 'flee'; // default: flee
+          
+          if (outdistanceAction === 'target') {
+            // Атакуем дальнюю цель
+            t.intent = { type: 'attack', target: attacker };
+            (t as any).forceIntentUntil = this.scene.time.now + 4000; // 4s удержания реакции
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[OutdistanceAttack] ${t.shipId} #${(t.obj as any).__uniqueId} attacking distant target`, {
+                distance: distToAttacker.toFixed(0),
+                radarRange: npcRadarRange,
+                action: 'target'
+              });
+            }
+          } else if (outdistanceAction === 'flee') {
+            // Убегаем от дальней цели
+            t.intent = { type: 'flee', target: attacker };
+            (t as any).forceIntentUntil = this.scene.time.now + 4000; // 4s удержания реакции
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[OutdistanceAttack] ${t.shipId} #${(t.obj as any).__uniqueId} fleeing from distant target`, {
+                distance: distToAttacker.toFixed(0),
+                radarRange: npcRadarRange,
+                action: 'flee'
+              });
+            }
           }
         }
-
+        // Проставляем конфронтацию к фракции атакера
         (t as any).overrides = (t as any).overrides ?? {};
         (t as any).overrides.factions = (t as any).overrides.factions ?? {};
-        (t as any).overrides.factions['player'] = 'confrontation';
+        if (attacker === this.ship) {
+          (t as any).overrides.factions['player'] = 'confrontation';
+        } else {
+          const srcEntry = this.targets.find(e => e.obj === attacker);
+          const srcFaction = srcEntry?.faction;
+          if (srcFaction) (t as any).overrides.factions[srcFaction] = 'confrontation';
+        }
       }
       if (t.hp <= 0) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[Combat] Destroying NPC ${t.shipId} #${(target as any).__uniqueId}`, {
+            wasTargetOf: this.targets.filter(tt => tt.intent?.target === target).map(tt => `${tt.shipId}#${(tt.obj as any).__uniqueId}`)
+          });
+        }
+        
+        // КРИТИЧНО: Сначала очищаем все ссылки на умирающий объект
+        for (const otherTarget of this.targets) {
+          if (otherTarget.intent?.target === target) {
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[Combat] Clearing intent for ${otherTarget.shipId} #${(otherTarget.obj as any).__uniqueId} targeting dead ${t.shipId}`);
+            }
+            otherTarget.intent = null;
+            // Очищаем в новой системе тоже
+            const context = this.npcStateManager.getContext(otherTarget.obj);
+            if (context) {
+              context.targetStabilization.currentTarget = null;
+              context.targetStabilization.targetScore = 0;
+            }
+          }
+          
+          // Очищаем из damage log
+          if (otherTarget.damageLog) {
+            if (otherTarget.damageLog.totalDamageBySource?.has(target)) {
+              otherTarget.damageLog.totalDamageBySource.delete(target);
+            }
+            if (otherTarget.damageLog.lastDamageTimeBySource?.has(target)) {
+              otherTarget.damageLog.lastDamageTimeBySource.delete(target);
+            }
+            if (otherTarget.damageLog.firstAttacker === target) {
+              otherTarget.damageLog.firstAttacker = undefined;
+            }
+          }
+          
+          // Очищаем из новой системы агрессии
+          const context = this.npcStateManager.getContext(otherTarget.obj);
+          if (context) {
+            context.aggression.sources.delete(target);
+          }
+        }
+        
         // Полное удаление NPC: объект, HP элементы, имя, боевые кольца, назначения
         try { (t.obj as any).destroy?.(); } catch {}
         try { t.hpBarBg.destroy(); } catch {}
@@ -775,6 +1192,8 @@ export class CombatManager {
         }
         // убираем из системы движения NPC
         this.npcMovement.unregisterNPC(target);
+        // убираем из системы состояний NPC
+        this.npcStateManager.unregisterNPC(target);
         // дерегистрируем из fog of war
         if (this.fogOfWar) {
           this.fogOfWar.unregisterObject(target);
@@ -835,6 +1254,24 @@ export class CombatManager {
 
   private updateSensors(deltaMs: number) {
     for (const t of this.targets) {
+      // Проверяем состояние в новой системе
+      const npcState = this.npcStateManager.getState(t.obj);
+      const isInCombat = this.npcStateManager.isInCombat(t.obj);
+      const context = this.npcStateManager.getContext(t.obj);
+      
+      // ВАЖНО: НЕ переопределяем intent для кораблей в боевом состоянии
+      // updateEnemiesAI уже управляет intent, sensors логика только для обнаружения
+      if (isInCombat && context) {
+        // Просто пропускаем sensors логику, updateEnemiesAI уже управляет intent
+        if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) { // 1% логов
+          console.log(`[Sensors] Skipping sensors for combat NPC ${t.shipId} #${(t.obj as any).__uniqueId}`, {
+            currentIntent: t.intent?.type,
+            aggressionLevel: (context.aggression.level * 100).toFixed(0) + '%'
+          });
+        }
+        continue;
+      }
+      
       const forcedUntil = (t as any).forceIntentUntil;
       if (forcedUntil && this.scene.time.now < forcedUntil) {
         if (!t.intent?.target?.active) {
@@ -846,7 +1283,15 @@ export class CombatManager {
       if (forcedUntil) {
           (t as any).forceIntentUntil = 0;
       }
-      t.intent = null;
+      
+      // Проверяем агрессию для плавного перехода
+      if (context && context.aggression.level < 0.3) {
+        // Низкая агрессия - возможен переход к мирному поведению
+        t.intent = null;
+      } else {
+        // Стандартная sensors логика для не-боевых состояний
+        t.intent = null;
+      }
       const myFaction = t.faction;
       const radar = this.getRadarRangeFor(t.obj);
       const sensed: any[] = [];
@@ -905,7 +1350,32 @@ export class CombatManager {
         (t as any).__lastIntentObj = decided?.target ?? null;
       }
 
-      if (!seesPlayer) {
+      // Улучшенная логика остывания агрессии
+      if (!seesPlayer && context) {
+        const timeSinceLastDamage = this.scene.time.now - context.aggression.lastDamageTime;
+        const timeSinceLastCombat = this.scene.time.now - context.aggression.lastCombatTime;
+        
+        // Сбрасываем враждебность к игроку только если прошло достаточно времени
+        // и уровень агрессии низкий
+        if (timeSinceLastDamage > 15000 && // 15 сек с последнего урона
+            timeSinceLastCombat > 10000 &&  // 10 сек с последнего боя
+            context.aggression.level < 0.2) { // очень низкая агрессия
+          
+          (t as any).overrides = (t as any).overrides ?? {};
+          (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+          if ((t as any).overrides.factions['player'] === 'confrontation') {
+            delete (t as any).overrides.factions['player'];
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log('[AI] NPC cooled down, clearing player hostility', {
+                shipId: t.shipId, id: (t.obj as any).__uniqueId,
+                aggressionLevel: context.aggression.level.toFixed(2)
+              });
+            }
+          }
+        }
+      } else if (!context) {
+        // Fallback к старой логике для NPC без нового состояния
         (t as any).overrides = (t as any).overrides ?? {};
         (t as any).overrides.factions = (t as any).overrides.factions ?? {};
         if ((t as any).overrides.factions['player'] === 'confrontation') {
@@ -1111,7 +1581,43 @@ export class CombatManager {
         rec.nameLabel.setColor(color);
         const baseName = this.resolveDisplayName(rec) || 'Unknown';
         const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
-        rec.nameLabel.setText(uniqueName);
+        
+        // Добавляем отладочную информацию о цели (для боевых целей)
+        let debugInfo = '';
+        if (process.env.NODE_ENV === 'development') {
+          const currentTarget = rec.intent?.target;
+          const stateContext = this.npcStateManager.getContext(rec.obj);
+          const stableTarget = stateContext?.targetStabilization?.currentTarget;
+          
+          // КРИТИЧНАЯ ПРОВЕРКА: убеждаемся что контекст принадлежит правильному объекту
+          if (stateContext && stateContext.obj !== rec.obj) {
+            debugInfo = `\n❌ CONTEXT MISMATCH! (${(stateContext.obj as any).__uniqueId})`;
+            console.error(`[Combat Display] Context mismatch for ${(rec.obj as any).__uniqueId}: got context for ${(stateContext.obj as any).__uniqueId}`);
+          } else if (currentTarget || stableTarget) {
+            const targetToShow = stableTarget || currentTarget;
+            const targetName = targetToShow === this.ship ? 'PLAYER' : 
+                              `#${(targetToShow as any).__uniqueId || 'UNK'}`;
+            const intentType = rec.intent?.type || 'none';
+            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
+            
+            // Дополнительная проверка источников урона для боевых целей
+            if (stateContext && stateContext.aggression.sources.size > 0) {
+              const sourcesCount = stateContext.aggression.sources.size;
+              const sourcesInfo = Array.from(stateContext.aggression.sources.entries()).map(([source, data]) => {
+                const sourceId = source === this.ship ? 'PLAYER' : `#${(source as any).__uniqueId || 'UNK'}`;
+                return `${sourceId}:${data.damage}`;
+              }).join(',');
+              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]\nSources: ${sourcesInfo}`;
+            } else {
+              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]`;
+            }
+          } else {
+            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
+            debugInfo = `\n→ NO TARGET [${aggrLevel}]`;
+          }
+        }
+        
+        rec.nameLabel.setText(uniqueName + debugInfo);
         rec.nameLabel.setVisible(true);
         this.updateHpBar(rec as any);
       } else {
@@ -1150,8 +1656,19 @@ export class CombatManager {
     }
     if (removed.length) {
       this.targets = this.targets.filter(rec => !removed.includes(rec.obj));
-      removed.forEach(t => { const ring = this.combatRings.get(t); if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(t); } });
+      removed.forEach(t => { 
+        // Удаляем из всех систем
+        this.npcStateManager.unregisterNPC(t);
+        const ring = this.combatRings.get(t); 
+        if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(t); } 
+      });
     }
+  }
+
+  // Метод для корректного завершения работы
+  public destroy() {
+    this.npcStateManager.destroy();
+    this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
 }
 

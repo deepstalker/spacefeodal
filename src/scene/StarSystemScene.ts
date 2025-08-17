@@ -9,6 +9,7 @@ import { CombatManager } from '@/sys/CombatManager';
 import { EnhancedFogOfWar } from '@/sys/fog-of-war/EnhancedFogOfWar';
 // Тип не импортируем, чтобы не тянуть модуль на этап линтинга; используем any
 import { StaticObjectType, DynamicObjectType } from '@/sys/fog-of-war/types';
+import { MovementPriority } from '@/sys/NPCStateManager';
 
 export default class StarSystemScene extends Phaser.Scene {
   private config!: ConfigManager;
@@ -404,7 +405,17 @@ export default class StarSystemScene extends Phaser.Scene {
       // Skip patrol steering if combat intent exists (CombatManager handles it)
       const cm: any = (this as any).combat;
       const entry = cm?.targets?.find((t: any) => t.obj === o);
-      if (entry && entry.intent) continue;
+      if (entry && entry.intent) {
+        // Если цель недействительна (докнулась/умерла), сбросить патрульную точку для выбора новой
+        const intent = entry.intent;
+        if (intent?.type === 'attack') {
+          const tgt = intent.target;
+          if (!tgt?.active || (tgt as any).__state === 'docked') {
+            (o as any).__targetPatrol = null;
+          }
+        }
+        continue;
+      }
 
       let target = (o as any).__targetPatrol;
       if (!target || (target._isPlanet && !this.getPlanetWorldPosById(target.id))) {
@@ -432,7 +443,20 @@ export default class StarSystemScene extends Phaser.Scene {
         }
       }
       
-      cm.npcMovement.setNPCTarget(o, { x: tx, y: ty });
+      // Проверяем, не заблокировано ли движение более приоритетной задачей
+      const canMove = cm.npcStateManager?.addMovementCommand(
+        o, 'move_to', 
+        { x: tx, y: ty }, 
+        undefined, 
+        MovementPriority.PATROL, 
+        'scene_patrol'
+      );
+      
+      // Применяем команду только если она была принята системой приоритетов
+      if (canMove !== false) {
+        cm.npcMovement.setNPCMode(o, 'move_to');
+        cm.npcMovement.setNPCTarget(o, { x: tx, y: ty });
+      }
 
       const dist = Math.hypot(tx - o.x, ty - o.y);
       if (dist < 160) {
@@ -453,7 +477,9 @@ export default class StarSystemScene extends Phaser.Scene {
     const sys = this.config?.system as any;
     if (!sys || !Array.isArray(sys.planets) || !this.ship) return;
     for (const o of this.npcs) {
-      if ((o as any).__behavior !== 'planet_trader') continue;
+      // orbital_trade: простой цикл по случайным планетам
+      const behavior = (o as any).__behavior;
+      if (behavior !== 'planet_trader' && behavior !== 'orbital_trade') continue;
       // If trader has combat intent (e.g., flee), let CombatManager drive movement to avoid double-speed
       const cmAny: any = (this as any).combat;
       const cmEntry = cmAny?.targets?.find((t: any) => t.obj === o);
@@ -476,7 +502,20 @@ export default class StarSystemScene extends Phaser.Scene {
       const state = (o as any).__state ?? 'travel';
       if (state === 'travel') {
         const planetRec = this.planets.find(p => (p as any).data?.id === target.id);
-        cmAny.npcMovement.setNPCTarget(o, { x: planetPos.x, y: planetPos.y, targetObject: planetRec?.obj });
+        
+        // Проверяем приоритеты для торговой команды
+        const canMove = cmAny.npcStateManager?.addMovementCommand(
+          o, 'move_to', 
+          { x: planetPos.x, y: planetPos.y, targetObject: planetRec?.obj }, 
+          undefined, 
+          MovementPriority.TRADE, 
+          'scene_trader'
+        );
+        
+        // Применяем команду только если она была принята
+        if (canMove !== false) {
+          cmAny.npcMovement.setNPCTarget(o, { x: planetPos.x, y: planetPos.y, targetObject: planetRec?.obj });
+        }
         
         const dist = Math.hypot(planetPos.x - o.x, planetPos.y - o.y);
         const dockRange = (target as any).dockRange ?? this.config.gameplay.dock_range ?? 220;

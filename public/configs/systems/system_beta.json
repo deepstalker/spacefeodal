@@ -1,19 +1,21 @@
 {
+  "name": "Бета-Эридана",
+  "sector": "Эридан",
   "size": { "width": 25000, "height": 25000 },
   "star": { "x": 12500, "y": 12500 },
   "planets": [
-    { "id": "pl_1", "name": "Blue 1",  "orbit": { "radius": 2800,  "angularSpeedDegPerSec": 7.2 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 2 } } },
-    { "id": "pl_2", "name": "Red 2",   "orbit": { "radius": 4700,  "angularSpeedDegPerSec": 5.1 },  "color": "#ff6666", "spawn": { "quotas": { "trader": 1 } } },
-    { "id": "pl_3", "name": "Blue 3",  "orbit": { "radius": 6900,  "angularSpeedDegPerSec": 4.2 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 2 } } },
-    { "id": "pl_4", "name": "Red 4",   "orbit": { "radius": 8800,  "angularSpeedDegPerSec": 3.3 },  "color": "#ff6666", "spawn": { "quotas": { "trader": 1 } } },
-    { "id": "pl_5", "name": "Blue 5",  "orbit": { "radius": 10000, "angularSpeedDegPerSec": 2.6 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 1 } } }
+    { "id": "pl_1", "name": "Blue 1",  "orbit": { "radius": 2800,  "angularSpeedDegPerSec": 7.2 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 3, "orbital_patrol": 2 } } },
+    { "id": "pl_2", "name": "Red 2",   "orbit": { "radius": 4700,  "angularSpeedDegPerSec": 5.1 },  "color": "#ff6666", "spawn": { "quotas": { "trader": 2, "orbital_patrol": 2 } } },
+    { "id": "pl_3", "name": "Blue 3",  "orbit": { "radius": 6900,  "angularSpeedDegPerSec": 4.2 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 3, "orbital_patrol": 2 } } },
+    { "id": "pl_4", "name": "Red 4",   "orbit": { "radius": 8800,  "angularSpeedDegPerSec": 3.3 },  "color": "#ff6666", "spawn": { "quotas": { "trader": 3, "orbital_patrol": 2 } } },
+    { "id": "pl_5", "name": "Blue 5",  "orbit": { "radius": 10000, "angularSpeedDegPerSec": 2.6 },  "color": "#66aaff", "spawn": { "quotas": { "trader": 3, "orbital_patrol": 2 } } }
   ],
   "poi": [
     { "id": "enc_0", "name": "Потерянное сокровище", "x": 0, "y": 1500, "discovered": false },
     { "id": "enc_1", "name": "Пираты", "x": 11000, "y": 11000, "discovered": false }
   ],
   "stations": [
-  { "id": "pir_base_1", "type": "pirate_base", "x": 10000, "y": 10000, "wave": { "count": 2, "lifespanMs": 120000, "intervalMs": 60000, "initialDelayMs": 6000 }, "spawn": { "quotas": { "pirate": 3 } } }
+  { "id": "pir_base_1", "type": "pirate_base", "x": 8000, "y": 8000, "spawn": { "quotas": { "pirate": 7 } } }
 ],
   "npcs": [],
   "dynamicObjects": []

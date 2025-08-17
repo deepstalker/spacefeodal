@@ -73,6 +73,8 @@ export default class PreloadScene extends Phaser.Scene {
       /* noop */
     }
     this.load.image('ship_alpha_public', '/assets/ships/alpha/alpha_image.png');
+    // New ship variants
+    this.load.image('ship_ordo_patrol_gunship', '/assets/ships/ordo_patrol_gunship.png');
     // Ship variants — реальные файлы
     this.load.image('ship_explorer', '/assets/ships/alpha/explorer_ship.jpg');
     this.load.image('ship_trader', '/assets/ships/alpha/trader_ship.jpg');

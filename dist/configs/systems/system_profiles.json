@@ -1,0 +1,27 @@
+{
+  "profiles": {
+    "default": {
+      "starRadius": { "min": 600, "max": 3000 },
+      "orbits": { "min": 2, "max": 16 },
+      "orbitGap": { "min": 1000, "max": 2000 },
+      "planetSize": { "min": 200, "max": 500 },
+      "satellitesPerPlanet": { "min": 0, "max": 3 },
+      "planetTypes": [
+        { "name": "Red", "color": "#ff6666" },
+        { "name": "Blue", "color": "#66aaff" }
+      ],
+      "encounters": {
+        "count": { "min": 0, "max": 30 },
+        "radius": { "min": 500, "max": 4000 },
+        "minSpacing": 500,
+        "types": [
+          { "id": "lost_treasure", "name": "Потерянное сокровище", "activation_range": 300 },
+          { "id": "pirates", "name": "Пираты", "groupSize": { "min": 1, "max": 3 }, "activation_range": 600 }
+        ]
+      },
+      "systemSize": { "width": 20000, "height": 20000 }
+    }
+  }
+}
+
+

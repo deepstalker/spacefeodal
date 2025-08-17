@@ -13,6 +13,8 @@ export class HUDManager {
   private playerHp: number | null = null;
   private shipNameText?: Phaser.GameObjects.Text;
   private shipIcon?: Phaser.GameObjects.Image;
+  private systemTitleText?: Phaser.GameObjects.Text;
+  private systemSectorText?: Phaser.GameObjects.Text;
   private weaponSlotsContainer?: Phaser.GameObjects.Container;
   private weaponPanel?: Phaser.GameObjects.Rectangle;
   private hullBarWidth: number = 1228;
@@ -23,6 +25,7 @@ export class HUDManager {
   private minimap?: MinimapManager;
   private minimapHit?: Phaser.GameObjects.Zone;
   private isMinimapDragging: boolean = false;
+  private minimapBounds?: { x: number; y: number; w: number; h: number };
   // Combat UI state
   private slotRecords: Array<{
     slotIndex: number;
@@ -58,6 +61,7 @@ export class HUDManager {
     this.createHUD(ship);
     this.createWeaponBar();
     this.createMinimap(ship);
+    this.createSystemTitle();
 
     const starScene = this.scene.scene.get('StarSystemScene') as any;
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
@@ -217,6 +221,39 @@ export class HUDManager {
 
     // store refs for dynamic values
     (this.scene as any).__hudSpeedValue = speedValue;
+  }
+
+  private createSystemTitle() {
+    if (!this.configRef) return;
+    const sys = this.configRef.system;
+    const padBelowMap = 20;
+    const titleFontPx = 48;
+    const sectorGapPx = 20;
+    const map = this.minimapBounds;
+    const baseX = map ? (map.x + map.w / 2) : (this.scene.scale.width / 2);
+    const baseY = map ? (map.y + map.h + padBelowMap) : 40;
+    const title = this.scene.add.text(baseX, baseY, sys.name ?? '', {
+      color: '#ffffff',
+      fontSize: `${titleFontPx}px`,
+      fontFamily: 'HooskaiChamferedSquare'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(1501);
+    const sectorText = sys.sector ? `Сектор ${sys.sector}` : '';
+    const sector = this.scene.add.text(baseX, baseY + titleFontPx + sectorGapPx, sectorText, {
+      color: '#ffffff',
+      fontSize: '24px',
+      fontFamily: 'roboto'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(1501);
+    try { (title as any).setResolution?.(this.uiTextResolution); (sector as any).setResolution?.(this.uiTextResolution); } catch {}
+    this.systemTitleText = title;
+    this.systemSectorText = sector;
+    // Обновлять позицию при ресайзе
+    this.scene.scale.on('resize', (gameSize: any) => {
+      const mapNow = this.minimapBounds;
+      const nx = mapNow ? (mapNow.x + mapNow.w / 2) : (gameSize.width / 2);
+      const ny = mapNow ? (mapNow.y + mapNow.h + padBelowMap) : 40;
+      this.systemTitleText?.setPosition(nx, ny);
+      this.systemSectorText?.setPosition(nx, ny + titleFontPx + sectorGapPx);
+    });
   }
 
   // Отладочный спавн отключён
@@ -909,6 +946,7 @@ export class HUDManager {
     const minimapH = 384; // увеличиваем с 360 до 480
     const minimapX = this.scene.scale.width - minimapW - 40; // отступ от правого края
     const minimapY = 40; // отступ от верхнего края
+    this.minimapBounds = { x: minimapX, y: minimapY, w: minimapW, h: minimapH };
     
     // Инициализируем миникарту с новыми размерами
     this.minimap = new MinimapManager(this.scene, this.configRef);
@@ -949,6 +987,12 @@ export class HUDManager {
       star.cameras.main.centerOn(worldX, worldY);
     });
     this.scene.input.on('pointerup', () => { this.isMinimapDragging = false; });
+    // При ресайзе — обновим запомненные границы миникарты (и заголовки подтянутся своим ресайзом)
+    this.scene.scale.on('resize', (gameSize: any) => {
+      const nx = gameSize.width - minimapW - 40;
+      const ny = 40;
+      this.minimapBounds = { x: nx, y: ny, w: minimapW, h: minimapH };
+    });
   }
 
   private getMovementConfig() {
