@@ -493,6 +493,22 @@ export class HUDManager {
     }
   }
 
+  private isClickInWeaponSlot(screenX: number, screenY: number): boolean {
+    // Проверяем попадание клика в область любого слота оружия (в экранных координатах)
+    for (const rec of this.slotRecords) {
+      // Получаем экранные координаты слота (слоты используют setScrollFactor(0))
+      const slotScreenX = rec.baseX;
+      const slotScreenY = rec.bg?.y ?? rec.baseY; // используем актуальную Y позицию
+      const slotSize = rec.size;
+      
+      if (screenX >= slotScreenX && screenX <= slotScreenX + slotSize &&
+          screenY >= slotScreenY && screenY <= slotScreenY + slotSize) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private toggleSelectSlotByIndex(idx: number) {
     const rec = this.slotRecords[idx];
     if (!rec) return;
@@ -503,7 +519,7 @@ export class HUDManager {
   private selectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
     this.selectedSlots.add(rec.slotIndex);
     if (!this.cursorOrder.includes(rec.slotIndex)) this.cursorOrder.push(rec.slotIndex);
-    try { console.debug('[HUD] select slot', rec.slotIndex, rec.slotKey); } catch {}
+
     // зелёный аутлайн только на время выбора
     rec.outline.setStrokeStyle(2, 0x00ff66, 1);
     // поднимем слот, если он ещё не поднят
@@ -530,7 +546,7 @@ export class HUDManager {
   private deselectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
     this.selectedSlots.delete(rec.slotIndex);
     this.cursorOrder = this.cursorOrder.filter(i => i !== rec.slotIndex);
-    try { console.debug('[HUD] deselect slot', rec.slotIndex, rec.slotKey); } catch {}
+
     const isAssigned = Array.from(this.assignedIconsBySlot.keys()).includes(rec.slotKey);
     if (!isAssigned) {
       rec.outline.setStrokeStyle(0, 0x00ff66, 1);
@@ -582,7 +598,7 @@ export class HUDManager {
     try { const tx = this.scene.textures.get(iconKey); const scale = Math.min((size - 12) / tx.source[0].width, (size - 12) / tx.source[0].height); img.setScale(scale); } catch {}
     const cont = this.scene.add.container(0, 0, [under, bg, img]).setDepth(4002).setAlpha(0.95);
     this.cursorIcons.set(rec.slotIndex, cont);
-    try { console.debug('[HUD] add cursor icon for slot', rec.slotIndex); } catch {}
+
     // без пер-иконных апдейтов; глобально двигаем в realignCursorIcons()
   }
 
@@ -591,7 +607,7 @@ export class HUDManager {
     if (!c) return;
     this.cursorIcons.delete(slotIndex);
     c.destroy();
-    try { console.debug('[HUD] remove cursor icon for slot', slotIndex); } catch {}
+
   }
 
   private selectAllWeapons() {
@@ -612,6 +628,12 @@ export class HUDManager {
 
   private handleLeftClickForWeapons(p: Phaser.Input.Pointer) {
     if (this.selectedSlots.size === 0) return;
+    
+    // Проверяем, попал ли клик в область слота оружия - если да, не обрабатываем
+    if (this.isClickInWeaponSlot(p.x, p.y)) {
+      return; // Клик по слоту - пусть обрабатывает toggleSelectSlotByIndex
+    }
+    
     // Проверим попадание по цели в StarSystemScene
     const star: any = this.scene.scene.get('StarSystemScene');
     const cam = star.cameras?.main as Phaser.Cameras.Scene2D.Camera | undefined;
@@ -627,7 +649,7 @@ export class HUDManager {
       }
     }
     const hit = star.combat?.findTargetAt?.(wx, wy);
-    try { console.debug('[HUD] left click with weapons, selected count=', this.selectedSlots.size, { wx, wy, hit: !!hit }); } catch {}
+
     if (hit) {
       // Назначаем выбранные слоты на цель
       const playerSlots: string[] = (this.configRef!.player?.weapons ?? []).filter((w: string)=>!!w);

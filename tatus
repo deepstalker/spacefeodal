@@ -1,0 +1,107 @@
+[33mcommit dd31643a770e7271471bf10640aa96c0ae8c8a57[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: dsd <dsd@funzen.games>
+Date:   Sun Aug 17 23:40:05 2025 +0700
+
+    🚀 беспечить использование характеристик кораблей из ships.json и улучшить AI
+    
+    ✅ арантия использования корабельных характеристик:
+    - далены дефолты движения из gameplay.json (кроме TARGET_UPDATE_INTERVAL_MS)
+    - обавлено логирование источника характеристик в MovementManager
+    - Теперь каждый корабль использует ТЬ свои параметры из ships.json
+    
+    🧠 лучшения AI системы:
+    - обавлен NPCStateManager для централизованного управления состоянием
+    - еализована стабилизация выбора цели с гистерезисом
+    - Система управления агрессией с постепенным охлаждением
+    - риоритизация команд движения (аварийное отступление > бой > команды игрока)
+    
+    🎯 справления боевой логики:
+    - справлено поведение outdistance_attack (атака/отступление на дальней дистанции)
+    - лучшена очистка мертвых целей из intent и damageLog
+    - нифицирована оценка игрока наравне с другими целями
+    - обавлены проверки валидности целей перед атакой
+    
+    🐛 странённые проблемы:
+    - справлено зависание на мертвых целях
+    - ешена проблема переключения целей при уроне от игрока
+    - странены ошибки с undefined targets
+    - справлена логика fallback для характеристик движения
+    
+    📊 обавлена отладочная информация:
+    - огирование выбора целей с детализацией
+    - тображение источника урона в процентах
+    - онтроль целостности контекстов NPC
+    - тладка системы движения
+
+ dist/assets/BackgroundTiler-Bibs2MOk.js          |    1 [32m+[m
+ dist/assets/NPCLazySimulationManager-wXBbZ9lJ.js |    1 [32m+[m
+ dist/assets/Nebula_Aqua-Pink.png                 |  Bin [31m0[m -> [32m7682190[m bytes
+ dist/assets/Nebula_Blue.png                      |  Bin [31m0[m -> [32m3366121[m bytes
+ dist/assets/Nebula_Red.png                       |  Bin [31m0[m -> [32m4969453[m bytes
+ dist/assets/SpaceStationManager-MwApJfmE.js      |    1 [32m+[m
+ dist/assets/Stars-Big_1_1_PC.png                 |  Bin [31m0[m -> [32m160343[m bytes
+ dist/assets/Stars-Big_1_2_PC.png                 |  Bin [31m0[m -> [32m135540[m bytes
+ dist/assets/SystemGenerator-B3BGUg1A.js          |    1 [32m+[m
+ dist/assets/alpha_image-C86CfvlY.png             |  Bin [31m0[m -> [32m1209999[m bytes
+ dist/assets/index-D3u6562F.js                    | 6360 [32m++++++++++++++++++++++[m
+ dist/assets/planet00.png                         |  Bin [31m0[m -> [32m286506[m bytes
+ dist/assets/planet01.png                         |  Bin [31m0[m -> [32m307637[m bytes
+ dist/assets/planet02.png                         |  Bin [31m0[m -> [32m260330[m bytes
+ dist/assets/planet03.png                         |  Bin [31m0[m -> [32m288728[m bytes
+ dist/assets/planet04.png                         |  Bin [31m0[m -> [32m343482[m bytes
+ dist/assets/planet05.png                         |  Bin [31m0[m -> [32m294507[m bytes
+ dist/assets/planet06.png                         |  Bin [31m0[m -> [32m306816[m bytes
+ dist/assets/planet07.png                         |  Bin [31m0[m -> [32m291672[m bytes
+ dist/assets/planet08.png                         |  Bin [31m0[m -> [32m291474[m bytes
+ dist/assets/planet09.png                         |  Bin [31m0[m -> [32m236345[m bytes
+ dist/assets/ships/alpha/alpha_image.png          |  Bin [31m0[m -> [32m1209999[m bytes
+ dist/assets/ships/alpha/explorer_ship.jpg        |  Bin [31m0[m -> [32m888404[m bytes
+ dist/assets/ships/alpha/trader_ship.jpg          |  Bin [31m0[m -> [32m996756[m bytes
+ dist/assets/ships/ordo_patrol_gunship.png        |  Bin [31m0[m -> [32m650042[m bytes
+ dist/assets/weapons/basic_railgin.png            |  Bin [31m0[m -> [32m167292[m bytes
+ dist/assets/weapons/heavy_laser_cannon.png       |  Bin [31m0[m -> [32m268810[m bytes
+ dist/assets/weapons/imperial_photon_cannon.png   |  Bin [31m0[m -> [32m143512[m bytes
+ dist/assets/weapons/impulse_charger.png          |  Bin [31m0[m -> [32m279145[m bytes
+ dist/assets/weapons/ion_cannon.png               |  Bin [31m0[m -> [32m199256[m bytes
+ dist/assets/weapons/laser_cannon.png             |  Bin [31m0[m -> [32m132921[m bytes
+ dist/configs/general/assets.json                 |   25 [32m+[m
+ dist/configs/general/gameplay.json               |   41 [32m+[m
+ dist/configs/general/items.json                  |   11 [32m+[m
+ dist/configs/general/keybinds.json               |    3 [32m+[m
+ dist/configs/general/modules.json                |    3 [32m+[m
+ dist/configs/general/persistence.json            |    3 [32m+[m
+ dist/configs/general/player.json                 |    7 [32m+[m
+ dist/configs/general/settings.json               |   18 [32m+[m
+ dist/configs/npc/ai_profiles.json                |   28 [32m+[m
+ dist/configs/npc/combat_ai_profiles.json         |   23 [32m+[m
+ dist/configs/npc/factions.json                   |   27 [32m+[m
+ dist/configs/npc/npc-names.json                  |  372 [32m++[m
+ dist/configs/npc/stardwellers.json               |   10 [32m+[m
+ dist/configs/ships/ships.json                    |  127 [32m+[m
+ dist/configs/ships/weapons.json                  |  114 [32m+[m
+ dist/configs/systems/system_beta.json            |   24 [32m+[m
+ dist/configs/systems/system_paradise.json        |   26 [32m+[m
+ dist/configs/systems/system_profiles.json        |   27 [32m+[m
+ dist/configs/systems/system_sol.json             |   23 [32m+[m
+ dist/configs/systems/systems.json                |   28 [32m+[m
+ dist/fonts/HooskaiChamferedSquare.ttf            |  Bin [31m0[m -> [32m23700[m bytes
+ dist/fonts/Request Regular.ttf                   |  Bin [31m0[m -> [32m31648[m bytes
+ dist/index.html                                  |   21 [32m+[m
+ public/assets/ships/ordo_patrol_gunship.png      |  Bin [31m0[m -> [32m650042[m bytes
+ public/configs/general/gameplay.json             |   10 [32m+[m[31m-[m
+ public/configs/npc/combat_ai_profiles.json       |    9 [32m+[m[31m-[m
+ public/configs/npc/stardwellers.json             |    1 [32m+[m
+ public/configs/ships/ships.json                  |   32 [32m+[m[31m-[m
+ public/configs/ships/weapons.json                |    6 [32m+[m[31m-[m
+ public/configs/systems/system_beta.json          |   14 [32m+[m[31m-[m
+ public/configs/systems/system_paradise.json      |   14 [32m+[m[31m-[m
+ public/configs/systems/system_sol.json           |   10 [32m+[m[31m-[m
+ src/scene/PreloadScene.ts                        |    2 [32m+[m
+ src/scene/StarSystemScene.ts                     |   47 [32m+[m[31m-[m
+ src/sys/CombatManager.ts                         |  595 [32m+[m[31m-[m
+ src/sys/ConfigManager.ts                         |    3 [32m+[m
+ src/sys/MovementManager.ts                       |   20 [32m+[m[31m-[m
+ src/sys/NPCLazySimulationManager.ts              |    3 [32m+[m[31m-[m
+ src/sys/NPCStateManager.ts                       |  798 [32m+++[m
+ src/ui/hud/HUDManager.ts                         |   44 [32m+[m
+ 71 files changed, 8856 insertions(+), 77 deletions(-)

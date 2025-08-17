@@ -16,6 +16,7 @@ export class CombatManager {
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
+  private radarCircle?: Phaser.GameObjects.Arc; // Кольцо радиуса радара NPC
   private selectionBaseRadius = 70;
   private selectionPulsePhase = 0;
   private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
@@ -141,18 +142,18 @@ export class CombatManager {
 
   bindInput(inputMgr: any) {
     inputMgr.onLeftClick((wx: number, wy: number) => {
-      // try { console.debug('[Combat] onLeftClick', { wx, wy }); } catch {}
+
       const hit = this.findTargetAt(wx, wy);
       if (hit) {
-        // try { console.debug('[Combat] hit target', { x: hit.obj.x, y: hit.obj.y, shipId: (hit as any).shipId }); } catch {}
+
         this.selectTarget(hit.obj as any);
       } else {
         // Пустой клик: сбрасываем выбор, только если нет ни одного оружия, нацеленного на текущую выбранную цель
         if (!this.selectedTarget || !this.isTargetCombatSelected(this.selectedTarget)) {
-          // try { console.debug('[Combat] no target, clearSelection'); } catch {}
+
           this.clearSelection();
         } else {
-          // try { console.debug('[Combat] no target, keep selected info target (combat-selected)'); } catch {}
+
         }
       }
     });
@@ -164,7 +165,7 @@ export class CombatManager {
       const state = (t.obj as any).__state;
       const isDockingState = state === 'docking' || state === 'docked' || state === 'undocking';
       if (isDockingState) {
-        // try { console.debug('[Combat] findTargetAt: filtering out target in state', state, { x: (t.obj as any).x, y: (t.obj as any).y }); } catch {}
+
       }
       return !isDockingState;
     });
@@ -219,10 +220,10 @@ export class CombatManager {
           times[slotKey] = this.scene.time.now + cooldownMs;
         }
       }
-      // try { console.debug('[Combat] setPlayerWeaponTarget', slotKey, { tx: (target as any).x, ty: (target as any).y, hadOldTarget: !!oldTarget }); } catch {}
+
     } else {
       this.playerWeaponTargets.delete(slotKey);
-      // try { console.debug('[Combat] clearPlayerWeaponTarget', slotKey); } catch {}
+
     }
     
     this.refreshSelectionCircleColor();
@@ -232,7 +233,7 @@ export class CombatManager {
 
   public clearPlayerWeaponTargets() {
     if (this.playerWeaponTargets.size > 0) {
-      // try { console.debug('[Combat] clearPlayerWeaponTargets: clearing', this.playerWeaponTargets.size, 'assignments'); } catch {}
+
       // Уведомляем UI о сбросе всех назначений
       const clearedSlots = Array.from(this.playerWeaponTargets.keys());
       this.playerWeaponTargets.clear();
@@ -269,6 +270,27 @@ export class CombatManager {
       this.selectionCircle.setFillStyle(0x9e9382, 0.15);
       this.selectionCircle.setStrokeStyle(2, 0x9e9382, 1);
     }
+    
+    // Отображаем радиус радара для NPC (не для игрока)
+    if (target !== this.ship) {
+      const radarRange = this.getRadarRangeFor(target);
+      if (radarRange > 0) {
+        if (!this.radarCircle) {
+          this.radarCircle = this.scene.add.circle(target.x, target.y, radarRange, 0x6b7280, 0.08).setDepth(0.4);
+          this.radarCircle.setStrokeStyle(1, 0x6b7280, 0.6);
+        } else {
+          this.radarCircle.setPosition(target.x, target.y).setVisible(true);
+          this.radarCircle.setRadius(radarRange);
+          this.radarCircle.setFillStyle(0x6b7280, 0.08);
+          this.radarCircle.setStrokeStyle(1, 0x6b7280, 0.6);
+        }
+      } else {
+        this.radarCircle?.setVisible(false);
+      }
+    } else {
+      // Скрываем радар для игрока
+      this.radarCircle?.setVisible(false);
+    }
     // toggle HP bars visibility
     for (const t of this.targets) {
       const vis = t.obj === target;
@@ -288,7 +310,7 @@ export class CombatManager {
         const baseName = this.resolveDisplayName(t) || 'Unknown';
         const uniqueName = `${baseName} #${(t.obj as any).__uniqueId || ''}`;
         
-        // Добавляем отладочную информацию о цели
+        // Добавляем отладочную информацию о цели (только цель/статус)
         let debugInfo = '';
         if (process.env.NODE_ENV === 'development') {
           const currentTarget = t.intent?.target;
@@ -304,22 +326,11 @@ export class CombatManager {
             const targetName = targetToShow === this.ship ? 'PLAYER' : 
                               `#${(targetToShow as any).__uniqueId || 'UNK'}`;
             const intentType = t.intent?.type || 'none';
-            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
             
-            // Дополнительная проверка источников урона
-            if (stateContext && stateContext.aggression.sources.size > 0) {
-              const sourcesCount = stateContext.aggression.sources.size;
-              const sourcesInfo = Array.from(stateContext.aggression.sources.entries()).map(([source, data]) => {
-                const sourceId = source === this.ship ? 'PLAYER' : `#${(source as any).__uniqueId || 'UNK'}`;
-                return `${sourceId}:${data.damage}`;
-              }).join(',');
-              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]\nSources(${sourcesCount}): ${sourcesInfo}`;
-            } else {
-              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]`;
-            }
+            // Показываем только цель и статус, убираем агрессию и источники урона
+            debugInfo = `\n→ ${targetName} (${intentType})`;
           } else {
-            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
-            debugInfo = `\n→ NO TARGET [${aggrLevel}]`;
+            debugInfo = `\n→ NO TARGET`;
           }
         }
         
@@ -337,6 +348,7 @@ export class CombatManager {
   private clearSelection() {
     this.selectedTarget = null;
     this.selectionCircle?.setVisible(false);
+    this.radarCircle?.setVisible(false); // Скрываем радар
     // hide all HP bars
     for (const t of this.targets) { t.hpBarBg.setVisible(false); t.hpBarFill.setVisible(false); t.nameLabel?.setVisible(false); }
   }
@@ -348,6 +360,11 @@ export class CombatManager {
       const r = this.selectionBaseRadius + Math.sin(this.selectionPulsePhase) * 3;
       this.selectionCircle.setRadius(r);
       this.selectionCircle.setPosition((this.selectedTarget as any).x, (this.selectedTarget as any).y);
+      
+      // Обновляем позицию радара NPC
+      if (this.radarCircle && this.radarCircle.visible) {
+        this.radarCircle.setPosition((this.selectedTarget as any).x, (this.selectedTarget as any).y);
+      }
     }
 
     // auto logic
@@ -469,12 +486,7 @@ export class CombatManager {
       }
       const targetObj = t.intent.target;
       if (!targetObj || !targetObj.active) {
-        if (process.env.NODE_ENV === 'development' && Math.random() < 0.01) { // 1% логов
-          console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} has attack intent but invalid target`, {
-            hasTarget: !!targetObj,
-            targetActive: targetObj?.active
-          });
-        }
+  
         continue;
       }
       
@@ -483,13 +495,7 @@ export class CombatManager {
       if (slots && slots.length) this.weaponSlots = slots;
       
       // Отладочная информация о стрельбе
-      if (process.env.NODE_ENV === 'development' && Math.random() < 0.02) { // 2% логов
-        const targetName = targetObj === this.ship ? 'PLAYER' : `#${(targetObj as any).__uniqueId}`;
-        console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} firing at ${targetName}`, {
-          weapons: slots || ['default'],
-          distance: Math.hypot(targetObj.x - t.obj.x, targetObj.y - t.obj.y).toFixed(0)
-        });
-      }
+
       
       this.autoFire(t.obj as any, targetObj);
       this.weaponSlots = saved;
@@ -599,7 +605,7 @@ export class CombatManager {
           const dy0 = obj.y - (source as any).y;
           const d0 = Math.hypot(dx0, dy0) || 1;
           (t as any).__fleeDir = { x: dx0 / d0, y: dy0 / d0 };
-          if (t.faction === 'pirate') { try { console.log('[AI] Pirate flee lock dir', { id: (obj as any).__uniqueId }); } catch {} }
+
         }
         const fleeDistance = 1000;
                           target = { x: obj.x + (t as any).__fleeDir.x * fleeDistance, y: obj.y + (t as any).__fleeDir.y * fleeDistance };
@@ -697,13 +703,7 @@ export class CombatManager {
                               current === this.ship ? 'PLAYER' :
                               `#${(current as any).__uniqueId || 'UNK'}`;
               
-              console.log(`[TargetSelection] ${t.shipId} #${(obj as any).__uniqueId} stable system result`, {
-                candidates: candidates.length,
-                selectedTarget: bestId,
-                currentTarget: currentId,
-                stabilizationActive: !!stateContext.targetStabilization.currentTarget,
-                hasValidTarget: !!best
-              });
+
             }
           } else if (process.env.NODE_ENV === 'development') {
             console.warn(`[TargetSelection] ${t.shipId} #${(obj as any).__uniqueId} NO CONTEXT - NPC not registered!`, {
@@ -802,14 +802,14 @@ export class CombatManager {
             
             if (process.env.NODE_ENV === 'development') {
               const targetName = prev === this.ship ? 'PLAYER' : `#${(prev as any).__uniqueId}`;
-              console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} flee ended -> ATTACK ${targetName}`);
+
             }
           } else {
             const hadIntent = !!t.intent;
             t.intent = null;
             
             if (process.env.NODE_ENV === 'development' && hadIntent) {
-              console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} flee ended -> NO TARGET`);
+
             }
           }
           // Сбросить патрульную цель, чтобы нейтральная логика задала новую и корабль не «зависал»
@@ -928,7 +928,7 @@ export class CombatManager {
         const st = (target as any).__state;
         const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof (target as any).alpha === 'number' && (target as any).alpha <= 0.05) || (target as any).visible === false;
         if (!invulnerable) {
-          // try { console.debug('[Combat] hit target, applyDamage', w.damage); } catch {}
+
           this.applyDamage(target, w.damage, shooter);
           this.spawnHitEffect((proj as any).x, (proj as any).y, w);
         }
