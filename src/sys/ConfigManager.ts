@@ -30,6 +30,15 @@ export type GameplayConfig = {
     TARGET_UPDATE_INTERVAL_MS?: number; // 100 (частота обновления динамических целей)
     ACCELERATION_PENALTY_AT_MAX?: number; // 0..1 (например 0.9) — доля снижения ускорения при 100% скорости
   };
+  simulation?: {
+    enabled?: boolean;
+    initialSpawnRadiusPct?: number; // 0.25 по умолчанию
+    lazySpawnRadarBufferPct?: number; // 0.05 по умолчанию (5% размера системы)
+    replenish?: {
+      checkIntervalMs?: number; // 240000 (4 минуты)
+      spawnDelayMsRange?: { min: number; max: number }; // { min: 5000, max: 45000 }
+    };
+  };
   fogOfWar?: {
     enabled: boolean;
     dimming: {
@@ -60,10 +69,10 @@ export type GameplayConfig = {
 export type SystemConfig = {
   size: { width: number; height: number };
   star: { x: number; y: number };
-  planets: Array<{ id: string; name: string; orbit: { radius: number; angularSpeedDegPerSec: number }; color?: string }>;
+  planets: Array<{ id: string; name: string; orbit: { radius: number; angularSpeedDegPerSec: number }; color?: string; dockRange?: number; spawn?: { quotas?: Record<string, number> } }>;
   poi: Array<{ id: string; name: string; x: number; y: number; discovered: boolean }>;
   dynamicObjects: Array<{ id: string; type: string; x: number; y: number; vx: number; vy: number }>;
-  stations?: Array<{ type: 'pirate_base' | string; x: number; y: number; wave?: { initialDelayMs?: number; intervalMs?: number; count?: number; lifespanMs?: number } }>;
+  stations?: Array<{ id?: string; type: 'pirate_base' | string; x: number; y: number; wave?: { initialDelayMs?: number; intervalMs?: number; count?: number; lifespanMs?: number }; spawn?: { quotas?: Record<string, number> } }>;
 };
 
 export type SystemsIndexConfig = {

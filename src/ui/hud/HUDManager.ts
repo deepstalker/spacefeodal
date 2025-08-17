@@ -94,9 +94,7 @@ export class HUDManager {
       const key = kb?.addKey(code);
       key?.on('down', () => this.toggleSelectSlotByIndex(idx));
     });
-    // Отладочная кнопка B — создать "болванку" (barrel) рядом с игроком
-    const keyB = kb?.addKey(Phaser.Input.Keyboard.KeyCodes.B);
-    keyB?.on('down', () => this.spawnBarrelNearPlayer());
+    // Отладочный спавн отключён — спавн NPC централизован через симулятор
     const backtick = kb?.addKey((Phaser.Input.Keyboard.KeyCodes as any).BACKTICK ?? 192);
     backtick?.on('down', () => {
       const allSelected = this.selectedSlots.size === this.slotRecords.length && this.slotRecords.length > 0;
@@ -221,26 +219,7 @@ export class HUDManager {
     (this.scene as any).__hudSpeedValue = speedValue;
   }
 
-  private spawnBarrelNearPlayer() {
-    try {
-      const starScene: any = this.scene.scene.get('StarSystemScene');
-      if (!starScene || !starScene.ship) return;
-      const px = starScene.ship.x; const py = starScene.ship.y;
-      const a = Math.random() * Math.PI * 2; const r = 200;
-      const x = px + Math.cos(a) * r; const y = py + Math.sin(a) * r;
-      const cm: any = starScene.combat;
-      const npc = cm?.spawnNPCPrefab('barrel', x, y);
-      if (npc) {
-        // Статичный объект без поведения: убираем intent и присваиваем имя
-        const entry = (cm as any).targets?.find((t: any) => t.obj === npc);
-        if (entry) {
-          entry.intent = null;
-          entry.ai = { type: 'ship', behavior: 'static', preferRange: 0, retreatHpPct: 0 };
-          entry.nameLabel?.setText?.('Баррель');
-        }
-      }
-    } catch {}
-  }
+  // Отладочный спавн отключён
 
   private createWeaponBar() {
     if (!this.configRef) return;

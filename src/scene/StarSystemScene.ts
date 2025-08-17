@@ -7,6 +7,7 @@ import { PathfindingManager } from '@/sys/PathfindingManager';
 import { MovementManager } from '@/sys/MovementManager';
 import { CombatManager } from '@/sys/CombatManager';
 import { EnhancedFogOfWar } from '@/sys/fog-of-war/EnhancedFogOfWar';
+// Тип не импортируем, чтобы не тянуть модуль на этап линтинга; используем any
 import { StaticObjectType, DynamicObjectType } from '@/sys/fog-of-war/types';
 
 export default class StarSystemScene extends Phaser.Scene {
@@ -32,13 +33,15 @@ export default class StarSystemScene extends Phaser.Scene {
   private playerHpMax!: number;
   private routeGraphics!: Phaser.GameObjects.Graphics;
   private clickMarker?: Phaser.GameObjects.Arc;
-  private planets: { obj: Phaser.GameObjects.Image; data: any }[] = [];
+  private planets: { obj: Phaser.GameObjects.Image; data: any; label?: Phaser.GameObjects.Text }[] = [];
   private encounterMarkers: Array<{ id: string; name: string; x: number; y: number; typeId?: string; activationRange?: number; marker: Phaser.GameObjects.GameObject; label: Phaser.GameObjects.Text }>=[];
   private starfield?: Phaser.GameObjects.Graphics;
   private bgTile?: Phaser.GameObjects.TileSprite;
   private readonly bgParallax: number = 0.2;
   private aimLine?: Phaser.GameObjects.Graphics;
   private readonly orbitalSpeedScale: number = 0.1; // reduce planet speeds by ~90%
+  // Менеджер симуляции NPC (ленивый спавн по квотам из конфигов)
+  private npcSim?: any;
 
 
   constructor() {
@@ -171,78 +174,14 @@ export default class StarSystemScene extends Phaser.Scene {
     }
     // Fog of War disabled for now
 
-    // Spawn NPCs from system config
-    const dwellers = (system as any).npcs as Array<any> | undefined;
-    if (Array.isArray(dwellers)) {
-      for (const d of dwellers) {
-        if (d.x != null && d.y != null) {
-          // explicit coordinates
-          const npc = (this.combat as any).spawnNPCPrefab(d.prefab, d.x, d.y) as any;
-          if (npc) {
-            const pref = this.config.stardwellers?.prefabs?.[d.prefab];
-            (npc as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
-            (npc as any).__targetPlanet = this.pickNearestPlanet(npc.x, npc.y) ?? this.pickRandomPlanet();
-            (npc as any).__state = 'travel';
-            (npc as any).setAlpha?.(1);
-            this.npcs.push(npc);
-            // Register NPC as dynamic object in fog of war
-            this.fogOfWar.registerDynamicObject(npc, DynamicObjectType.NPC);
-            const sx = (npc as any).scaleX ?? 1;
-            const sy = (npc as any).scaleY ?? 1;
-            this.tweens.add({ targets: npc, scaleX: { from: sx * 0.6, to: sx }, scaleY: { from: sy * 0.6, to: sy }, duration: 250, ease: 'Sine.easeOut' });
-          }
-        } else if (d.planetId) {
-          const planet = system.planets.find(p => p.id === d.planetId);
-          if (!planet) continue;
-          const px = (planet as any)._x ?? (system.star.x + planet.orbit.radius);
-          const py = (planet as any)._y ?? system.star.y;
-          const dockRange = (planet as any).dockRange ?? this.config.gameplay.dock_range ?? 220;
-          const offset = dockRange + 300;
-          const ang = Math.random() * Math.PI * 2;
-          const npc = (this.combat as any).spawnNPCPrefab(d.prefab, px + Math.cos(ang)*offset, py + Math.sin(ang)*offset) as any;
-          if (npc) {
-            const pref = this.config.stardwellers?.prefabs?.[d.prefab];
-            (npc as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
-            (npc as any).__targetPlanet = planet;
-            (npc as any).__state = 'travel';
-            (npc as any).setAlpha?.(1);
-            this.npcs.push(npc);
-            // Register NPC as dynamic object in fog of war
-            this.fogOfWar.registerDynamicObject(npc, DynamicObjectType.NPC);
-            const sx2 = (npc as any).scaleX ?? 1;
-            const sy2 = (npc as any).scaleY ?? 1;
-            this.tweens.add({ targets: npc, scaleX: { from: sx2 * 0.6, to: sx2 }, scaleY: { from: sy2 * 0.6, to: sy2 }, duration: 250, ease: 'Sine.easeOut' });
-          }
-        }
-      }
-    }
+    // Инициализация симуляции NPC (ленивый спавн по квотам)
+    try {
+      const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
+      this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
+      this.npcSim.init();
+    } catch {}
 
-    // Spawn traders near planets — count equals number of planets
-    for (let i = 0; i < system.planets.length; i++) {
-      const planet = system.planets[i];
-      // use live sprite coords (already set by initial placement)
-      const live = this.getPlanetWorldPosById(planet.id);
-      const px = live?.x ?? (planet as any)._x ?? (system.star.x + planet.orbit.radius);
-      const py = live?.y ?? (planet as any)._y ?? system.star.y;
-      const ang = Math.random() * Math.PI * 2;
-      const dOff = 300 + Math.random() * 200;
-      const tX = px + Math.cos(ang) * dOff;
-      const tY = py + Math.sin(ang) * dOff;
-      const near = (this.combat as any).spawnNPCPrefab('trader', tX, tY) as any;
-      if (near) {
-        const pref = this.config.stardwellers?.prefabs?.['trader'];
-        (near as any).__behavior = this.config.aiProfiles.profiles?.[pref?.aiProfile]?.behavior ?? 'planet_trader';
-        (near as any).__targetPlanet = planet;
-        (near as any).__state = 'travel';
-        (near as any).setAlpha?.(1);
-        this.npcs.push(near);
-        // Register NPC as dynamic object in fog of war
-        this.fogOfWar.registerDynamicObject(near, DynamicObjectType.NPC);
-        const nsx = (near as any).scaleX ?? 1;
-        const nsy = (near as any).scaleY ?? 1;
-        this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
-      }
-    }
+    // NPC спавн теперь полностью управляется NPCLazySimulationManager по квотам
 
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
@@ -433,16 +372,7 @@ export default class StarSystemScene extends Phaser.Scene {
         if (e.typeId === 'lost_treasure') {
           this.add.rectangle(e.x, e.y, 48, 48, 0xffe066).setDepth(0.4);
         } else if (e.typeId === 'pirates') {
-          // spawn 3 pirates from stardwellers with patrol behavior
-          const offs = [[0,0],[40,20],[-40,-20]];
-          offs.forEach((o, idx)=> {
-            const npc = (this.combat as any).spawnNPCPrefab('pirate', e.x + o[0], e.y + o[1]) as any;
-            if (!npc) return;
-            (npc as any).__behavior = 'patrol';
-            (npc as any).__targetPatrol = null;
-            (this.combat as any).setAIProfileFor?.(npc, 'patrol');
-            this.npcs.push(npc);
-          });
+          // NPC спавн управляется симулятором; здесь только визуальные/POI эффекты
         }
         // remove from list
         this.encounterMarkers = this.encounterMarkers.filter(m => m !== e);
@@ -609,15 +539,7 @@ export default class StarSystemScene extends Phaser.Scene {
     }
   }
 
-  private spawnPlanetTrader(x: number, y: number) {
-    const npc = (this.combat as any).spawnNPCPrefab('trader', x, y) as any;
-    if (!npc) return;
-    (npc as any).__behavior = 'planet_trader';
-    (npc as any).__targetPlanet = this.pickNearestPlanet(x, y) ?? this.pickRandomPlanet();
-    (npc as any).__orbitUntil = 0;
-    (npc as any).__state = 'travel';
-    this.npcs.push(npc);
-  }
+  // Централизованное создание NPC — см. NPCLazySimulationManager
 
   private pickRandomPlanet() {
     const system = this.config.system;

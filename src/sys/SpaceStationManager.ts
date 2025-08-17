@@ -70,29 +70,7 @@ export class SpaceStationManager {
       }
     });
 
-    // waves
-    const count = s.wave?.count ?? 5;
-    const lifespanMs = s.wave?.lifespanMs ?? 120000;
-    const initialDelayMs = s.wave?.initialDelayMs ?? 6000;
-    const intervalMs = s.wave?.intervalMs ?? 60000;
-    const spawnWave = () => {
-      if (!(rect as any).__alive) return;
-      const offs = [[-220,-240],[-260,180],[240,-200],[200,260],[0,-280]];
-      for (let i = 0; i < count; i++) {
-        const ox = baseX + offs[i % offs.length][0];
-        const oy = baseY + offs[i % offs.length][1];
-        const npc = ((this.scene as any).combat as any).spawnNPCPrefab('pirate', ox, oy) as any;
-        if (!npc) continue;
-        (npc as any).__behavior = 'patrol';
-        (npc as any).__targetPatrol = null;
-        (npc as any).__despawnAt = (this.scene as any).time.now + lifespanMs;
-        (npc as any).__homeBase = rect;
-        (npc as any).__returningHome = false;
-        ((this.scene as any).npcs as any[]).push(npc);
-      }
-    };
-    this.scene.time.delayedCall(initialDelayMs, spawnWave);
-    this.scene.time.addEvent({ delay: intervalMs, loop: true, callback: spawnWave });
+    // waves отключены: спавн NPC централизован симулятором по квотам
 
     // handle base destruction: when hp <= 0, remove, stop waves
     const checkAlive = (_t:number, _dt:number) => {

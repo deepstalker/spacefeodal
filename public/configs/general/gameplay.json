@@ -34,7 +34,16 @@
       "maxObjectsPerFrame": 20
     }
   },
-  "dock_range": 220
+  "dock_range": 220,
+  "simulation": {
+    "enabled": true,
+    "initialSpawnRadiusPct": 0.25,
+    "lazySpawnRadarBufferPct": 0.05,
+    "replenish": {
+      "checkIntervalMs": 240000,
+      "spawnDelayMsRange": { "min": 5000, "max": 45000 }
+    }
+  }
 }
 
 

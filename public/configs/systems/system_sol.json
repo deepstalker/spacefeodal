@@ -2,20 +2,19 @@
   "size": { "width": 25000, "height": 25000 },
   "star": { "x": 12500, "y": 12500 },
   "planets": [
-    { "id": "pl_1", "name": "Red 1",  "orbit": { "radius": 3200,  "angularSpeedDegPerSec": 6.5 },  "color": "#ff6666", "dockRange": 220 },
-    { "id": "pl_2", "name": "Blue 2", "orbit": { "radius": 5200,  "angularSpeedDegPerSec": 4.8 },  "color": "#66aaff", "dockRange": 220 },
-    { "id": "pl_3", "name": "Red 3",  "orbit": { "radius": 7100,  "angularSpeedDegPerSec": 3.9 },  "color": "#ff6666", "dockRange": 220 },
-    { "id": "pl_4", "name": "Blue 4", "orbit": { "radius": 9100,  "angularSpeedDegPerSec": 3.0 },  "color": "#66aaff", "dockRange": 220 }
+    { "id": "pl_1", "name": "Red 1",  "orbit": { "radius": 3200,  "angularSpeedDegPerSec": 6.5 },  "color": "#ff6666", "dockRange": 220, "spawn": { "quotas": { "trader": 2 } } },
+    { "id": "pl_2", "name": "Blue 2", "orbit": { "radius": 5200,  "angularSpeedDegPerSec": 4.8 },  "color": "#66aaff", "dockRange": 220, "spawn": { "quotas": { "trader": 1 } } },
+    { "id": "pl_3", "name": "Red 3",  "orbit": { "radius": 7100,  "angularSpeedDegPerSec": 3.9 },  "color": "#ff6666", "dockRange": 220, "spawn": { "quotas": { "trader": 1 } } },
+    { "id": "pl_4", "name": "Blue 4", "orbit": { "radius": 9100,  "angularSpeedDegPerSec": 3.0 },  "color": "#66aaff", "dockRange": 220, "spawn": { "quotas": { "trader": 1 } } }
   ],
   "poi": [
     { "id": "enc_0", "name": "Пираты", "x": 13000, "y": 9200, "discovered": false },
     { "id": "enc_1", "name": "Потерянное сокровище", "x": 7000, "y": 14000, "discovered": false }
   ],
-  "npcs": [
-    { "prefab": "trader", "planetId": "pl_1" },
-    { "prefab": "trader", "planetId": "pl_2" },
-    { "prefab": "trader", "planetId": "pl_3" }
+  "stations": [
+    { "id": "pir_base_sol", "type": "pirate_base", "x": 12000, "y": 12000, "spawn": { "quotas": { "pirate": 3 } } }
   ],
+  "npcs": [],
   "dynamicObjects": []
 }
 

@@ -28,7 +28,6 @@ export class CombatManager {
   private playerChargeUntil: Record<string, number> = {};
   // Подготовка к лучу (beam) до активации
   private beamPrepUntil: WeakMap<any, Record<string, number>> = new WeakMap();
-  private beamCooldowns: WeakMap<any, Record<string, number>> = new WeakMap();
   private targets: Array<{
     obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
     hp: number; hpMax: number;
@@ -90,6 +89,7 @@ export class CombatManager {
     const s = ship.sprite;
     const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
     obj = this.scene.add.image(x, y, texKey).setDepth(0.8);
+    (obj as any).__prefabKey = prefabKey;
     obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
     obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
     // Присваиваем уникальный ID
@@ -794,7 +794,7 @@ export class CombatManager {
     }
   }
 
-  private updateHpBar(t: { obj: any; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle }) {
+  private updateHpBar(t: { obj: any; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; nameLabel?: Phaser.GameObjects.Text }) {
     const pct = Phaser.Math.Clamp(t.hp / Math.max(1, t.hpMax), 0, 1);
     const barW = 128;
     t.hpBarFill.width = barW * pct;

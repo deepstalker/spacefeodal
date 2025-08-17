@@ -1,0 +1,220 @@
+import type { ConfigManager, SystemConfig } from './ConfigManager';
+import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
+import { DynamicObjectType } from './fog-of-war/types';
+
+type HomeRef = { type: 'planet' | 'station' | 'unknown'; id?: string; x: number; y: number };
+
+type PendingNPC = {
+  id: string;
+  prefab: string;
+  home: HomeRef;
+  spawnAt: { x: number; y: number };
+  created: boolean;
+};
+
+export class NPCLazySimulationManager {
+  private scene: Phaser.Scene;
+  private config: ConfigManager;
+  private fog: EnhancedFogOfWar;
+  private pending: PendingNPC[] = [];
+  private replenishTimer?: Phaser.Time.TimerEvent;
+
+  constructor(scene: Phaser.Scene, config: ConfigManager, fog: EnhancedFogOfWar) {
+    this.scene = scene;
+    this.config = config;
+    this.fog = fog;
+  }
+
+  init() {
+    const sys = this.config.system as SystemConfig;
+    const gp = this.config.gameplay;
+    const sim = gp?.simulation ?? {} as any;
+    const systemSize = Math.max(sys.size.width, sys.size.height);
+    const initialRadiusPct = sim.initialSpawnRadiusPct ?? 0.25;
+    const radius = systemSize * initialRadiusPct;
+
+    // Планеты с квотами
+    for (const p of sys.planets as any[]) {
+      const quotas: Record<string, number> | undefined = p.spawn?.quotas;
+      if (!quotas) continue;
+      const px = (p as any)._x ?? (sys.star.x + p.orbit.radius);
+      const py = (p as any)._y ?? sys.star.y;
+      this.enqueueFromQuotas(quotas, { type: 'planet', id: p.id, x: px, y: py }, radius, `planet:${p.id}`);
+    }
+
+    // Станции с квотами
+    for (const s of (sys.stations ?? []) as any[]) {
+      const quotas: Record<string, number> | undefined = s.spawn?.quotas;
+      if (!quotas) continue;
+      const sid = s.id ?? `${s.type}_${Math.floor(s.x)}_${Math.floor(s.y)}`;
+      this.enqueueFromQuotas(quotas, { type: 'station', id: sid, x: s.x, y: s.y }, radius, `station:${sid}`);
+    }
+
+    // Подписка на апдейт: проверяем ленивый спавн, когда игрок подлетает
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
+
+    // Плановое пополнение каждые X минут
+    const checkInterval = sim.replenish?.checkIntervalMs ?? 240000; // 4 мин
+    if (checkInterval > 0) {
+      this.replenishTimer = this.scene.time.addEvent({ delay: checkInterval, loop: true, callback: this.scheduleReplenish, callbackScope: this });
+    }
+  }
+
+  destroy() {
+    this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
+    if (this.replenishTimer) this.replenishTimer.remove(false);
+    this.pending.length = 0;
+  }
+
+  private enqueueFromQuotas(quotas: Record<string, number>, home: HomeRef, radius: number, keyPrefix: string) {
+    const sys = this.config.system;
+    const systemSize = Math.max(sys.size.width, sys.size.height);
+    for (const [prefab, count] of Object.entries(quotas)) {
+      for (let i = 0; i < (count ?? 0); i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = Math.random() * radius;
+        const x = home.x + Math.cos(ang) * r;
+        const y = home.y + Math.sin(ang) * r;
+        const id = `${keyPrefix}:${prefab}:${i}`;
+        const spawnAt = { x: this.clamp(x, 0, sys.size.width), y: this.clamp(y, 0, sys.size.height) };
+        this.pending.push({ id, prefab, home, spawnAt, created: false });
+        try { console.log('[NPCSim] pending created', { id, prefab, home, spawnAt }); } catch {}
+      }
+    }
+  }
+
+  private clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
+
+  private update() {
+    if (!this.pending.length) return;
+    const player = this.fog.getPlayerPosition();
+    const sys = this.config.system;
+    const gp = this.config.gameplay;
+    const sim = gp?.simulation ?? {} as any;
+    const bufPct = sim.lazySpawnRadarBufferPct ?? 0.05;
+    const buffer = Math.max(sys.size.width, sys.size.height) * bufPct;
+    const radar = this.fog.getRadarRange();
+    const threshold = radar + buffer;
+
+    // Ленивая инициализация: создаём только те, чьи стартовые координаты входят в радиус
+    for (const p of this.pending) {
+      if (p.created) continue;
+      const d = Math.hypot(p.spawnAt.x - player.x, p.spawnAt.y - player.y);
+      if (d <= threshold) {
+        try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
+        this.createNPC(p);
+      }
+    }
+  }
+
+  private createNPC(p: PendingNPC) {
+    const cm: any = (this.scene as any).combat;
+    if (!cm?.spawnNPCPrefab) return;
+    const npc = cm.spawnNPCPrefab(p.prefab, p.spawnAt.x, p.spawnAt.y) as any;
+    if (!npc) return;
+    (npc as any).__homeRef = p.home; // сохраняем источник (порт приписки)
+    (this.scene as any).npcs?.push?.(npc);
+    this.fog.registerDynamicObject(npc, DynamicObjectType.NPC);
+    // Установим поведение на объект согласно aiProfile префаба
+    const pref = this.config.stardwellers?.prefabs?.[p.prefab];
+    const aiKey = pref?.aiProfile;
+    const aiBehavior = aiKey ? this.config.aiProfiles?.profiles?.[aiKey]?.behavior : undefined;
+    const behavior = aiBehavior ?? (p.prefab === 'pirate' ? 'patrol' : 'planet_trader');
+    (npc as any).__behavior = behavior;
+    if (behavior === 'planet_trader') {
+      const sys = this.config.system;
+      // целевая планета — порт приписки если указан, иначе ближайшая к точке спавна
+      let targetPlanet: any = null;
+      if (p.home.type === 'planet' && p.home.id) {
+        targetPlanet = (sys.planets as any[]).find(pl => pl.id === p.home.id) ?? null;
+      }
+      if (!targetPlanet) {
+        let best: any = null; let bestD = Number.POSITIVE_INFINITY;
+        for (const pl of (sys.planets as any[])) {
+          const px = (pl as any)._x ?? (sys.star.x + pl.orbit.radius);
+          const py = (pl as any)._y ?? sys.star.y;
+          const d = Math.hypot(px - p.spawnAt.x, py - p.spawnAt.y);
+          if (d < bestD) { bestD = d; best = pl; }
+        }
+        targetPlanet = best;
+      }
+      (npc as any).__targetPlanet = targetPlanet;
+      (npc as any).__state = 'travel';
+    } else if (behavior === 'patrol') {
+      (npc as any).__targetPatrol = null;
+    }
+    // Страховка: проставим профиль ИИ в боевой системе (поведение/retreatHpPct)
+    try { if (aiKey) cm.setAIProfileFor?.(npc, aiKey); } catch {}
+    p.created = true;
+    try { console.log('[NPCSim] npc created', { id: p.id, prefab: p.prefab, at: p.spawnAt, home: p.home }); } catch {}
+  }
+
+  private scheduleReplenish() {
+    // Проверяем текущие активные NPC и досоздаём недостающих по квотам из конфигов
+    const gp = this.config.gameplay;
+    const sim = gp?.simulation ?? {} as any;
+    const delayMin = sim.replenish?.spawnDelayMsRange?.min ?? 5000;
+    const delayMax = sim.replenish?.spawnDelayMsRange?.max ?? 45000;
+
+    // Карта активных по (prefab, home.id)
+    const active: Record<string, number> = {};
+    const npcs: any[] = ((this.scene as any).npcs ?? []).filter((o: any) => o?.active);
+    for (const o of npcs) {
+      const hr = (o as any).__homeRef as HomeRef | undefined;
+      const prefab = (o as any).__prefabKey ?? 'unknown';
+      const homeId = hr?.id ?? `${hr?.type ?? 'unknown'}_${Math.floor(hr?.x ?? 0)}_${Math.floor(hr?.y ?? 0)}`;
+      const key = `${prefab}__${homeId}`;
+      active[key] = (active[key] ?? 0) + 1;
+    }
+
+    // Целевые квоты из конфигов систем (планеты/станции)
+    const entries = this.listQuotaEntries();
+
+    let totalScheduled = 0;
+    for (const e of entries) {
+      const key = `${e.prefab}__${e.home.id}`;
+      const have = active[key] ?? 0;
+      const deficit = Math.max(0, e.count - have);
+      for (let i = 0; i < deficit; i++) {
+        // создаём разово отложенную заявку
+        const ang = Math.random() * Math.PI * 2;
+        const r = Math.random() * (Math.max(this.config.system.size.width, this.config.system.size.height) * (this.config.gameplay?.simulation?.initialSpawnRadiusPct ?? 0.25));
+        const x = e.home.x + Math.cos(ang) * r;
+        const y = e.home.y + Math.sin(ang) * r;
+        const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:repl:${Date.now()}:${i}`, prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
+        const delay = delayMin + Math.random() * (delayMax - delayMin);
+        totalScheduled++;
+        try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
+        this.scene.time.delayedCall(delay, () => this.createNPC(p));
+      }
+    }
+    try { if (totalScheduled > 0) console.log('[NPCSim] replenish complete', { totalScheduled }); } catch {}
+  }
+
+  private listQuotaEntries(): Array<{ prefab: string; count: number; home: HomeRef }> {
+    const sys = this.config.system as SystemConfig;
+    const result: Array<{ prefab: string; count: number; home: HomeRef }> = [];
+    for (const p of sys.planets as any[]) {
+      const quotas: Record<string, number> | undefined = p.spawn?.quotas;
+      if (!quotas) continue;
+      const px = (p as any)._x ?? (sys.star.x + p.orbit.radius);
+      const py = (p as any)._y ?? sys.star.y;
+      for (const [prefab, count] of Object.entries(quotas)) {
+        result.push({ prefab, count: count ?? 0, home: { type: 'planet', id: p.id, x: px, y: py } });
+      }
+    }
+    for (const s of (sys.stations ?? []) as any[]) {
+      const quotas: Record<string, number> | undefined = s.spawn?.quotas;
+      if (!quotas) continue;
+      const sid = s.id ?? `${s.type}_${Math.floor(s.x)}_${Math.floor(s.y)}`;
+      for (const [prefab, count] of Object.entries(quotas)) {
+        result.push({ prefab, count: count ?? 0, home: { type: 'station', id: sid, x: s.x, y: s.y } });
+      }
+    }
+    return result;
+  }
+}
+
+export default NPCLazySimulationManager;
+
+
