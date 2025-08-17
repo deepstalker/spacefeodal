@@ -1,5 +1,7 @@
 import type { ConfigManager } from './ConfigManager';
 import { NPCMovementManager } from './NPCMovementManager';
+import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
+import { DynamicObjectType } from './fog-of-war/types';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -8,6 +10,7 @@ export class CombatManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
   private npcMovement: NPCMovementManager;
+  private fogOfWar?: EnhancedFogOfWar;
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
@@ -59,6 +62,10 @@ export class CombatManager {
     this.ship = ship;
   }
 
+  setFogOfWar(fogOfWar: EnhancedFogOfWar) {
+    this.fogOfWar = fogOfWar;
+  }
+
   getTargetObjects(): Phaser.GameObjects.GameObject[] {
     return this.targets.map(t => t.obj as Phaser.GameObjects.GameObject);
   }
@@ -100,6 +107,11 @@ export class CombatManager {
     
     // Регистрируем NPC в системе движения
     this.npcMovement.registerNPC(obj, prefab?.combatAI);
+    
+    // Регистрируем NPC в fog of war как динамический объект
+    if (this.fogOfWar) {
+      this.fogOfWar.registerDynamicObject(obj, DynamicObjectType.NPC);
+    }
     
     return obj as Target;
   }
@@ -448,6 +460,11 @@ export class CombatManager {
     (proj as any).__combat = { damage: w.damage, target };
     // under shooter
     (proj as any).setDepth?.(((shooter as any).depth ?? 1) - 0.1);
+    
+    // Регистрируем снаряд в fog of war как динамический объект
+    if (this.fogOfWar) {
+      this.fogOfWar.registerDynamicObject(proj, DynamicObjectType.PROJECTILE);
+    }
 
     const speed = w.projectileSpeed;
     const vx = Math.cos(angle) * speed;
@@ -486,6 +503,10 @@ export class CombatManager {
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
           }
           this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+          // Дерегистрируем снаряд из fog of war
+          if (this.fogOfWar) {
+            this.fogOfWar.unregisterObject(proj);
+          }
           (proj as any).destroy?.();
           return;
         }
@@ -497,12 +518,20 @@ export class CombatManager {
         this.applyDamage(target, w.damage, shooter);
         this.spawnHitEffect((proj as any).x, (proj as any).y, w);
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+        // Дерегистрируем снаряд из fog of war
+        if (this.fogOfWar) {
+          this.fogOfWar.unregisterObject(proj);
+        }
         (proj as any).destroy?.();
       }
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
     this.scene.time.delayedCall(lifetimeMs, () => {
       this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+      // Дерегистрируем снаряд из fog of war при истечении времени жизни
+      if (this.fogOfWar) {
+        this.fogOfWar.unregisterObject(proj);
+      }
       (proj as any).destroy?.();
     });
     // Сигнализируем UI о выстреле игрока для мигания иконки
@@ -606,6 +635,10 @@ export class CombatManager {
         }
         // убираем из системы движения NPC
         this.npcMovement.unregisterNPC(target);
+        // дерегистрируем из fog of war
+        if (this.fogOfWar) {
+          this.fogOfWar.unregisterObject(target);
+        }
         // вычистить из массива целей
         this.targets = this.targets.filter(rec => rec.obj !== target);
         return;

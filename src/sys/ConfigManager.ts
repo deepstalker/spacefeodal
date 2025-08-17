@@ -29,11 +29,29 @@ export type GameplayConfig = {
     TURN_DECELERATION_FACTOR: number;// 0.2
     TARGET_UPDATE_INTERVAL_MS?: number; // 100 (частота обновления динамических целей)
   };
-  fov: {
-    radiusUnits: number;
-    cellSize: number;
-    fogColor: string;
-    fogAlpha: number;
+  fogOfWar?: {
+    enabled: boolean;
+    dimming: {
+      enabled: boolean;
+      alpha: number;
+      color: string;
+    };
+    fadeZone: {
+      innerRadius: number;
+      outerRadius: number;
+    };
+    staticObjects: {
+      alwaysVisible: boolean;
+      types: string[];
+    };
+    dynamicObjects: {
+      hideOutsideRadar: boolean;
+      types: string[];
+    };
+    performance: {
+      updateInterval: number;
+      maxObjectsPerFrame: number;
+    };
   };
   dock_range?: number;
 };

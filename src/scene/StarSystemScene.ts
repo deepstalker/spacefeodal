@@ -6,7 +6,8 @@ import { InputManager } from '@/sys/InputManager';
 import { PathfindingManager } from '@/sys/PathfindingManager';
 import { MovementManager } from '@/sys/MovementManager';
 import { CombatManager } from '@/sys/CombatManager';
-import { FogOfWar } from '@/sys/FogOfWar';
+import { EnhancedFogOfWar } from '@/sys/fog-of-war/EnhancedFogOfWar';
+import { StaticObjectType, DynamicObjectType } from '@/sys/fog-of-war/types';
 
 export default class StarSystemScene extends Phaser.Scene {
   private config!: ConfigManager;
@@ -16,6 +17,7 @@ export default class StarSystemScene extends Phaser.Scene {
   private pathfinding!: PathfindingManager;
   private movement!: MovementManager;
   private combat!: CombatManager;
+  private fogOfWar!: EnhancedFogOfWar;
   private npcs: any[] = [];
   
   // Состояние для удержания правой кнопки мыши
@@ -37,7 +39,7 @@ export default class StarSystemScene extends Phaser.Scene {
   private readonly bgParallax: number = 0.2;
   private aimLine?: Phaser.GameObjects.Graphics;
   private readonly orbitalSpeedScale: number = 0.1; // reduce planet speeds by ~90%
-  // private fog!: FogOfWar; // FOW disabled for now
+
 
   constructor() {
     super('StarSystemScene');
@@ -74,6 +76,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.pathfinding = new PathfindingManager(this, this.config);
     this.movement = new MovementManager(this, this.config);
     this.combat = new CombatManager(this, this.config);
+    this.fogOfWar = new EnhancedFogOfWar(this, this.config);
 
     const system = this.config.system;
     const maxSize = 25000;
@@ -109,7 +112,13 @@ export default class StarSystemScene extends Phaser.Scene {
     });
 
     // Star placeholder
-    this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
+    const star = this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
+    
+    // Initialize fog of war system
+    this.fogOfWar.init();
+    
+    // Register star as static object
+    this.fogOfWar.registerStaticObject(star, StaticObjectType.STAR);
     // Stations manager
     const { SpaceStationManager } = await import('@/sys/SpaceStationManager');
     const stationMgr = new SpaceStationManager(this as any, this.config);
@@ -124,6 +133,10 @@ export default class StarSystemScene extends Phaser.Scene {
       const type = typesArr?.find((k: any)=>k.name === e.name);
       const activationRange = (type && typeof type.activation_range === 'number') ? type.activation_range : 400;
       this.encounterMarkers.push({ id: e.id, name: e.name, x: ex, y: ey, typeId: type?.id, activationRange, marker: q, label: t });
+      
+      // Register POI as static object (initially hidden)
+      this.fogOfWar.registerStaticObject(q, e.discovered ? StaticObjectType.POI_VISIBLE : StaticObjectType.POI_HIDDEN);
+      this.fogOfWar.registerStaticObject(t, e.discovered ? StaticObjectType.POI_VISIBLE : StaticObjectType.POI_HIDDEN);
     }
 
     // Planets as sprites (will rotate)
@@ -140,6 +153,9 @@ export default class StarSystemScene extends Phaser.Scene {
       const px0 = system.star.x + Math.cos(rad) * p.orbit.radius;
       const py0 = system.star.y + Math.sin(rad) * p.orbit.radius;
       c.x = px0; c.y = py0;
+      
+      // Register planet as static object
+      this.fogOfWar.registerStaticObject(c, StaticObjectType.PLANET);
       
       const label = this.add.text(px0, py0 - 180, p.id, {
         fontFamily: 'HooskaiChamferedSquare',
@@ -169,6 +185,8 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__state = 'travel';
             (npc as any).setAlpha?.(1);
             this.npcs.push(npc);
+            // Register NPC as dynamic object in fog of war
+            this.fogOfWar.registerDynamicObject(npc, DynamicObjectType.NPC);
             const sx = (npc as any).scaleX ?? 1;
             const sy = (npc as any).scaleY ?? 1;
             this.tweens.add({ targets: npc, scaleX: { from: sx * 0.6, to: sx }, scaleY: { from: sy * 0.6, to: sy }, duration: 250, ease: 'Sine.easeOut' });
@@ -189,6 +207,8 @@ export default class StarSystemScene extends Phaser.Scene {
             (npc as any).__state = 'travel';
             (npc as any).setAlpha?.(1);
             this.npcs.push(npc);
+            // Register NPC as dynamic object in fog of war
+            this.fogOfWar.registerDynamicObject(npc, DynamicObjectType.NPC);
             const sx2 = (npc as any).scaleX ?? 1;
             const sy2 = (npc as any).scaleY ?? 1;
             this.tweens.add({ targets: npc, scaleX: { from: sx2 * 0.6, to: sx2 }, scaleY: { from: sy2 * 0.6, to: sy2 }, duration: 250, ease: 'Sine.easeOut' });
@@ -216,6 +236,8 @@ export default class StarSystemScene extends Phaser.Scene {
         (near as any).__state = 'travel';
         (near as any).setAlpha?.(1);
         this.npcs.push(near);
+        // Register NPC as dynamic object in fog of war
+        this.fogOfWar.registerDynamicObject(near, DynamicObjectType.NPC);
         const nsx = (near as any).scaleX ?? 1;
         const nsy = (near as any).scaleY ?? 1;
         this.tweens.add({ targets: near, scaleX: { from: nsx * 0.6, to: nsx }, scaleY: { from: nsy * 0.6, to: nsy }, duration: 250, ease: 'Sine.easeOut' });
@@ -249,7 +271,11 @@ export default class StarSystemScene extends Phaser.Scene {
 
     this.cameraMgr.enableFollow(this.ship);
     this.combat.attachShip(this.ship);
+    this.combat.setFogOfWar(this.fogOfWar);
     this.cameraMgr.setZoom((this.config.player?.start?.zoom ?? start.zoom) ?? 1);
+    
+    // Set initial player position for fog of war
+    this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
 
     // Player HP
     this.playerHpMax = (selected as any)?.hull ?? 100;
@@ -295,6 +321,12 @@ export default class StarSystemScene extends Phaser.Scene {
     this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updatePatrolNPCs(dt));
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
+      // Update fog of war with current player position
+      if (this.ship && this.fogOfWar) {
+        this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+      }
+    });
 
     // Test pirate spawns removed — use encounters or stations to introduce pirates
   }

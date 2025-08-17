@@ -839,6 +839,12 @@ export class HUDManager {
     this.minimap.init(minimapX, minimapY, minimapW, minimapH);
     this.minimap.attachShip(ship);
     
+    // Интегрируем fog of war с миникартой
+    const starScene = this.scene.scene.get('StarSystemScene') as any;
+    if (starScene?.fogOfWar) {
+      this.minimap.setFogOfWar(starScene.fogOfWar);
+    }
+    
     // Настраиваем интерактивность
     this.minimapHit = this.scene.add.zone(minimapX, minimapY, minimapW, minimapH).setOrigin(0, 0).setScrollFactor(0).setDepth(1001);
     this.minimapHit.setInteractive({ useHandCursor: true });
@@ -888,6 +894,12 @@ export class HUDManager {
     this.createHUD(ship);
     this.createWeaponBar();
     this.createMinimap(ship);
+    
+    // Переинтегрируем fog of war с миникартой
+    const starScene = this.scene.scene.get('StarSystemScene') as any;
+    if (starScene?.fogOfWar && this.minimap) {
+      this.minimap.setFogOfWar(starScene.fogOfWar);
+    }
   }
 
   private destroyElements() {

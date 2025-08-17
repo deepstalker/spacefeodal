@@ -9,13 +9,30 @@
     "TURN_DECELERATION_FACTOR": 0.2,
     "TARGET_UPDATE_INTERVAL_MS": 100
   },
-  "fov": {
-    "radiusUnits": 1200,
-    "cellSize": 64,
-    "fogColor": "#0b1020",
-    "fogAlpha": 0.55
-  }
-  ,
+  "fogOfWar": {
+    "enabled": true,
+    "dimming": {
+      "enabled": false,
+      "alpha": 0.4,
+      "color": "#0b1020"
+    },
+    "fadeZone": {
+      "innerRadius": 0.85,
+      "outerRadius": 1.15
+    },
+    "staticObjects": {
+      "alwaysVisible": true,
+      "types": ["star", "planet", "station", "poi_visible", "celestial_body"]
+    },
+    "dynamicObjects": {
+      "hideOutsideRadar": true,
+      "types": ["npc", "projectile", "effect", "debris"]
+    },
+    "performance": {
+      "updateInterval": 50,
+      "maxObjectsPerFrame": 20
+    }
+  },
   "dock_range": 220
 }
 

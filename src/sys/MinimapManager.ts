@@ -1,4 +1,5 @@
 import type { ConfigManager } from './ConfigManager';
+import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
 
 export class MinimapManager {
   private scene: Phaser.Scene;
@@ -9,6 +10,7 @@ export class MinimapManager {
   private worldW = 1;
   private worldH = 1;
   private shipRef: Phaser.GameObjects.GameObject | null = null;
+  private fogOfWar?: EnhancedFogOfWar;
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -39,6 +41,10 @@ export class MinimapManager {
 
   attachShip(ship: Phaser.GameObjects.GameObject) {
     this.shipRef = ship;
+  }
+
+  setFogOfWar(fogOfWar: EnhancedFogOfWar) {
+    this.fogOfWar = fogOfWar;
   }
 
   private render() {
@@ -113,7 +119,7 @@ export class MinimapManager {
       }
     }
 
-    // NPCs by status (ally/neutral/confrontation)
+    // NPCs by status (ally/neutral/confrontation) - только видимые в fog of war
     const starScene: any = this.scene.scene.get('StarSystemScene');
     const combat: any = starScene?.combat;
     if (combat && Array.isArray(combat['targets'])) {
@@ -122,6 +128,10 @@ export class MinimapManager {
         if (!o || !o.active) continue;
         if (o === this.shipRef) continue;
         if (!inRect(o.x, o.y)) continue;
+        
+        // Проверяем видимость через fog of war
+        if (this.fogOfWar && !this.fogOfWar.isObjectVisible(o)) continue;
+        
         const { sx, sy } = toScreen(o.x, o.y);
         // derive relation to player
         const factionPlayer = 'player';
@@ -132,6 +142,22 @@ export class MinimapManager {
         else if (rel === 'confrontation') color = 0xa93226;
         this.g.fillStyle(color, 1);
         this.g.fillCircle(sx, sy, 2.2);
+      }
+    }
+
+    // Radar range ring (тонкое кольцо цвета #5D8A9B)
+    if (this.fogOfWar && this.shipRef) {
+      const s: any = this.shipRef;
+      if (inRect(s.x, s.y)) {
+        const radarRange = this.fogOfWar.getRadarRange();
+        const { sx, sy } = toScreen(s.x, s.y);
+        const radarRadius = radarRange * scaleX; // используем scaleX для радиуса
+        
+        // Рисуем только если кольцо хотя бы частично видно на миникарте
+        if (radarRadius > 2) {
+          this.g.lineStyle(1, 0x5D8A9B, 0.6);
+          this.g.strokeCircle(sx, sy, radarRadius);
+        }
       }
     }
 

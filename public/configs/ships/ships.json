@@ -19,7 +19,7 @@
           { "offset": { "x": 20, "y": -30 } }
         ]
       },
-      "sensors": { "radar_range": 1200 },
+      "sensors": { "radar_range": 3500 },
       "movement": {
         "MAX_SPEED": 1.6,
         "ACCELERATION": 0.01,
