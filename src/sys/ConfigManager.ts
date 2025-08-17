@@ -140,7 +140,17 @@ export type WeaponsConfig = {
     // burst-специфика
     burst?: { count?: number; delayMs?: number };
     // beam-специфика
-    beam?: { tickMs?: number; damagePerTick?: number };
+    beam?: {
+      tickMs?: number;
+      damagePerTick?: number;
+      durationMs?: number;
+      refreshMs?: number;
+      color?: string;
+      innerWidth?: number;
+      outerWidth?: number;
+      innerAlpha?: number;
+      outerAlpha?: number;
+    };
   }>;
 };
 

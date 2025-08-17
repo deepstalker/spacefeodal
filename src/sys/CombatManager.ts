@@ -22,6 +22,13 @@ export class CombatManager {
   private playerWeaponTargets: Map<string, Target> = new Map();
   // Активные лучи для beam-оружий: shooter -> (slotKey -> beamState)
   private activeBeams: WeakMap<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new WeakMap();
+  // Beam refresh-тайминги (готовность к следующей активации)
+  private beamCooldowns: WeakMap<any, Record<string, number>> = new WeakMap();
+  // Подготовка к выстрелу (player): когда закончится зарядка до выстрела
+  private playerChargeUntil: Record<string, number> = {};
+  // Подготовка к лучу (beam) до активации
+  private beamPrepUntil: WeakMap<any, Record<string, number>> = new WeakMap();
+  private beamCooldowns: WeakMap<any, Record<string, number>> = new WeakMap();
   private targets: Array<{
     obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
     hp: number; hpMax: number;
@@ -186,6 +193,20 @@ export class CombatManager {
     
     if (target) {
       this.playerWeaponTargets.set(slotKey, target);
+      // Новое назначение цели: начинаем с перезарядки
+      const w = this.config.weapons.defs[slotKey];
+      if (w) {
+        if ((w.type ?? 'single') === 'beam') {
+          const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
+          const shooterTimes = this.beamCooldowns.get(this.ship) ?? {}; this.beamCooldowns.set(this.ship, shooterTimes);
+          shooterTimes[slotKey] = this.scene.time.now + refreshMs;
+          this.stopBeamIfAny(this.ship, slotKey);
+        } else {
+          const times = this.getShooterTimes(this.ship);
+          const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
+          times[slotKey] = this.scene.time.now + cooldownMs;
+        }
+      }
       // try { console.debug('[Combat] setPlayerWeaponTarget', slotKey, { tx: (target as any).x, ty: (target as any).y, hadOldTarget: !!oldTarget }); } catch {}
     } else {
       this.playerWeaponTargets.delete(slotKey);
@@ -330,22 +351,54 @@ export class CombatManager {
         const dx = (target as any).x - this.ship.x;
         const dy = (target as any).y - this.ship.y;
         const dist = Math.hypot(dx, dy);
-        // Beam-оружие обрабатываем отдельно (без кулдауна): включаем/выключаем луч
+        // Beam: подготовка в зоне действия, активация после подготовки, затем duration/refresh
         if ((w.type ?? 'single') === 'beam') {
-          this.ensureBeam(this.ship, slotKey, w, target, dist);
+          const readyObj = this.beamCooldowns.get(this.ship) ?? {}; this.beamCooldowns.set(this.ship, readyObj);
+          const readyAt = readyObj[slotKey] ?? 0;
+          const prepObj = this.beamPrepUntil.get(this.ship) ?? {}; this.beamPrepUntil.set(this.ship, prepObj);
+          const prepUntil = prepObj[slotKey] ?? 0;
+          if (dist > w.range) {
+            // выйти из зоны — отменяем подготовку и луч
+            if (prepUntil) { delete prepObj[slotKey]; try { this.scene.events.emit('weapon-charge-cancel', slotKey); } catch {} }
+            try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
+            this.stopBeamIfAny(this.ship, slotKey);
+            continue;
+          }
+          try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+          // В зоне: если на кулдауне — ждём; если нет подготовки — начинаем
+          if (now < readyAt) { this.stopBeamIfAny(this.ship, slotKey); continue; }
+          if (!prepUntil) {
+            const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
+            prepObj[slotKey] = now + refreshMs;
+            try { this.scene.events.emit('weapon-charge-start', slotKey, refreshMs); } catch {}
+            continue;
+          }
+          if (now >= prepUntil) {
+            delete prepObj[slotKey];
+            this.ensureBeam(this.ship, slotKey, w, target, dist);
+          }
           continue;
         }
-        if (dist > w.range) { this.stopBeamIfAny(this.ship, slotKey); continue; }
+        // Небимовое оружие: подготовка/зарядка в зоне, выстрел по завершении
         const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-        const last = times[slotKey] ?? 0;
-        if (now - last >= cooldownMs) {
-          times[slotKey] = now;
+        if (dist > w.range) {
+          if (this.playerChargeUntil[slotKey]) { delete this.playerChargeUntil[slotKey]; try { this.scene.events.emit('weapon-charge-cancel', slotKey); } catch {} }
+          try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
+          continue;
+        }
+        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+        if (!this.playerChargeUntil[slotKey]) {
+          this.playerChargeUntil[slotKey] = now + cooldownMs;
+          try { this.scene.events.emit('weapon-charge-start', slotKey, cooldownMs); } catch {}
+          continue;
+        }
+        if (now >= this.playerChargeUntil[slotKey]) {
+          this.playerChargeUntil[slotKey] = now + cooldownMs;
           const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
           const w2 = { ...w, muzzleOffset };
           const type = (w2.type ?? 'single');
           if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
           else this.fireWeapon(slotKey, w2, target as any, this.ship);
-          // try { console.debug('[Combat] fire', slotKey, { range: w.range, dist }); } catch {}
         }
       }
     }
@@ -640,7 +693,10 @@ export class CombatManager {
       const w = this.config.weapons.defs[slotKey];
       if (!w) continue;
       if ((w.type ?? 'single') === 'beam') {
-        this.ensureBeam(shooter, slotKey, w, target, dist);
+        const nowMs = this.scene.time.now;
+        const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
+        const readyAt = shooterTimes[slotKey] ?? 0;
+        if (nowMs >= readyAt && dist <= w.range) this.ensureBeam(shooter, slotKey, w, target, dist); else this.stopBeamIfAny(shooter, slotKey);
         continue;
       }
       if (dist > w.range) { this.stopBeamIfAny(shooter, slotKey); continue; }
@@ -917,6 +973,9 @@ export class CombatManager {
     const map = this.activeBeams.get(shooter) || new Map();
     this.activeBeams.set(shooter, map);
     const state = map.get(slotKey);
+    if (state && state.target !== target) {
+      this.stopBeamIfAny(shooter, slotKey);
+    }
     if (!inRange || !isValid) {
       if (state) this.stopBeamIfAny(shooter, slotKey);
       return;
@@ -925,11 +984,12 @@ export class CombatManager {
       // обновление визуала произойдет в тиках
       return;
     }
-    // Старт нового луча
-    const gfx = this.scene.add.graphics().setDepth(0.85);
-    // Зарегистрируем как эффект в fog of war
-    try { if (this.fogOfWar) this.fogOfWar.registerDynamicObject(gfx, DynamicObjectType.EFFECT); } catch {}
+    // Старт нового луча (ниже корабля-стрелка)
+    const baseDepth = ((((shooter as any)?.depth) ?? 1) - 0.05);
+    const gfx = this.scene.add.graphics().setDepth(baseDepth);
     const tickMs = Math.max(10, w?.beam?.tickMs ?? 100);
+    const durationMs = Math.max(tickMs, w?.beam?.durationMs ?? 1000);
+    const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
     const dmgTick = typeof w?.beam?.damagePerTick === 'number' ? w.beam.damagePerTick : Math.max(1, Math.round((w.damage ?? 1) * (tickMs / 1000)));
     const timer = this.scene.time.addEvent({ delay: tickMs, loop: true, callback: () => {
       if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
@@ -937,14 +997,42 @@ export class CombatManager {
       if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
       // Наносим урон по тикам
       this.applyDamage(target, dmgTick, shooter);
-      // Рисуем луч от активного ствола
+    }});
+    // Перерисовка луча на каждом кадре (не наносит урон)
+    const redraw = () => {
+      if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
+      const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
+      if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
       const muzzle = this.getMuzzleWorldPositionFor(shooter, w.muzzleOffset);
       gfx.clear();
-      const colorHex = (w?.hitEffect?.color || w?.projectile?.color || '#60a5fa').replace('#','0x');
-      gfx.lineStyle(3, Number(colorHex), 0.9);
+      const colorHex = (w?.beam?.color || w?.hitEffect?.color || w?.projectile?.color || '#60a5fa').replace('#','0x');
+      const outerW = Math.max(1, Math.floor(w?.beam?.outerWidth ?? 6));
+      const innerW = Math.max(1, Math.floor(w?.beam?.innerWidth ?? 3));
+      const outerA = Phaser.Math.Clamp(w?.beam?.outerAlpha ?? 0.25, 0, 1);
+      const innerA = Phaser.Math.Clamp(w?.beam?.innerAlpha ?? 0.9, 0, 1);
+      gfx.lineStyle(outerW, Number(colorHex), outerA);
       gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(target.x, target.y); gfx.strokePath();
-    }});
+      gfx.lineStyle(innerW, Number(colorHex), innerA);
+      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(target.x, target.y); gfx.strokePath();
+      gfx.setAlpha(1);
+    };
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, redraw);
+    (gfx as any).__beamRedraw = redraw;
     map.set(slotKey, { gfx, timer, target });
+    // Сообщаем HUD о начале работы луча (показывать 100% бары duration)
+    if (shooter === this.ship) {
+      try { this.scene.events.emit('beam-start', slotKey, durationMs); } catch {}
+    }
+    // Автоматическое отключение по duration и установка refresh
+    this.scene.time.delayedCall(durationMs, () => {
+      const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
+      shooterTimes[slotKey] = this.scene.time.now + refreshMs;
+      // HUD: сразу после окончания duration запустить индикацию refresh
+      if (shooter === this.ship) {
+        try { this.scene.events.emit('beam-refresh', slotKey, refreshMs); } catch {}
+      }
+      this.stopBeamIfAny(shooter, slotKey);
+    });
     if (shooter === this.ship) { try { this.scene.events.emit('player-weapon-fired', slotKey, target); } catch {} }
   }
 
@@ -954,10 +1042,8 @@ export class CombatManager {
     const s = map.get(slotKey);
     if (!s) return;
     try { s.timer.remove(false); } catch {}
-    try {
-      if (this.fogOfWar) this.fogOfWar.unregisterObject(s.gfx);
-      s.gfx.destroy();
-    } catch {}
+    try { const cb = (s.gfx as any).__beamRedraw; if (cb) this.scene.events.off(Phaser.Scenes.Events.UPDATE, cb); } catch {}
+    try { s.gfx.clear(); s.gfx.destroy(); } catch {}
     map.delete(slotKey);
   }
 
