@@ -24,10 +24,12 @@ export class MovementManager {
   private lastTargetUpdate = 0; // время последнего обновления цели
   private controlledObject: any = null; // ссылка на управляемый объект
   private targetVelocity: Phaser.Math.Vector2 = new Phaser.Math.Vector2(0, 0);
+  private shipId: string | undefined;
 
-  constructor(scene: Phaser.Scene, config: ConfigManager) {
+  constructor(scene: Phaser.Scene, config: ConfigManager, shipId?: string) {
     this.scene = scene;
     this.config = config;
+    this.shipId = shipId;
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
     
     // Добавляем глобальную переменную для отладки частоты обновления
@@ -59,7 +61,7 @@ export class MovementManager {
     this.controlledObject = obj; // сохраняем ссылку на управляемый объект
     
     // Use player's ship nose offset from ships.json
-    const shipId = this.config.player?.shipId ?? this.config.ships?.current;
+    const shipId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
     const noseOffsetRad = Phaser.Math.DegToRad(this.config.ships?.defs?.[shipId!]?.sprite?.noseOffsetDeg ?? 0);
     this.headingRad = obj.rotation - noseOffsetRad;
     (obj as any).__moveRef = this;
@@ -145,7 +147,7 @@ export class MovementManager {
     if (!obj) return;
 
     // Параметры движения и визуальный сдвиг носа берём из выбранного корабля игрока
-    const selectedId = this.config.player?.shipId ?? this.config.ships?.current;
+    const selectedId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
     const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
     const mv = selected?.movement ?? this.config.gameplay.movement;
     const noseOffsetRad = Phaser.Math.DegToRad(selected?.sprite?.noseOffsetDeg ?? 0);

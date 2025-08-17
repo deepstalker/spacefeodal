@@ -106,7 +106,7 @@ export class CombatManager {
     this.targets.push(entry);
     
     // Регистрируем NPC в системе движения
-    this.npcMovement.registerNPC(obj, prefab?.combatAI);
+    this.npcMovement.registerNPC(obj, shipDefId, prefab?.combatAI);
     
     // Регистрируем NPC в fog of war как динамический объект
     if (this.fogOfWar) {

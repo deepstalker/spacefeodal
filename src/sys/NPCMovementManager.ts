@@ -20,9 +20,9 @@ export class NPCMovementManager {
   }
 
   // Регистрируем NPC для управления движением
-  registerNPC(npc: any, combatAIProfile?: string) {
+  registerNPC(npc: any, shipId: string, combatAIProfile?: string) {
     // Создаем отдельный MovementManager для каждого NPC
-    const movementManager = new MovementManager(this.scene, this.config);
+    const movementManager = new MovementManager(this.scene, this.config, shipId);
     
     // Получаем настройки движения из профиля ИИ
     const profile = combatAIProfile ? this.config.combatAI?.profiles?.[combatAIProfile] : null;

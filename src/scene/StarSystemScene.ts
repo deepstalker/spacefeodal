@@ -475,20 +475,9 @@ export default class StarSystemScene extends Phaser.Scene {
       const cm: any = (this as any).combat;
       const entry = cm?.targets?.find((t: any) => t.obj === o);
       if (entry && entry.intent) continue;
-      const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
-      // randomization per-NPC from ai profile
-      const profKey = entry?.aiProfileKey;
-      const prof = profKey ? this.config.aiProfiles.profiles[profKey] : undefined;
-      const rnd: any = (prof as any)?.random ?? {};
-      if (!(o as any).__rand) {
-        (o as any).__rand = {
-          speedK: 1 + (Math.random() * 2 - 1) * (rnd.speedVarPct ?? 0),
-          turnK: 1 + (Math.random() * 2 - 1) * (rnd.turnVarPct ?? 0),
-          offsetR: rnd.offsetRadius ?? 140
-        };
-      }
+
       let target = (o as any).__targetPatrol;
-      if (!target) {
+      if (!target || (target._isPlanet && !this.getPlanetWorldPosById(target.id))) {
         const pickStar = Math.random() < 0.2;
         if (pickStar) {
           const ang = Math.random() * Math.PI * 2;
@@ -500,81 +489,25 @@ export default class StarSystemScene extends Phaser.Scene {
         }
         target = (o as any).__targetPatrol;
       }
+      
       let tx = sys.star.x, ty = sys.star.y;
-      if ((target as any)._isPoint) { tx = (target as any).x; ty = (target as any).y; }
-      else if ((target as any)._isPlanet) {
+      if ((target as any)._isPoint) { 
+        tx = (target as any).x; 
+        ty = (target as any).y; 
+      } else if ((target as any)._isPlanet) {
         const pos = this.getPlanetWorldPosById((target as any).id);
-        // как у торговца: используются текущие координаты спрайта (точно совпадают)
-        tx = pos?.x ?? sys.star.x;
-        ty = pos?.y ?? sys.star.y;
-        // добавим небольшой случайный оффсет вокруг центра планеты как у трейдера (визуально более живо)
-        const offR = (o as any).__rand.offsetR;
-        if (!(target as any)._seededOffset) {
-          const a = Math.random() * Math.PI * 2;
-          (target as any)._ox = Math.cos(a) * offR;
-          (target as any)._oy = Math.sin(a) * offR;
-          (target as any)._seededOffset = true;
-        }
-        tx += (target as any)._ox;
-        ty += (target as any)._oy;
-      }
-      const dx = tx - o.x;
-      const dy = ty - o.y;
-      const desiredHeading = Math.atan2(dy, dx);
-      let heading = (o.rotation ?? 0) - noseOffsetRad;
-      let diff = desiredHeading - heading;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.1 * (o as any).__rand.turnK * dt);
-      heading += turn;
-      o.rotation = heading + noseOffsetRad;
-      // derive base speed from ship definition to keep consistent pacing
-      const maxSpeed = (() => {
-        if (entry?.shipId) return (this.config.ships.defs[entry.shipId]?.movement?.MAX_SPEED ?? 1.0);
-        return 1.0;
-      })();
-      const baseSpeed = maxSpeed * 120 * (o as any).__rand.speedK; // px/s
-      // ease-in near target to reduce overshoot/zigzag
-      const arriveFactor = Phaser.Math.Clamp(Math.hypot(dx, dy) / 300, 0.5, 1);
-      const speed = baseSpeed * arriveFactor;
-      const prevX = o.x, prevY = o.y;
-      o.x += Math.cos(heading) * speed * dt;
-      o.y += Math.sin(heading) * speed * dt;
-      // clamp to system bounds with 20% margin
-      const sz2 = this.config.system?.size as any;
-      if (sz2) {
-        const minX = Math.max(0, sz2.width * 0.2);
-        const minY = Math.max(0, sz2.height * 0.2);
-        const maxX = sz2.width - minX;
-        const maxY = sz2.height - minY;
-        const clampedX = Phaser.Math.Clamp(o.x, minX, maxX);
-        const clampedY = Phaser.Math.Clamp(o.y, minY, maxY);
-        const hitBoundary = (clampedX !== o.x) || (clampedY !== o.y);
-        o.x = clampedX; o.y = clampedY;
-        // если упёрлись в границу — сменим цель, чтобы не «змейкой» по краю
-        if (hitBoundary) {
-          (o as any).__targetPatrol = null;
-          // Повернём в сторону центра, чтобы уйти с края
-          const cx = sz2.width * 0.5, cy = sz2.height * 0.5;
-          const away = Math.atan2(cy - o.y, cx - o.x);
-          o.rotation = away + noseOffsetRad;
+        if (pos) {
+          tx = pos.x;
+          ty = pos.y;
         }
       }
-      const dist = Math.hypot(dx, dy);
-      if ((o as any).__despawnAt && this.time.now >= (o as any).__despawnAt) {
-        // return to base and despawn
-        const hb: any = (o as any).__homeBase;
-        const hx = hb?.x ?? 0, hy = hb?.y ?? 0;
-        // clear combat intent
-        (this.combat as any).clearIntentFor?.(o);
-        (o as any).__returningHome = true;
-        const ang = Math.atan2(hy - o.y, hx - o.x);
-        o.rotation = ang + noseOffsetRad;
-        const retSpeed = baseSpeed * 1.1;
-        o.x += Math.cos(ang) * retSpeed * dt;
-        o.y += Math.sin(ang) * retSpeed * dt;
-        if (Phaser.Math.Distance.Between(o.x, o.y, hx, hy) < 80) { o.destroy(); continue; }
-      } else if (dist < 160) (o as any).__targetPatrol = null;
+      
+      cm.npcMovement.setNPCTarget(o, { x: tx, y: ty });
+
+      const dist = Math.hypot(tx - o.x, ty - o.y);
+      if (dist < 160) {
+        (o as any).__targetPatrol = null;
+      }
     }
   }
 
@@ -595,119 +528,79 @@ export default class StarSystemScene extends Phaser.Scene {
       const cmAny: any = (this as any).combat;
       const cmEntry = cmAny?.targets?.find((t: any) => t.obj === o);
       if (cmEntry && cmEntry.intent) continue;
-      const noseOffsetRad = (o as any).__noseOffsetRad ?? 0;
+
       let target = (o as any).__targetPlanet;
-      if (!target) { (o as any).__targetPlanet = this.pickRandomPlanet(); target = (o as any).__targetPlanet; }
+      if (!target) { 
+        (o as any).__targetPlanet = this.pickRandomPlanet(); 
+        target = (o as any).__targetPlanet; 
+      }
       const confPlanet = (sys.planets as any[]).find(p => p.id === target.id) as any;
       
-      // Обработка случая, когда планета-цель не найдена
       if (!confPlanet) {
-          if (process.env.NODE_ENV === 'development') {
-              const shipId = cmEntry?.shipId ?? 'trader';
-              const uniqueId = (o as any).__uniqueId || '';
-              console.error(`[AI Trader] ${shipId} #${uniqueId} could not find target planet '${target.id}'. Assigning a new random planet.`);
-          }
-          (o as any).__targetPlanet = this.pickRandomPlanet();
-          (o as any).__targetOffset = null; // Сбрасываем смещение, чтобы оно пересчиталось для новой планеты
-          continue; // Пропускаем текущий кадр, чтобы логика выполнилась заново
+        (o as any).__targetPlanet = this.pickRandomPlanet();
+        continue;
       }
       
-      // Каждый торговец получает уникальное смещение от центра планеты, которое сохраняется до смены цели.
-      if (!(o as any).__targetOffset) {
-        (o as any).__targetOffset = {
-          angle: Math.random() * Math.PI * 2,
-          radius: (this.config.gameplay.dock_range ?? 220) * (0.8 + Math.random() * 0.4),
-        };
-        // Логируем установку новой цели
-        if (process.env.NODE_ENV === 'development') {
-          const shipId = cmEntry?.shipId ?? 'trader';
-          const uniqueId = (o as any).__uniqueId || '';
-          console.log(`[AI Trader] ${shipId} #${uniqueId} (${o.x.toFixed(0)},${o.y.toFixed(0)}) setting new target: planet '${target.id}'`);
-        }
-      }
-      
-      // Каждый кадр пересчитываем точку назначения на основе текущего положения планеты.
       const planetPos = this.getPlanetWorldPosById(target.id) ?? { x: confPlanet?._x, y: confPlanet?._y };
-      const offset = (o as any).__targetOffset;
-      const tx = planetPos.x + Math.cos(offset.angle) * offset.radius;
-      const ty = planetPos.y + Math.sin(offset.angle) * offset.radius;
       
-      const dx = tx - o.x;
-      const dy = ty - o.y;
-      const dist = Math.hypot(dx, dy);
-      const dockRange = this.config.gameplay.dock_range ?? 220;
-
       const state = (o as any).__state ?? 'travel';
       if (state === 'travel') {
-        // Travel towards planet center
-        const desiredHeading = Math.atan2(dy, dx);
-        let heading = (o.rotation ?? 0) - noseOffsetRad;
-        let diff = desiredHeading - heading;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        const turn = Math.sign(diff) * Math.min(Math.abs(diff), 1.3 * dt);
-        heading += turn;
-        o.rotation = heading + noseOffsetRad;
-        // derive speed from ship definition (consistent with CombatManager)
-        const shipId = cmEntry?.shipId ?? 'trader';
-        const maxSpeed = this.config.ships.defs[shipId]?.movement?.MAX_SPEED ?? 0.8;
-        const speed = maxSpeed * 120;
-        const prevX = o.x, prevY = o.y;
-        o.x += Math.cos(heading) * speed * dt;
-        o.y += Math.sin(heading) * speed * dt;
-        // clamp to system bounds with 20% margin
-        const sz = this.config.system?.size as any;
-        if (sz) {
-          const minX = Math.max(0, sz.width * 0.2);
-          const minY = Math.max(0, sz.height * 0.2);
-          const maxX = sz.width - minX;
-          const maxY = sz.height - minY;
-          const clampedX = Phaser.Math.Clamp(o.x, minX, maxX);
-          const clampedY = Phaser.Math.Clamp(o.y, minY, maxY);
-          const hitBoundary = (clampedX !== o.x) || (clampedY !== o.y);
-          o.x = clampedX; o.y = clampedY;
-          if (hitBoundary) {
-            (o as any).__targetPlanet = this.pickRandomPlanet();
-            // Развернём в сторону центра для плавного ухода от края
-            const cx = sz.width * 0.5, cy = sz.height * 0.5;
-            const away = Math.atan2(cy - o.y, cx - o.x);
-            o.rotation = away + noseOffsetRad;
-          }
-        }
+        cmAny.npcMovement.setNPCTarget(o, { x: planetPos.x, y: planetPos.y });
+        
+        const dist = Math.hypot(planetPos.x - o.x, planetPos.y - o.y);
+        const dockRange = this.config.gameplay.dock_range ?? 220;
+        
         if (dist < dockRange) {
-          // Start docking
           (o as any).__state = 'docking';
-          (o as any).__targetOffset = null; // Сбрасываем смещение для выбора новой цели
+          
           const dur = 3000 + Math.random() * 1000;
           const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
           const bsy = (o as any).__baseScaleY ?? o.scaleY ?? 1;
-          this.tweens.add({ targets: o, x: tx, y: ty, scaleX: bsx * 0.2, scaleY: bsy * 0.2, alpha: 0, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
-            (o as any).__state = 'docked';
-            // undock after random dwell
-            this.time.delayedCall(10000 + Math.random() * 50000, () => {
-              if (!o.active) return;
-              // pick new planet, ensuring it's not the same one
-              const otherPlanets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
-              if (otherPlanets.length > 0) {
-                (o as any).__targetPlanet = otherPlanets[Math.floor(Math.random() * otherPlanets.length)];
-              } else {
-                (o as any).__targetPlanet = target; // Fallback if only one planet exists
-              }
-              (o as any).__state = 'undocking';
-              const ang = Math.random() * Math.PI * 2;
-              // recompute current planet position at undock time
-              const cur = (sys.planets as any[]).find((p: any) => p.id === target.id) as any;
-              const cx = (cur?._x ?? (sys.star.x + target.orbit.radius));
-              const cy = (cur?._y ?? sys.star.y);
-              o.x = cx; o.y = cy;
-              this.tweens.add({ targets: o, x: cx + Math.cos(ang) * 200, y: cy + Math.sin(ang) * 200, scaleX: bsx, scaleY: bsy, alpha: 1, duration: dur, ease: 'Sine.easeInOut', onComplete: () => {
-                (o as any).__state = 'travel';
-              }});
-            });
-          }});
+          
+          this.tweens.add({ 
+            targets: o, 
+            x: planetPos.x, 
+            y: planetPos.y, 
+            scaleX: bsx * 0.2, 
+            scaleY: bsy * 0.2, 
+            alpha: 0, 
+            duration: dur, 
+            ease: 'Sine.easeInOut', 
+            onComplete: () => {
+              (o as any).__state = 'docked';
+              this.time.delayedCall(10000 + Math.random() * 50000, () => {
+                if (!o.active) return;
+                const otherPlanets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
+                if (otherPlanets.length > 0) {
+                  (o as any).__targetPlanet = otherPlanets[Math.floor(Math.random() * otherPlanets.length)];
+                } else {
+                  (o as any).__targetPlanet = target;
+                }
+                (o as any).__state = 'undocking';
+                const ang = Math.random() * Math.PI * 2;
+                const cur = (sys.planets as any[]).find((p: any) => p.id === target.id) as any;
+                const cx = (cur?._x ?? (sys.star.x + target.orbit.radius));
+                const cy = (cur?._y ?? sys.star.y);
+                o.x = cx; 
+                o.y = cy;
+                this.tweens.add({ 
+                  targets: o, 
+                  x: cx + Math.cos(ang) * 200, 
+                  y: cy + Math.sin(ang) * 200, 
+                  scaleX: bsx, 
+                  scaleY: bsy, 
+                  alpha: 1, 
+                  duration: dur, 
+                  ease: 'Sine.easeInOut', 
+                  onComplete: () => {
+                    (o as any).__state = 'travel';
+                  }
+                });
+              });
+            }
+          });
         }
       } else if (state === 'docking' || state === 'docked' || state === 'undocking') {
-        // tween-controlled; no manual movement
         continue;
       }
     }
