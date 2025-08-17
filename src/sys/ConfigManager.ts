@@ -128,13 +128,19 @@ export type WeaponsConfig = {
   defs: Record<string, {
     icon?: string;
     rarity?: string;
-    projectile: any;
-    hitEffect: any;
-    projectileSpeed: number;
-    fireRatePerSec: number;
+    type?: 'single' | 'burst' | 'beam';
+    accuracy?: number; // базовая точность оружия (0..1), модифицируется точностью корабля
+    projectile?: any;
+    hitEffect?: any;
+    projectileSpeed?: number;
+    fireRatePerSec?: number; // для single/burst — серия считается одной атакой
     damage: number;
     range: number;
     muzzleOffset: { x: number; y: number };
+    // burst-специфика
+    burst?: { count?: number; delayMs?: number };
+    // beam-специфика
+    beam?: { tickMs?: number; damagePerTick?: number };
   }>;
 };
 

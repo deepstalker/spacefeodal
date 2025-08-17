@@ -1,17 +1,18 @@
 {
   "defs": {
     "laser": {
+      "type": "beam",
+      "accuracy": 1,
       "icon": "weapon_laser",
       "rarity": "uncommon",
-      "projectile": { "shape": "rect", "width": 8, "height": 2, "color": "#60a5fa" },
-      "hitEffect": { "shape": "circle", "radius": 18, "color": "#93c5fd", "durationMs": 180 },
-      "projectileSpeed": 1000,
-      "fireRatePerSec": 4,
+      "beam": { "tickMs": 100, "damagePerTick": 2 },
       "damage": 8,
       "range": 500,
       "muzzleOffset": { "x": 0, "y": -40 }
     },
     "cannon": {
+      "type": "burst",
+      "accuracy": 0.85,
       "icon": "weapon_cannon",
       "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 5, "color": "#fde047" },
@@ -20,9 +21,12 @@
       "fireRatePerSec": 2,
       "damage": 16,
       "range": 1000,
+      "burst": { "count": 3, "delayMs": 80 },
       "muzzleOffset": { "x": -20, "y": -30 }
     },
     "missile": {
+      "type": "single",
+      "accuracy": 0.8,
       "icon": "weapon_missile",
       "rarity": "epic",
       "projectile": { "shape": "circle", "radius": 7, "color": "#f87171" },
@@ -35,6 +39,8 @@
     }
     ,
     "railgun": {
+      "type": "single",
+      "accuracy": 0.95,
       "icon": "weapon_railgun",
       "rarity": "legendary",
       "projectile": { "shape": "rect", "width": 10, "height": 2, "color": "#a3e635" },
@@ -46,6 +52,8 @@
       "muzzleOffset": { "x": 0, "y": -42 }
     },
     "plasma": {
+      "type": "single",
+      "accuracy": 0.9,
       "icon": "weapon_plasma",
       "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 6, "color": "#22d3ee" },
@@ -57,6 +65,8 @@
       "muzzleOffset": { "x": 12, "y": -36 }
     },
     "flak": {
+      "type": "burst",
+      "accuracy": 0.75,
       "icon": "weapon_flak",
       "rarity": "common",
       "projectile": { "shape": "circle", "radius": 4, "color": "#94a3b8" },
@@ -65,6 +75,7 @@
       "fireRatePerSec": 5,
       "damage": 6,
       "range": 780,
+      "burst": { "count": 5, "delayMs": 60 },
       "muzzleOffset": { "x": -12, "y": -36 }
     }
   }

@@ -20,6 +20,8 @@ export class CombatManager {
   private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
   // Назначения целей для оружия игрока: slotKey -> target
   private playerWeaponTargets: Map<string, Target> = new Map();
+  // Активные лучи для beam-оружий: shooter -> (slotKey -> beamState)
+  private activeBeams: WeakMap<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new WeakMap();
   private targets: Array<{
     obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
     hp: number; hpMax: number;
@@ -328,14 +330,21 @@ export class CombatManager {
         const dx = (target as any).x - this.ship.x;
         const dy = (target as any).y - this.ship.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > w.range) continue;
-        const cooldownMs = 1000 / Math.max(0.001, w.fireRatePerSec);
+        // Beam-оружие обрабатываем отдельно (без кулдауна): включаем/выключаем луч
+        if ((w.type ?? 'single') === 'beam') {
+          this.ensureBeam(this.ship, slotKey, w, target, dist);
+          continue;
+        }
+        if (dist > w.range) { this.stopBeamIfAny(this.ship, slotKey); continue; }
+        const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
         const last = times[slotKey] ?? 0;
         if (now - last >= cooldownMs) {
           times[slotKey] = now;
           const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
           const w2 = { ...w, muzzleOffset };
-          this.fireWeapon(slotKey, w2, target as any, this.ship);
+          const type = (w2.type ?? 'single');
+          if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
+          else this.fireWeapon(slotKey, w2, target as any, this.ship);
           // try { console.debug('[Combat] fire', slotKey, { range: w.range, dist }); } catch {}
         }
       }
@@ -575,6 +584,19 @@ export class CombatManager {
     }
   }
 
+  private fireBurstWeapon(slot: string, w: any, target: any, shooter: any) {
+    const count = Math.max(1, w?.burst?.count ?? 3);
+    const delayMs = Math.max(1, w?.burst?.delayMs ?? 80);
+    for (let k = 0; k < count; k++) {
+      this.scene.time.delayedCall(k * delayMs, () => {
+        if (!shooter?.active || !target?.active) return;
+        const muzzleOffset = w.muzzleOffset;
+        const w2 = { ...w, muzzleOffset };
+        this.fireWeapon(slot, w2, target, shooter);
+      });
+    }
+  }
+
   private getMuzzleWorldPositionFor(shooter: any, offset: { x: number; y: number }) {
     // offset is relative to shooter local space where +Y is down in Phaser, shooter rotated
     const rot = shooter.rotation;
@@ -617,15 +639,21 @@ export class CombatManager {
       const slotKey = slotsArr[i];
       const w = this.config.weapons.defs[slotKey];
       if (!w) continue;
-      if (dist > w.range) continue;
+      if ((w.type ?? 'single') === 'beam') {
+        this.ensureBeam(shooter, slotKey, w, target, dist);
+        continue;
+      }
+      if (dist > w.range) { this.stopBeamIfAny(shooter, slotKey); continue; }
       const now = this.scene.time.now;
-      const cooldownMs = 1000 / Math.max(0.001, w.fireRatePerSec);
+      const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
       const last = times[slotKey] ?? 0;
       if (now - last >= cooldownMs) {
         times[slotKey] = now;
         const muzzleOffset = this.resolveMuzzleOffset(shooter, i, w.muzzleOffset);
         const w2 = { ...w, muzzleOffset };
-        this.fireWeapon(slotKey, w2, target, shooter);
+        const type = (w2.type ?? 'single');
+        if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target, shooter);
+        else this.fireWeapon(slotKey, w2, target, shooter);
       }
     }
   }
@@ -832,19 +860,22 @@ export class CombatManager {
   }
 
   private getAimedTargetPoint(shooter: any, target: any, w: any) {
-    let accuracy = 1.0;
+    // Итоговая точность = точность оружия * модификатор точности корабля
+    let weaponAccuracy = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
+    let shipAccuracy = 1.0;
     const entry = this.targets.find(t => t.obj === shooter);
     if (shooter === this.ship) {
       const playerShipId = this.config.player?.shipId ?? this.config.ships.current;
       const shipDef = this.config.ships.defs[playerShipId];
-      const a = shipDef?.combat?.accuracy;
-      if (typeof a === 'number') accuracy = Phaser.Math.Clamp(a, 0, 1);
+      const sa = shipDef?.combat?.accuracy;
+      if (typeof sa === 'number') shipAccuracy = Phaser.Math.Clamp(sa, 0, 1);
     } else if (entry) {
       const eShipId = entry.shipId ?? this.config.ships.current;
       const shipDef = this.config.ships.defs[eShipId];
-      const a = shipDef?.combat?.accuracy;
-      if (typeof a === 'number') accuracy = Phaser.Math.Clamp(a, 0, 1);
+      const sa = shipDef?.combat?.accuracy;
+      if (typeof sa === 'number') shipAccuracy = Phaser.Math.Clamp(sa, 0, 1);
     }
+    const accuracy = Phaser.Math.Clamp(weaponAccuracy * shipAccuracy, 0, 1);
     const prev = (target as any).__prevPos || { x: target.x, y: target.y };
     const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
     const vx = (target.x - prev.x) / dt;
@@ -878,6 +909,56 @@ export class CombatManager {
     const aimX = Phaser.Math.Linear(tx, leadX, accuracy);
     const aimY = Phaser.Math.Linear(ty, leadY, accuracy);
     return { x: aimX, y: aimY };
+  }
+
+  private ensureBeam(shooter: any, slotKey: string, w: any, target: any, distNow: number) {
+    const inRange = distNow <= w.range;
+    const isValid = shooter?.active && target?.active;
+    const map = this.activeBeams.get(shooter) || new Map();
+    this.activeBeams.set(shooter, map);
+    const state = map.get(slotKey);
+    if (!inRange || !isValid) {
+      if (state) this.stopBeamIfAny(shooter, slotKey);
+      return;
+    }
+    if (state) {
+      // обновление визуала произойдет в тиках
+      return;
+    }
+    // Старт нового луча
+    const gfx = this.scene.add.graphics().setDepth(0.85);
+    // Зарегистрируем как эффект в fog of war
+    try { if (this.fogOfWar) this.fogOfWar.registerDynamicObject(gfx, DynamicObjectType.EFFECT); } catch {}
+    const tickMs = Math.max(10, w?.beam?.tickMs ?? 100);
+    const dmgTick = typeof w?.beam?.damagePerTick === 'number' ? w.beam.damagePerTick : Math.max(1, Math.round((w.damage ?? 1) * (tickMs / 1000)));
+    const timer = this.scene.time.addEvent({ delay: tickMs, loop: true, callback: () => {
+      if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
+      const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
+      if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
+      // Наносим урон по тикам
+      this.applyDamage(target, dmgTick, shooter);
+      // Рисуем луч от активного ствола
+      const muzzle = this.getMuzzleWorldPositionFor(shooter, w.muzzleOffset);
+      gfx.clear();
+      const colorHex = (w?.hitEffect?.color || w?.projectile?.color || '#60a5fa').replace('#','0x');
+      gfx.lineStyle(3, Number(colorHex), 0.9);
+      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(target.x, target.y); gfx.strokePath();
+    }});
+    map.set(slotKey, { gfx, timer, target });
+    if (shooter === this.ship) { try { this.scene.events.emit('player-weapon-fired', slotKey, target); } catch {} }
+  }
+
+  private stopBeamIfAny(shooter: any, slotKey: string) {
+    const map = this.activeBeams.get(shooter);
+    if (!map) return;
+    const s = map.get(slotKey);
+    if (!s) return;
+    try { s.timer.remove(false); } catch {}
+    try {
+      if (this.fogOfWar) this.fogOfWar.unregisterObject(s.gfx);
+      s.gfx.destroy();
+    } catch {}
+    map.delete(slotKey);
   }
 
   private spawnHitEffect(x: number, y: number, w: any) {
