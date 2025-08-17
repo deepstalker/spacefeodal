@@ -152,7 +152,12 @@ export type FactionsConfig = {
 };
 
 export type CombatAIProfilesConfig = {
-  profiles: Record<string, { retreatHpPct?: number }>;
+  profiles: Record<string, { 
+    retreatHpPct?: number;
+    movementMode?: 'orbit' | 'pursue' | 'move_to';
+    movementDistance?: number;
+    outdistance_attack?: 'target' | 'flee' | 'ignore';
+  }>;
 };
 
 export type PlayerConfig = {

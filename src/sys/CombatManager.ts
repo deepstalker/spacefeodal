@@ -286,6 +286,34 @@ export class CombatManager {
     // AI steering
     this.updateEnemiesAI(deltaMs);
 
+    // Сброс назначенных оружий и выбранной цели вне радара
+    const playerRadarRange = this.getRadarRangeFor(this.ship);
+    const slotsToClear: string[] = [];
+    for (const [slot, target] of this.playerWeaponTargets.entries()) {
+      const distToTarget = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, target.x, target.y);
+      if (distToTarget > playerRadarRange) {
+        slotsToClear.push(slot);
+      }
+    }
+    if (slotsToClear.length > 0) {
+      const clearedTargets = new Set<Target>();
+      for (const slot of slotsToClear) {
+        const target = this.playerWeaponTargets.get(slot);
+        if (target) clearedTargets.add(target);
+        this.playerWeaponTargets.delete(slot);
+      }
+      try { this.scene.events.emit('player-weapon-target-cleared', null, slotsToClear); } catch {}
+      this.refreshCombatRings();
+      this.refreshCombatUIAssigned();
+      this.refreshSelectionCircleColor();
+    }
+    if (this.selectedTarget) {
+      const distToSelected = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.selectedTarget.x, this.selectedTarget.y);
+      if (distToSelected > playerRadarRange) {
+        this.clearSelection();
+      }
+    }
+
     // Player fire only по назначенным целям для каждого слота оружия
     const playerSlots = this.config.player?.weapons ?? [];
     if (playerSlots.length) {
@@ -415,8 +443,7 @@ export class CombatManager {
           this.npcMovement.setNPCTarget(obj, target);
         } else {
           // Атакуем с использованием режима из профиля ИИ
-          target = { x: targetObj.x, y: targetObj.y };
-          this.npcMovement.setNPCTarget(obj, target);
+          this.npcMovement.setNPCTarget(obj, { x: targetObj.x, y: targetObj.y, targetObject: targetObj });
         }
       } else if (t.intent?.type === 'flee') {
           // Если мы были в состоянии бегства, но угрозы больше нет — логируем завершение.
@@ -610,6 +637,22 @@ export class CombatManager {
       this.floatDamageText(target.x, target.y - 70, damage);
       // Если атаковал игрок и цель — NPC, задаём временную конфронтацию к игроку
       if (attacker && attacker === this.ship) {
+        // Проверяем, видит ли NPC игрока
+        const npcRadarRange = this.getRadarRangeFor(t.obj);
+        const distToPlayer = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
+        
+        if (distToPlayer > npcRadarRange) {
+          // Игрок вне зоны радара, применяем логику outdistance_attack
+          const combatProfile = t.combatAI ? this.config.combatAI.profiles[t.combatAI] : null;
+          const reaction = combatProfile?.outdistance_attack ?? 'ignore';
+
+          if (reaction !== 'ignore') {
+            const intentType = reaction === 'flee' ? 'flee' : 'attack';
+            t.intent = { type: intentType, target: this.ship };
+            (t as any).forceIntentUntil = this.scene.time.now + 4000; // Force intent for 4s
+          }
+        }
+
         (t as any).overrides = (t as any).overrides ?? {};
         (t as any).overrides.factions = (t as any).overrides.factions ?? {};
         (t as any).overrides.factions['player'] = 'confrontation';
@@ -695,6 +738,17 @@ export class CombatManager {
 
   private updateSensors(deltaMs: number) {
     for (const t of this.targets) {
+      const forcedUntil = (t as any).forceIntentUntil;
+      if (forcedUntil && this.scene.time.now < forcedUntil) {
+        if (!t.intent?.target?.active) {
+            t.intent = null;
+            (t as any).forceIntentUntil = 0;
+        }
+        continue;
+      }
+      if (forcedUntil) {
+          (t as any).forceIntentUntil = 0;
+      }
       t.intent = null;
       const myFaction = t.faction;
       const radar = this.getRadarRangeFor(t.obj);
@@ -834,6 +888,12 @@ export class CombatManager {
   private refreshCombatRings() {
     const assigned = new Set<any>();
     for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    // Добавляем NPC, которые целятся в игрока
+    for (const t of this.targets) {
+      if (t.intent?.target === this.ship) {
+        assigned.add(t.obj);
+      }
+    }
     for (const [t, ring] of this.combatRings.entries()) {
       if (!assigned.has(t)) { ring.destroy(); this.combatRings.delete(t); }
     }
@@ -849,6 +909,12 @@ export class CombatManager {
   private refreshCombatUIAssigned() {
     const assigned = new Set<any>();
     for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    // Добавляем NPC, которые целятся в игрока, для отображения HP-бара
+    for (const t of this.targets) {
+      if (t.intent?.target === this.ship) {
+        assigned.add(t.obj);
+      }
+    }
     for (const rec of this.targets) {
       const isAssigned = assigned.has(rec.obj);
       if (isAssigned) {
@@ -856,9 +922,16 @@ export class CombatManager {
         rec.hpBarFill.setVisible(true);
         if (!rec.nameLabel) {
           const name = this.resolveDisplayName(rec) || 'Unknown';
-          rec.nameLabel = this.scene.add.text(0, 0, name, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
+          const baseName = this.resolveDisplayName(rec) || 'Unknown';
+          const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
+          rec.nameLabel = this.scene.add.text(0, 0, uniqueName, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
         }
-        // Боевой статус — можно оставить нейтральный цвет имени или выделить красным, оставлю нейтральный для читаемости
+        const rel = this.getRelation('player', rec.faction, rec.overrides?.factions);
+        const color = (rel === 'confrontation') ? '#A93226' : '#9E9382';
+        rec.nameLabel.setColor(color);
+        const baseName = this.resolveDisplayName(rec) || 'Unknown';
+        const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
+        rec.nameLabel.setText(uniqueName);
         rec.nameLabel.setVisible(true);
         this.updateHpBar(rec as any);
       } else {
