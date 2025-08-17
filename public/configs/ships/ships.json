@@ -21,13 +21,14 @@
       },
       "sensors": { "radar_range": 3500 },
       "movement": {
-        "MAX_SPEED": 1.6,
-        "ACCELERATION": 0.01,
-        "DECELERATION": 0.015,
+        "MAX_SPEED": 2,
+        "ACCELERATION": 0.015,
+        "DECELERATION": 0.075,
         "TURN_SPEED": 0.03,
-        "SLOWING_RADIUS": 150,
-        "TURN_PENALTY_MULTIPLIER": 1.2,
-        "TURN_DECELERATION_FACTOR": 0.2
+        "SLOWING_RADIUS": 300,
+        "TURN_PENALTY_MULTIPLIER": 1.8,
+        "TURN_DECELERATION_FACTOR": 0.05,
+        "ACCELERATION_PENALTY_AT_MAX": 0.999
       }
     },
     "trader": {
@@ -50,13 +51,14 @@
       },
       "sensors": { "radar_range": 1400 },
       "movement": {
-        "MAX_SPEED": 1.3,
-        "ACCELERATION": 0.1,
-        "DECELERATION": 0.15,
+        "MAX_SPEED": 1.5,
+        "ACCELERATION": 0.05,
+        "DECELERATION": 0.085,
         "TURN_SPEED": 0.02,
-        "SLOWING_RADIUS": 160,
-        "TURN_PENALTY_MULTIPLIER": 1.2,
-        "TURN_DECELERATION_FACTOR": 0.22
+        "SLOWING_RADIUS": 300,
+        "TURN_PENALTY_MULTIPLIER": 1.8,
+        "TURN_DECELERATION_FACTOR": 0.05,
+        "ACCELERATION_PENALTY_AT_MAX": 0.995
       }
     },
     "fighter": {
@@ -80,12 +82,13 @@
       "sensors": { "radar_range": 1000 },
       "movement": {
         "MAX_SPEED": 1.2,
-        "ACCELERATION": 0.015,
-        "DECELERATION": 0.015,
+        "ACCELERATION": 0.01,
+        "DECELERATION": 0.02,
         "TURN_SPEED": 0.03,
-        "SLOWING_RADIUS": 140,
-        "TURN_PENALTY_MULTIPLIER": 1.2,
-        "TURN_DECELERATION_FACTOR": 0.18
+        "SLOWING_RADIUS": 300,
+        "TURN_PENALTY_MULTIPLIER": 1.8,
+        "TURN_DECELERATION_FACTOR": 0.05,
+        "ACCELERATION_PENALTY_AT_MAX": 0.999
       }
     }
   }

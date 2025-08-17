@@ -154,8 +154,15 @@ export class MovementManager {
     if (this.headingRad == null) this.headingRad = obj.rotation - noseOffsetRad;
     
     if (!this.command || !this.target) {
-      // плавная остановка, если команд нет
+      // Плавная остановка по текущему вектору: замедляемся и продолжаем двигаться до полной остановки
       this.speed = Math.max(0, this.speed - mv.DECELERATION);
+      // Применяем текущий курс и позицию даже без активной команды
+      this.headingRad = ((this.headingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      obj.rotation = this.headingRad + noseOffsetRad;
+      if (this.speed > 0) {
+        obj.x += Math.cos(this.headingRad) * this.speed;
+        obj.y += Math.sin(this.headingRad) * this.speed;
+      }
       return;
     }
 
@@ -169,8 +176,15 @@ export class MovementManager {
       this.lastTargetUpdate = time;
     }
 
-    // Если updateDynamicTarget обнулил команду (цель умерла), выходим.
+    // Если updateDynamicTarget обнулил команду (цель умерла) — начинаем плавное торможение по вектору
     if (!this.command) {
+      this.speed = Math.max(0, this.speed - mv.DECELERATION);
+      this.headingRad = ((this.headingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      obj.rotation = this.headingRad + noseOffsetRad;
+      if (this.speed > 0) {
+        obj.x += Math.cos(this.headingRad) * this.speed;
+        obj.y += Math.sin(this.headingRad) * this.speed;
+      }
       return;
     }
 
@@ -250,9 +264,14 @@ export class MovementManager {
       return;
     }
 
-    // Желаемая скорость с предсказанием торможения (возвращаем к исходной логике)
+    // Желаемая скорость с предсказанием торможения
     const desiredSpeed = distance < mv.SLOWING_RADIUS ? mv.MAX_SPEED * (distance / mv.SLOWING_RADIUS) : mv.MAX_SPEED;
-    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + mv.ACCELERATION, desiredSpeed);
+    // Штраф на ускорение пропорционально текущей доле от MAX_SPEED
+    const accelPenaltyAtMax = typeof mv.ACCELERATION_PENALTY_AT_MAX === 'number' ? Phaser.Math.Clamp(mv.ACCELERATION_PENALTY_AT_MAX, 0, 1) : 0;
+    const speedRatio = Phaser.Math.Clamp(this.speed / Math.max(1e-6, mv.MAX_SPEED), 0, 1);
+    const accelPenalty = accelPenaltyAtMax * speedRatio; // 0..accelPenaltyAtMax
+    const effectiveAcceleration = mv.ACCELERATION * (1 - accelPenalty);
+    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + effectiveAcceleration, desiredSpeed);
     else this.speed = Math.max(this.speed - mv.DECELERATION, desiredSpeed);
 
     // Поворот к цели (возвращаем к исходной логике)

@@ -337,7 +337,7 @@ export class HUDManager {
     
     const hpTextSize = 24; // фиксированный размер шрифта
     const hpTextPadding = 16; // фиксированный отступ
-    const hpText = this.scene.add.text(hpX + hpTextPadding, hpY + fixedHpBarH/2, '100', { 
+    const hpText = this.scene.add.text(hpX + hpTextPadding, hpY + fixedHpBarH/2 - 10, '100', { 
       color: '#F5F0E9', 
       fontSize: `${hpTextSize}px`, 
       fontFamily: 'Request',
@@ -401,7 +401,7 @@ export class HUDManager {
       const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
       const v = Math.hypot(dx, dy) / dt; // px per second
       (ship as any).__prevPos = { x: ship.x, y: ship.y };
-      const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 100);
+      const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
       const txt = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
       if (txt) txt.setText(`${u}`);
     }

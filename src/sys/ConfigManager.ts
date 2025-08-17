@@ -28,6 +28,7 @@ export type GameplayConfig = {
     TURN_PENALTY_MULTIPLIER: number;// 1.3
     TURN_DECELERATION_FACTOR: number;// 0.2
     TARGET_UPDATE_INTERVAL_MS?: number; // 100 (частота обновления динамических целей)
+    ACCELERATION_PENALTY_AT_MAX?: number; // 0..1 (например 0.9) — доля снижения ускорения при 100% скорости
   };
   fogOfWar?: {
     enabled: boolean;
