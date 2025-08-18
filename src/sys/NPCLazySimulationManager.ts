@@ -18,11 +18,16 @@ export class NPCLazySimulationManager {
   private fog: EnhancedFogOfWar;
   private pending: PendingNPC[] = [];
   private replenishTimer?: Phaser.Time.TimerEvent;
+  private pauseManager?: any;
 
   constructor(scene: Phaser.Scene, config: ConfigManager, fog: EnhancedFogOfWar) {
     this.scene = scene;
     this.config = config;
     this.fog = fog;
+  }
+
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
   }
 
   init() {
@@ -87,6 +92,11 @@ export class NPCLazySimulationManager {
   private clamp(v: number, min: number, max: number) { return Math.max(min, Math.min(max, v)); }
 
   private update() {
+    // Проверяем конфиг паузы
+    if (this.pauseManager?.isSystemPausable('npcLazySimulation') && this.pauseManager?.getPaused()) {
+      return;
+    }
+    
     if (!this.pending.length) return;
     const player = this.fog.getPlayerPosition();
     const sys = this.config.system;

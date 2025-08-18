@@ -693,8 +693,10 @@ export class NPCStateManager {
 
   // Основной цикл обновления
   private update(_time: number, deltaMs: number): void {
-    // Пропускаем обновление если игра на паузе
-    if (this.pauseManager?.getPaused()) return;
+    // Проверяем конфиг паузы
+    if (this.pauseManager?.isSystemPausable('npcStateManager') && this.pauseManager?.getPaused()) {
+      return;
+    }
     
     const toDelete: any[] = [];
     

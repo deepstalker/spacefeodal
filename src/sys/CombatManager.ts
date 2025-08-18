@@ -60,6 +60,11 @@ export class CombatManager {
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
+    
+    // Обработка снятия паузы для корректировки временных меток
+    this.scene.events.on('game-resumed', this.onGameResumed, this);
+    
+
   }
 
   public clearIntentFor(obj: any) {
@@ -87,6 +92,84 @@ export class CombatManager {
 
   setPauseManager(pauseManager: any) {
     this.pauseManager = pauseManager;
+    // Передаем pauseManager в систему движения NPC
+    this.npcMovement.setPauseManager(pauseManager);
+  }
+
+  private onGameResumed(data: { pauseDuration: number; totalPausedTime: number }) {
+    // Не нужно корректировать таймеры вручную, так как PauseManager.getAdjustedTime() уже делает это
+    // Пауза и снятие паузы корректно обрабатываются через getAdjustedTime()
+    
+    if (this.pauseManager?.getDebugSetting('log_pause_events')) {
+      console.log('[CombatManager] Game resumed, no manual timer adjustment needed');
+    }
+  }
+  
+  private onWeaponChargeCompletedDuringPause(slotKey: string) {
+    // Не нужно - HUD теперь только отображает состояние, не управляет им
+  }
+
+  /**
+   * Получить текущий прогресс зарядки оружия (0-1)
+   */
+  public getWeaponChargeProgress(slotKey: string): number {
+    const chargeUntil = this.playerChargeUntil[slotKey];
+    if (!chargeUntil) return 1; // Не заряжается = готово
+    
+    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+    if (now >= chargeUntil) return 1; // Зарядка завершена
+    
+    // Находим когда началась зарядка
+    const w = this.config.weapons.defs[slotKey];
+    if (!w) return 1;
+    
+    const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
+    const chargeStartTime = chargeUntil - cooldownMs;
+    const elapsed = now - chargeStartTime;
+    
+    return Math.max(0, Math.min(1, elapsed / cooldownMs));
+  }
+
+  /**
+   * Проверить, заряжается ли оружие
+   */
+  public isWeaponCharging(slotKey: string): boolean {
+    const chargeUntil = this.playerChargeUntil[slotKey];
+    if (chargeUntil) {
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+      if (now < chargeUntil) return true;
+    }
+    
+    // Проверяем beam refresh
+    const beamCooldowns = this.beamCooldowns.get(this.ship);
+    if (beamCooldowns && beamCooldowns[slotKey]) {
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+      return now < beamCooldowns[slotKey];
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Получить прогресс beam refresh (0-1)
+   */
+  public getBeamRefreshProgress(slotKey: string): number {
+    const beamCooldowns = this.beamCooldowns.get(this.ship);
+    if (!beamCooldowns || !beamCooldowns[slotKey]) return 1;
+    
+    const refreshUntil = beamCooldowns[slotKey];
+    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+    if (now >= refreshUntil) return 1;
+    
+    // Находим длительность refresh
+    const w = this.config.weapons.defs[slotKey];
+    if (!w) return 1;
+    
+    const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
+    const refreshStartTime = refreshUntil - refreshMs;
+    const elapsed = now - refreshStartTime;
+    
+    return Math.max(0, Math.min(1, elapsed / refreshMs));
   }
 
   getTargetObjects(): Phaser.GameObjects.GameObject[] {
@@ -217,12 +300,14 @@ export class CombatManager {
         if ((w.type ?? 'single') === 'beam') {
           const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
           const shooterTimes = this.beamCooldowns.get(this.ship) ?? {}; this.beamCooldowns.set(this.ship, shooterTimes);
-          shooterTimes[slotKey] = this.scene.time.now + refreshMs;
+          const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+          shooterTimes[slotKey] = now + refreshMs;
           this.stopBeamIfAny(this.ship, slotKey);
         } else {
           const times = this.getShooterTimes(this.ship);
           const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-          times[slotKey] = this.scene.time.now + cooldownMs;
+          const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+          times[slotKey] = now + cooldownMs;
         }
       }
 
@@ -359,8 +444,8 @@ export class CombatManager {
   }
 
   private update(_time: number, deltaMs: number) {
-    // Пропускаем обновление если игра на паузе
-    if (this.pauseManager?.getPaused()) return;
+    // НЕ блокируем весь update на паузе - только конкретные действия
+    const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
     
     // pulse selection
     if (this.selectedTarget && this.selectionCircle) {
@@ -379,10 +464,14 @@ export class CombatManager {
     if (!this.ship) return;
     
     // ВАЖНО: Порядок имеет значение!
-    // 1. Сначала sensors logic - обнаруживает новые цели и устанавливает базовые intent
-    this.updateSensors(deltaMs);
-    // 2. Затем AI logic - принимает решения о тактике и движении на основе intent
-    this.updateEnemiesAI(deltaMs);
+    // 1. Sensors logic - но только если не на паузе
+    if (!isPaused) {
+      this.updateSensors(deltaMs);
+    }
+    // 2. AI logic - но только если не на паузе  
+    if (!isPaused) {
+      this.updateEnemiesAI(deltaMs);
+    }
 
     // Сброс назначенных оружий и выбранной цели вне радара
     const playerRadarRange = this.getRadarRangeFor(this.ship);
@@ -415,7 +504,8 @@ export class CombatManager {
     // Player fire only по назначенным целям для каждого слота оружия
     const playerSlots = this.config.player?.weapons ?? [];
     if (playerSlots.length) {
-      const now = this.scene.time.now;
+      // Используем скорректированное время с учетом паузы
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
       const times = this.getShooterTimes(this.ship);
       for (let i = 0; i < playerSlots.length; i++) {
         const slotKey = playerSlots[i];
@@ -434,7 +524,7 @@ export class CombatManager {
           const prepUntil = prepObj[slotKey] ?? 0;
           if (dist > w.range) {
             // выйти из зоны — отменяем подготовку и луч
-            if (prepUntil) { delete prepObj[slotKey]; try { this.scene.events.emit('weapon-charge-cancel', slotKey); } catch {} }
+            if (prepUntil) { delete prepObj[slotKey]; }
             try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
             this.stopBeamIfAny(this.ship, slotKey);
             continue;
@@ -445,35 +535,42 @@ export class CombatManager {
           if (!prepUntil) {
             const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
             prepObj[slotKey] = now + refreshMs;
-            try { this.scene.events.emit('weapon-charge-start', slotKey, refreshMs); } catch {}
             continue;
           }
           if (now >= prepUntil) {
             delete prepObj[slotKey];
-            this.ensureBeam(this.ship, slotKey, w, target, dist);
+            // Активируем beam только если не на паузе
+            if (!isPaused) {
+              this.ensureBeam(this.ship, slotKey, w, target, dist);
+            }
           }
           continue;
         }
         // Небимовое оружие: подготовка/зарядка в зоне, выстрел по завершении
         const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
         if (dist > w.range) {
-          if (this.playerChargeUntil[slotKey]) { delete this.playerChargeUntil[slotKey]; try { this.scene.events.emit('weapon-charge-cancel', slotKey); } catch {} }
+          if (this.playerChargeUntil[slotKey]) { delete this.playerChargeUntil[slotKey]; }
           try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
           continue;
         }
         try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
         if (!this.playerChargeUntil[slotKey]) {
           this.playerChargeUntil[slotKey] = now + cooldownMs;
-          try { this.scene.events.emit('weapon-charge-start', slotKey, cooldownMs); } catch {}
           continue;
         }
         if (now >= this.playerChargeUntil[slotKey]) {
-          this.playerChargeUntil[slotKey] = now + cooldownMs;
-          const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
-          const w2 = { ...w, muzzleOffset };
-          const type = (w2.type ?? 'single');
-          if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
-          else this.fireWeapon(slotKey, w2, target as any, this.ship);
+          // Стреляем только если не на паузе
+          if (!isPaused) {
+            if (this.pauseManager?.getDebugSetting('log_pause_events')) {
+              console.log(`[CombatManager] Weapon ${slotKey} fired: now=${now}, nextReady=${now + cooldownMs}`);
+            }
+            this.playerChargeUntil[slotKey] = now + cooldownMs;
+            const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
+            const w2 = { ...w, muzzleOffset };
+            const type = (w2.type ?? 'single');
+            if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
+            else this.fireWeapon(slotKey, w2, target as any, this.ship);
+          }
         }
       }
     }
@@ -541,9 +638,6 @@ export class CombatManager {
   }
 
   private updateEnemiesAI(deltaMs: number) {
-    // Пропускаем обновление если игра на паузе
-    if (this.pauseManager?.getPaused()) return;
-    
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
       // If object is returning home (e.g., wave despawn), skip combat steering
@@ -898,6 +992,11 @@ export class CombatManager {
     const shooterOverrides = (shooterEntry as any)?.overrides?.factions;
 
     const onUpdate = (_t: number, dt: number) => {
+      // Проверяем паузу боевых систем
+      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+        return;
+      }
+      
       (proj as any).x += vx * (dt/1000);
       (proj as any).y += vy * (dt/1000);
       // collision simple distance check
@@ -954,7 +1053,9 @@ export class CombatManager {
       }
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
-    this.scene.time.delayedCall(lifetimeMs, () => {
+    // Создаем таймер с уникальным ID для снаряда
+    const projId = `projectile-${shooter.__uniqueId || 'player'}-${_slot}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
       this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
       // Дерегистрируем снаряд из fog of war при истечении времени жизни
       if (this.fogOfWar) {
@@ -962,6 +1063,19 @@ export class CombatManager {
       }
       (proj as any).destroy?.();
     });
+    
+    // Регистрируем таймер жизни снаряда для паузы
+    if (this.pauseManager) {
+      this.pauseManager.pauseTimer(lifetimeTimer, projId);
+    }
+    
+    // Регистрируем таймер снаряда для паузы
+    if (this.pauseManager) {
+      const projId = `projectile-${Date.now()}-${Math.random()}`;
+      this.pauseManager.pauseTimer(lifetimeTimer, projId);
+      // Сохраняем ID для возможности отмены регистрации
+      (proj as any).__pauseTimerId = projId;
+    }
     // Сигнализируем UI о выстреле игрока для мигания иконки
     if (shooter === this.ship) {
       try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
@@ -972,12 +1086,23 @@ export class CombatManager {
     const count = Math.max(1, w?.burst?.count ?? 3);
     const delayMs = Math.max(1, w?.burst?.delayMs ?? 80);
     for (let k = 0; k < count; k++) {
-      this.scene.time.delayedCall(k * delayMs, () => {
+      const burstTimer = this.scene.time.delayedCall(k * delayMs, () => {
+        // Проверяем паузу боевых систем
+        if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+          return;
+        }
+        
         if (!shooter?.active || !target?.active) return;
         const muzzleOffset = w.muzzleOffset;
         const w2 = { ...w, muzzleOffset };
         this.fireWeapon(slot, w2, target, shooter);
       });
+      
+      // Регистрируем burst таймер для паузы
+      if (this.pauseManager) {
+        const burstId = `burst-${shooter.__uniqueId || 'player'}-${slot}-${k}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        this.pauseManager.pauseTimer(burstTimer, burstId);
+      }
     }
   }
 
@@ -1024,23 +1149,35 @@ export class CombatManager {
       const w = this.config.weapons.defs[slotKey];
       if (!w) continue;
       if ((w.type ?? 'single') === 'beam') {
-        const nowMs = this.scene.time.now;
+        const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
         const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
         const readyAt = shooterTimes[slotKey] ?? 0;
-        if (nowMs >= readyAt && dist <= w.range) this.ensureBeam(shooter, slotKey, w, target, dist); else this.stopBeamIfAny(shooter, slotKey);
+        // NPC стреляют только если не на паузе
+        if (nowMs >= readyAt && dist <= w.range) {
+          const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
+          if (!isPaused) {
+            this.ensureBeam(shooter, slotKey, w, target, dist);
+          }
+        } else {
+          this.stopBeamIfAny(shooter, slotKey);
+        }
         continue;
       }
       if (dist > w.range) { this.stopBeamIfAny(shooter, slotKey); continue; }
-      const now = this.scene.time.now;
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
       const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
       const last = times[slotKey] ?? 0;
       if (now - last >= cooldownMs) {
-        times[slotKey] = now;
-        const muzzleOffset = this.resolveMuzzleOffset(shooter, i, w.muzzleOffset);
-        const w2 = { ...w, muzzleOffset };
-        const type = (w2.type ?? 'single');
-        if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target, shooter);
-        else this.fireWeapon(slotKey, w2, target, shooter);
+        // NPC стреляют только если не на паузе
+        const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
+        if (!isPaused) {
+          times[slotKey] = now;
+          const muzzleOffset = this.resolveMuzzleOffset(shooter, i, w.muzzleOffset);
+          const w2 = { ...w, muzzleOffset };
+          const type = (w2.type ?? 'single');
+          if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target, shooter);
+          else this.fireWeapon(slotKey, w2, target, shooter);
+        }
       }
     }
   }
@@ -1092,7 +1229,8 @@ export class CombatManager {
         const mapT = t.damageLog.lastDamageTimeBySource as Map<any, number>;
         const prev = mapA.get(attacker) ?? 0;
         mapA.set(attacker, prev + damage);
-        mapT.set(attacker, this.scene.time.now);
+        const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+        mapT.set(attacker, now);
       }
       // Реакция на урон издалека: проверяем профиль outdistance_attack
       if (attacker) {
@@ -1109,7 +1247,8 @@ export class CombatManager {
           if (outdistanceAction === 'target') {
             // Атакуем дальнюю цель
             t.intent = { type: 'attack', target: attacker };
-            (t as any).forceIntentUntil = this.scene.time.now + 4000; // 4s удержания реакции
+            const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+            (t as any).forceIntentUntil = now + 4000; // 4s удержания реакции
             
             if (process.env.NODE_ENV === 'development') {
               console.log(`[OutdistanceAttack] ${t.shipId} #${(t.obj as any).__uniqueId} attacking distant target`, {
@@ -1121,7 +1260,8 @@ export class CombatManager {
           } else if (outdistanceAction === 'flee') {
             // Убегаем от дальней цели
             t.intent = { type: 'flee', target: attacker };
-            (t as any).forceIntentUntil = this.scene.time.now + 4000; // 4s удержания реакции
+            const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+            (t as any).forceIntentUntil = now + 4000; // 4s удержания реакции
             
             if (process.env.NODE_ENV === 'development') {
               console.log(`[OutdistanceAttack] ${t.shipId} #${(t.obj as any).__uniqueId} fleeing from distant target`, {
@@ -1286,7 +1426,8 @@ export class CombatManager {
       }
       
       const forcedUntil = (t as any).forceIntentUntil;
-      if (forcedUntil && this.scene.time.now < forcedUntil) {
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+      if (forcedUntil && now < forcedUntil) {
         if (!t.intent?.target?.active) {
             t.intent = null;
             (t as any).forceIntentUntil = 0;
@@ -1365,8 +1506,9 @@ export class CombatManager {
 
       // Улучшенная логика остывания агрессии
       if (!seesPlayer && context) {
-        const timeSinceLastDamage = this.scene.time.now - context.aggression.lastDamageTime;
-        const timeSinceLastCombat = this.scene.time.now - context.aggression.lastCombatTime;
+        const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+        const timeSinceLastDamage = now - context.aggression.lastDamageTime;
+        const timeSinceLastCombat = now - context.aggression.lastCombatTime;
         
         // Сбрасываем враждебность к игроку только если прошло достаточно времени
         // и уровень агрессии низкий
@@ -1475,14 +1617,29 @@ export class CombatManager {
     const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
     const dmgTick = typeof w?.beam?.damagePerTick === 'number' ? w.beam.damagePerTick : Math.max(1, Math.round((w.damage ?? 1) * (tickMs / 1000)));
     const timer = this.scene.time.addEvent({ delay: tickMs, loop: true, callback: () => {
+      // Проверяем паузу боевых систем
+      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+        return;
+      }
+      
       if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
       if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
       // Наносим урон по тикам
       this.applyDamage(target, dmgTick, shooter);
     }});
+    
+    // Регистрируем таймер для паузы
+    if (this.pauseManager) {
+      this.pauseManager.pauseTimer(timer, `beam-tick-${shooter.__uniqueId || 'player'}-${slotKey}`);
+    }
     // Перерисовка луча на каждом кадре (не наносит урон)
     const redraw = () => {
+      // Проверяем паузу боевых систем
+      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+        return;
+      }
+      
       if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
       if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
@@ -1507,15 +1664,21 @@ export class CombatManager {
       try { this.scene.events.emit('beam-start', slotKey, durationMs); } catch {}
     }
     // Автоматическое отключение по duration и установка refresh
-    this.scene.time.delayedCall(durationMs, () => {
+    const durationTimer = this.scene.time.delayedCall(durationMs, () => {
       const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
-      shooterTimes[slotKey] = this.scene.time.now + refreshMs;
+      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+      shooterTimes[slotKey] = now + refreshMs;
       // HUD: сразу после окончания duration запустить индикацию refresh
       if (shooter === this.ship) {
         try { this.scene.events.emit('beam-refresh', slotKey, refreshMs); } catch {}
       }
       this.stopBeamIfAny(shooter, slotKey);
     });
+    
+    // Регистрируем таймер остановки для паузы
+    if (this.pauseManager) {
+      this.pauseManager.pauseTimer(durationTimer, `beam-duration-${shooter.__uniqueId || 'player'}-${slotKey}`);
+    }
     if (shooter === this.ship) { try { this.scene.events.emit('player-weapon-fired', slotKey, target); } catch {} }
   }
 
@@ -1527,6 +1690,14 @@ export class CombatManager {
     try { s.timer.remove(false); } catch {}
     try { const cb = (s.gfx as any).__beamRedraw; if (cb) this.scene.events.off(Phaser.Scenes.Events.UPDATE, cb); } catch {}
     try { s.gfx.clear(); s.gfx.destroy(); } catch {}
+    
+    // Отменяем регистрацию таймеров в PauseManager
+    if (this.pauseManager) {
+      const shooterId = shooter.__uniqueId || 'player';
+      this.pauseManager.unregisterUpdateHandler(`beam-tick-${shooterId}-${slotKey}`);
+      this.pauseManager.unregisterUpdateHandler(`beam-duration-${shooterId}-${slotKey}`);
+    }
+    
     map.delete(slotKey);
   }
 

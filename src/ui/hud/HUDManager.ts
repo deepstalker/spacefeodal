@@ -9,6 +9,7 @@ export class HUDManager {
   private configRef?: ConfigManager;
   private pauseManager?: PauseManager;
   private timeManager?: TimeManager;
+  private combatManager?: any; // Ссылка на CombatManager
   
   // HUD elements
   private speedText?: Phaser.GameObjects.Text;
@@ -78,25 +79,34 @@ export class HUDManager {
     this.createSystemTitle();
     this.createPauseUI();
     this.createTimeUI();
+    
+
 
     const starScene = this.scene.scene.get('StarSystemScene') as any;
+    this.combatManager = starScene.combat; // Сохраняем ссылку на CombatManager
+    
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
     starScene.events.on('player-weapon-fired', (slotKey: string) => this.flashAssignedIcon(slotKey));
     starScene.events.on('player-weapon-target-cleared', (_target: any, slots: string[]) => slots.forEach(s => this.removeAssignedIcon(s)));
-    // Beam HUD: показывать duration как 100% и затем refresh как обычную перезарядку
+    // Beam HUD: показывать duration как 100% и затем refresh обрабатывается в updateWeaponChargeBars
     starScene.events.on('beam-start', (slotKey: string, durationMs: number) => this.showBeamDuration(slotKey, durationMs));
-    starScene.events.on('beam-refresh', (slotKey: string, refreshMs: number) => this.showBeamRefresh(slotKey, refreshMs));
-    // Зарядка в зоне действия (до первого выстрела/активации)
-    starScene.events.on('weapon-charge-start', (slotKey: string, ms: number) => this.showChargeBar(slotKey, ms));
-    starScene.events.on('weapon-charge-cancel', (slotKey: string) => this.hideChargeBar(slotKey));
     // Out of range — отдельный текст
     starScene.events.on('weapon-out-of-range', (slotKey: string, show: boolean) => this.toggleOutOfRange(slotKey, show));
+
+    // Подписываемся на событие снятия паузы для принудительного обновления прогресс-баров
+    this.scene.events.on('game-resumed', () => {
+      // Немедленно обновляем прогресс-бары после снятия паузы
+      this.updateWeaponChargeBars();
+    });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.realignCursorIcons());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.syncSlotsVisual());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateTimeUI());
+    
+    // Прогресс-бары оружия обновляются ВСЕГДА, даже во время паузы
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateWeaponChargeBars());
 
     // Клавиши
     const kb = this.scene.input.keyboard;
@@ -835,8 +845,8 @@ export class HUDManager {
     if (!flash) return;
     (flash as any).setAlpha(1);
     this.scene.tweens.add({ targets: flash, alpha: 0, duration: 120 });
-    // Показать и анимировать прогресс-бар перезарядки в HUD
-    this.showAndAnimateCooldownBarInHUD(slotKey);
+    // Показать прогресс-бар перезарядки в HUD (без анимации твина)
+    this.showCooldownBarInHUD(slotKey);
     // мигать КРАСНЫМ контуром слота, и оставить красным
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
@@ -849,71 +859,72 @@ export class HUDManager {
     }
   }
 
-  private showAndAnimateCooldownBarInHUD(slotKey: string) {
+  private showCooldownBarInHUD(slotKey: string) {
     // Определяем позицию слота в HUD
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     if (slotIndex < 0) return;
     const recSlot = this.slotRecords[slotIndex];
     if (!recSlot) return;
-    const defs: any = this.configRef!.weapons.defs;
-    const w = defs[slotKey];
-    if (!w) return;
-    const fireRate = Math.max(0.001, w.fireRatePerSec);
-    const cooldownMs = 1000 / fireRate;
-    const barWidth = recSlot.size; // в длину иконки слота
-    const barHeight = 20;
-    const outlineColor = 0xA28F6E;
-    const fillColor = 0xBC5A36; // новый цвет
-    const bgColor = 0x2c2a2d;
-    // создаём, если нет
-    let bar = this.cooldownBarsBySlot.get(slotKey);
-    if (!bar) {
-      const bg = this.scene.add.rectangle(0, 0, barWidth, barHeight, bgColor, 1).setDepth(1502).setOrigin(0, 0).setScrollFactor(0);
-      const outline = this.scene.add.rectangle(0, 0, barWidth, barHeight, 0x000000, 0).setDepth(1503).setOrigin(0, 0).setScrollFactor(0).setStrokeStyle(2, outlineColor, 1);
-      const fill = this.scene.add.rectangle(0, 0, 0, barHeight - 4, fillColor, 1).setDepth(1503).setOrigin(0, 0).setScrollFactor(0);
-      bar = { bg, outline, fill, width: barWidth, height: barHeight };
-      this.cooldownBarsBySlot.set(slotKey, bar);
-    }
-    // позиционирование: под иконкой слота в центре экрана
-    const x = recSlot.baseX;
-    const y = (recSlot as any).bg.y + recSlot.size + 6; // под слотом (учитываем возможно приподнятый слот)
-    bar.bg.setPosition(x, y);
-    bar.outline.setPosition(x, y);
-    bar.fill.setPosition(x + 2, y + 2);
-    // показать и сбросить ширину
+    
+    // Убедимся, что бар существует и видим
+    const bar = this.ensureHudBar(slotKey, recSlot);
     bar.bg.setVisible(true);
     bar.outline.setVisible(true);
     bar.fill.setVisible(true);
-    bar.fill.width = 0;
-    try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({
-      targets: bar.fill,
-      width: (bar.width - 4),
-      duration: cooldownMs,
-      ease: 'Linear',
-      onComplete: () => {
-        bar.bg.setVisible(false);
-        bar.outline.setVisible(false);
-        bar.fill.setVisible(false);
-      }
-    });
+    // Ширина будет обновлена в updateWeaponChargeBars в следующем кадре
   }
 
-  private showChargeBar(slotKey: string, ms: number) {
-    const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
-    if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
-    const bar = this.ensureHudBar(slotKey, recSlot);
-    bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    bar.fill.width = 0; try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({ targets: bar.fill, width: (bar.width - 4), duration: Math.max(0, ms), ease: 'Linear' });
-    // прячем out-of-range на время зарядки
-    this.toggleOutOfRange(slotKey, false);
+  private updateWeaponChargeBars() {
+    // Если игра на паузе, не обновляем прогресс-бары
+    if (this.pauseManager?.getPaused()) {
+      return;
+    }
+    
+    if (!this.combatManager || !this.configRef?.player?.weapons) return;
+    
+    const playerWeapons = this.configRef.player.weapons;
+    
+    for (let i = 0; i < playerWeapons.length; i++) {
+      const slotKey = playerWeapons[i];
+      if (!slotKey) continue;
+      
+      const recSlot = this.slotRecords[i];
+      if (!recSlot) continue;
+      
+      const isCharging = this.combatManager.isWeaponCharging(slotKey);
+      
+      if (isCharging) {
+        // Определяем тип оружия для правильного прогресса
+        const w = this.configRef.weapons.defs[slotKey];
+        const isBeam = (w?.type ?? 'single') === 'beam';
+        
+        const progress = isBeam 
+          ? this.combatManager.getBeamRefreshProgress(slotKey)
+          : this.combatManager.getWeaponChargeProgress(slotKey);
+        
+        // Показываем прогресс-бар
+        const bar = this.ensureHudBar(slotKey, recSlot);
+        bar.bg.setVisible(true);
+        bar.outline.setVisible(true);
+        bar.fill.setVisible(true);
+        
+        // Обновляем ширину напрямую на основе прогресса таймера
+        bar.fill.width = progress * (bar.width - 4);
+        
+        // Скрываем out-of-range во время зарядки
+        this.toggleOutOfRange(slotKey, false);
+      } else {
+        // Скрываем прогресс-бар
+        const bar = this.cooldownBarsBySlot.get(slotKey);
+        if (bar) {
+          bar.bg.setVisible(false);
+          bar.outline.setVisible(false);
+          bar.fill.setVisible(false);
+        }
+      }
+    }
   }
-  private hideChargeBar(slotKey: string) {
-    const bar = this.cooldownBarsBySlot.get(slotKey); if (!bar) return;
-    try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    bar.bg.setVisible(false); bar.outline.setVisible(false); bar.fill.setVisible(false);
-  }
+
 
   private toggleOutOfRange(slotKey: string, show: boolean) {
     const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
@@ -934,18 +945,19 @@ export class HUDManager {
     bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
     // 100% заполнение на время длительности луча
     bar.fill.width = Math.max(0, bar.width - 4);
+    // Больше не используем твин для анимации, rely on updateWeaponChargeBars
+    // this.scene.time.delayedCall используется только для синхронизации с логикой боевой системы
     try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.time.delayedCall(Math.max(0, durationMs), () => { /* после duration ожидаем refresh-событие */ });
+    this.scene.time.delayedCall(Math.max(0, durationMs), () => { 
+      // После duration ожидаем refresh-событие
+      // Просто убедимся, что бар видим, дальнейшее обновление будет в updateWeaponChargeBars
+      bar.bg.setVisible(true); 
+      bar.outline.setVisible(true); 
+      bar.fill.setVisible(true);
+    });
   }
 
-  private showBeamRefresh(slotKey: string, refreshMs: number) {
-    const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
-    if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
-    const bar = this.ensureHudBar(slotKey, recSlot);
-    bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    bar.fill.width = 0; try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({ targets: bar.fill, width: (bar.width - 4), duration: Math.max(0, refreshMs), ease: 'Linear', onComplete: () => { bar.bg.setVisible(false); bar.outline.setVisible(false); bar.fill.setVisible(false); } });
-  }
+
 
   private ensureHudBar(slotKey: string, recSlot: any) {
     let bar = this.cooldownBarsBySlot.get(slotKey);
@@ -955,6 +967,7 @@ export class HUDManager {
       const bg = this.scene.add.rectangle(0, 0, barWidth, barHeight, bgColor, 1).setDepth(1502).setOrigin(0, 0).setScrollFactor(0);
       const outline = this.scene.add.rectangle(0, 0, barWidth, barHeight, 0x000000, 0).setDepth(1503).setOrigin(0, 0).setScrollFactor(0).setStrokeStyle(2, outlineColor, 1);
       const fill = this.scene.add.rectangle(0, 0, 0, barHeight - 4, fillColor, 1).setDepth(1503).setOrigin(0, 0).setScrollFactor(0);
+      
       bar = { bg, outline, fill, width: barWidth, height: barHeight };
       this.cooldownBarsBySlot.set(slotKey, bar);
     }
@@ -1150,6 +1163,9 @@ export class HUDManager {
       repeat: -1,
       ease: 'Sine.easeInOut'
     });
+    
+    // Помечаем как UI tween, чтобы он НЕ останавливался при паузе
+    (this.pauseBlinkTween as any).__isUITween = true;
   }
 
   private hidePauseIndicator() {
@@ -1286,4 +1302,6 @@ export class HUDManager {
       else rec.outline.setStrokeStyle(0, 0x00ff66, 1);
     }
   }
+  
+
 }

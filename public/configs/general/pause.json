@@ -1,0 +1,78 @@
+{
+  "description": "Конфигурация системы паузы - что останавливается, а что продолжает работать",
+  "version": "1.0.0",
+  
+  "systems": {
+    "pausable": {
+      "description": "Системы которые ОСТАНАВЛИВАЮТСЯ при паузе",
+      "core": {
+        "combat": true,
+        "movement": true,
+        "pathfinding": true
+      },
+      "npc": {
+        "npcStateManager": true,
+        "npcMovementManager": true,
+        "npcLazySimulation": true
+      },
+      "world": {
+        "planetOrbits": true,
+        "encounters": true,
+        "encounters_activation": true
+      },
+      "phaser": {
+        "tweens": true,
+        "timers": true,
+        "physics": true
+      }
+    },
+    
+    "non_pausable": {
+      "description": "Системы которые ПРОДОЛЖАЮТ работать при паузе",
+      "ui": {
+        "hudManager": true,
+        "minimapManager": true,
+        "radialMenu": true,
+        "pauseIndicator": true,
+        "timeUI": true
+      },
+      "visual": {
+        "backgroundTiler": true,
+        "starfield": true,
+        "fogOfWar": true,
+        "camera": true
+      },
+      "infrastructure": {
+        "inputManager": true,
+        "configManager": true,
+        "saveManager": true,
+        "spaceStationManager": true
+      },
+      "systems": {
+        "radarSystem": true,
+        "visibilityManager": true
+      }
+    }
+  },
+  
+  "special_cases": {
+    "description": "Особые случаи обработки паузы",
+    "player_ship": {
+      "movement": false,
+      "input": true,
+      "ui_interactions": true,
+      "description": "Корабль игрока не двигается, но можно взаимодействовать с UI"
+    },
+    "timeManager": {
+      "cycle_timer": false,
+      "ui_updates": true,
+      "description": "Таймер циклов останавливается, но UI обновляется"
+    }
+  },
+
+  "debug": {
+    "log_pause_events": false,
+    "log_system_states": false,
+    "show_pause_indicator": true
+  }
+}

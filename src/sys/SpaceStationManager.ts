@@ -39,6 +39,12 @@ export class SpaceStationManager {
     const baseRadar = 1400;
     const baseFireCooldownMs = 600; let baseLastShot = 0;
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
+      // Не стреляем во время паузы
+      const pauseManager: any = (this.scene as any).pauseManager;
+      if (pauseManager?.getPaused && pauseManager.getPaused()) {
+        return;
+      }
+      
       if (!(rect as any).__alive) return;
       const cm: any = (this.scene as any).combat;
       const now = (this.scene as any).time.now;
@@ -55,6 +61,11 @@ export class SpaceStationManager {
         const proj = this.scene.add.rectangle(baseX, baseY, 12, 4, 0xff6666).setDepth(0.25);
         const spd = 900; const vx = Math.cos(ang) * spd; const vy = Math.sin(ang) * spd;
         const onUpd = (_tt:number, dtt:number) => {
+          // Проверяем паузу
+          if (pauseManager?.getPaused && pauseManager.getPaused()) {
+            return;
+          }
+          
           (proj as any).x += vx * (dtt/1000);
           (proj as any).y += vy * (dtt/1000);
           const dd = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, (best as any).x, (best as any).y);
@@ -66,7 +77,19 @@ export class SpaceStationManager {
           }
         };
         this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpd);
-        this.scene.time.delayedCall(2000, () => { this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpd); proj.destroy(); });
+        
+        // Создаем таймер с учетом паузы
+        const lifetimeTimer = this.scene.time.delayedCall(2000, () => { 
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpd); 
+          proj.destroy(); 
+        });
+        
+        // Регистрируем таймер для паузы если доступен pauseManager
+        if (pauseManager?.pauseTimer) {
+          // Генерируем уникальный ID для таймера
+          const timerId = `station-projectile-lifetime-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          pauseManager.pauseTimer(lifetimeTimer, timerId);
+        }
       }
     });
 

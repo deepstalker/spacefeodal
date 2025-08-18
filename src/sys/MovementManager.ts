@@ -14,7 +14,8 @@ export interface MovementCommand {
 export class MovementManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
-  private pauseManager?: any; // PauseManager reference
+  private pauseManager?: any;
+  private pauseSystemName: string = 'movement'; // По умолчанию для игрока // PauseManager reference
   private speed = 0;
   private target: Phaser.Math.Vector2 | null = null;
   private headingRad: number | null = null;
@@ -36,6 +37,10 @@ export class MovementManager {
 
   setPauseManager(pauseManager: any) {
     this.pauseManager = pauseManager;
+  }
+
+  setPauseSystemName(systemName: string) {
+    this.pauseSystemName = systemName;
   }
 
   init() {
@@ -148,8 +153,13 @@ export class MovementManager {
   // getRenderPathPoints удалён как неиспользуемый (визуальный путь рисуется напрямую по текущей цели)
 
   private update(time: number, deltaMs: number) {
-    // Пропускаем обновление если игра на паузе
-    if (this.pauseManager?.getPaused()) return;
+    // Проверяем конфиг паузы
+    if (this.pauseManager?.isSystemPausable(this.pauseSystemName) && this.pauseManager?.getPaused()) {
+      if (this.pauseManager?.getDebugSetting('log_system_states')) {
+        console.log(`[MovementManager] ${this.pauseSystemName} paused, skipping update`);
+      }
+      return;
+    }
     
     const dt = deltaMs / 1000;
     // Найдём активный объект (на прототипе — корабль один)

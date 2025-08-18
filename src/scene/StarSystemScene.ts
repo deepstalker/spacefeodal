@@ -205,6 +205,7 @@ export default class StarSystemScene extends Phaser.Scene {
     try {
       const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
       this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
+      this.npcSim.setPauseManager(this.pauseManager);
       this.npcSim.init();
     } catch {}
 
@@ -281,6 +282,14 @@ export default class StarSystemScene extends Phaser.Scene {
     pauseKey?.on('down', () => {
       this.pauseManager.togglePause();
     });
+    
+    // Отладочная команда для проверки конфига паузы (Ctrl+Shift+D)
+    const debugKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    debugKey?.on('down', (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey) {
+        this.pauseManager.debugLogConfig();
+      }
+    });
 
     this.events.on(Phaser.Scenes.Events.SHUTDOWN, () => {
       const cam = this.cameras ? this.cameras.main : undefined;
@@ -295,32 +304,36 @@ export default class StarSystemScene extends Phaser.Scene {
 
     // Регистрируем UPDATE обработчики с поддержкой паузы
     this.events.on(Phaser.Scenes.Events.UPDATE, (time: number, delta: number) => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('planetOrbits') || !this.pauseManager.getPaused()) {
         this.updateSystem(time, delta);
       }
     });
     this.events.on(Phaser.Scenes.Events.UPDATE, () => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('combat') || !this.pauseManager.getPaused()) {
         this.drawAimLine();
       }
     });
     this.events.on(Phaser.Scenes.Events.UPDATE, () => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('encounters') || !this.pauseManager.getPaused()) {
         this.updateEncounters();
       }
     });
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('npcStateManager') || !this.pauseManager.getPaused()) {
         this.updateNPCs(dt);
+      } else if (this.pauseManager.getDebugSetting?.('log_system_states')) {
+        console.log('[StarSystemScene] updateNPCs paused');
       }
     });
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('npcMovementManager') || !this.pauseManager.getPaused()) {
         this.updatePatrolNPCs(dt);
+      } else if (this.pauseManager.getDebugSetting?.('log_system_states')) {
+        console.log('[StarSystemScene] updatePatrolNPCs paused');
       }
     });
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      if (!this.pauseManager.getPaused()) {
+      if (!this.pauseManager.isSystemPausable('fogOfWar') || !this.pauseManager.getPaused()) {
         // Update fog of war with current player position
         if (this.ship && this.fogOfWar) {
           this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
