@@ -91,6 +91,7 @@ interface NPCStateContext {
 
 export class NPCStateManager {
   private scene: Phaser.Scene;
+  private pauseManager?: any; // PauseManager reference
   private config: ConfigManager;
   private contexts: Map<any, NPCStateContext> = new Map();
   
@@ -106,6 +107,10 @@ export class NPCStateManager {
     
     // Обновляем состояния каждый кадр
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
+  }
+
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
   }
 
   // Регистрация нового NPC (вызывается при спавне)
@@ -169,14 +174,15 @@ export class NPCStateManager {
     
     this.contexts.set(obj, context);
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[NPCState] Registered NPC ${objId}`, {
-        aiProfile,
-        combatAI,
-        faction,
-        totalContexts: this.contexts.size
-      });
-    }
+    // Debug logging disabled
+    // if (process.env.NODE_ENV === 'development') {
+    //   console.log(`[NPCState] Registered NPC ${objId}`, {
+    //     aiProfile,
+    //     combatAI,
+    //     faction,
+    //     totalContexts: this.contexts.size
+    //   });
+    // }
     
     // Автоматический переход в начальное состояние через кадр
     this.scene.time.delayedCall(1, () => {
@@ -569,20 +575,21 @@ export class NPCStateManager {
       const canSwitchByScore = bestScore > requiredScore;
       const hasCurrentTarget = !!stabilization.currentTarget;
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[StableTarget] ${objId} considering switch: ${currentTargetId} → ${bestTargetId}`, {
-          candidateScores,
-          currentScore: currentScore.toFixed(2),
-          bestScore: bestScore.toFixed(2),
-          requiredScore: requiredScore.toFixed(2),
-          timeSinceSwitch: timeSinceSwitch + 'ms',
-          stabilityPeriod: stabilization.stabilityPeriod + 'ms',
-          canSwitchByTime,
-          canSwitchByScore,
-          hasCurrentTarget,
-          requiredAdvantage: (stabilization.requiredAdvantage * 100).toFixed(0) + '%'
-        });
-      }
+      // Debug logging disabled
+      // if (process.env.NODE_ENV === 'development') {
+      //   console.log(`[StableTarget] ${objId} considering switch: ${currentTargetId} → ${bestTargetId}`, {
+      //     candidateScores,
+      //     currentScore: currentScore.toFixed(2),
+      //     bestScore: bestScore.toFixed(2),
+      //     requiredScore: requiredScore.toFixed(2),
+      //     timeSinceSwitch: timeSinceSwitch + 'ms',
+      //     stabilityPeriod: stabilization.stabilityPeriod + 'ms',
+      //     canSwitchByTime,
+      //     canSwitchByScore,
+      //     hasCurrentTarget,
+      //     requiredAdvantage: (stabilization.requiredAdvantage * 100).toFixed(0) + '%'
+      //   });
+      // }
       
       // Меняем цель если:
       // 1. У нас нет текущей цели ИЛИ
@@ -593,44 +600,48 @@ export class NPCStateManager {
         stabilization.targetScore = bestScore;
         stabilization.targetSwitchTime = now;
         
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[StableTarget] ${objId} SWITCHED to ${bestTargetId}`, {
-            reason: !hasCurrentTarget ? 'no_current_target' : 'better_target',
-            newScore: bestTarget ? bestScore.toFixed(2) : 'null'
-          });
-        }
+        // Debug logging disabled
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log(`[StableTarget] ${objId} SWITCHED to ${bestTargetId}`, {
+        //     reason: !hasCurrentTarget ? 'no_current_target' : 'better_target',
+        //     newScore: bestTarget ? bestScore.toFixed(2) : 'null'
+        //   });
+        // }
         
         // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при переключении
-        if (!bestTarget && process.env.NODE_ENV === 'development') {
-          console.error(`[StableTarget] ${objId} SWITCHING TO NULL!`, {
-            candidateScores,
-            bestScore,
-            hasCurrentTarget,
-            canSwitchByTime,
-            canSwitchByScore,
-            reason: 'switched_to_null_target'
-          });
-        }
+        // Debug logging disabled
+        // if (!bestTarget && process.env.NODE_ENV === 'development') {
+        //   console.error(`[StableTarget] ${objId} SWITCHING TO NULL!`, {
+        //     candidateScores,
+        //     bestScore,
+        //     hasCurrentTarget,
+        //     canSwitchByTime,
+        //     canSwitchByScore,
+        //     reason: 'switched_to_null_target'
+        //   });
+        // }
         
         return bestTarget;
       } else {
         // Остаемся с текущей целью
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[StableTarget] ${objId} KEEPING ${currentTargetId}`, {
-            reason: !canSwitchByTime ? 'stabilization_period' : 'insufficient_score_advantage'
-          });
-        }
+        // Debug logging disabled
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log(`[StableTarget] ${objId} KEEPING ${currentTargetId}`, {
+        //     reason: !canSwitchByTime ? 'stabilization_period' : 'insufficient_score_advantage'
+        //   });
+        // }
         
         // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при сохранении цели
-        if (!stabilization.currentTarget && process.env.NODE_ENV === 'development') {
-          console.error(`[StableTarget] ${objId} KEEPING NULL TARGET!`, {
-            candidateScores,
-            bestScore,
-            bestTargetId,
-            hasCurrentTarget,
-            reason: 'keeping_null_target'
-          });
-        }
+        // Debug logging disabled
+        // if (!stabilization.currentTarget && process.env.NODE_ENV === 'development') {
+        //   console.error(`[StableTarget] ${objId} KEEPING NULL TARGET!`, {
+        //     candidateScores,
+        //     bestScore,
+        //     bestTargetId,
+        //     hasCurrentTarget,
+        //     reason: 'keeping_null_target'
+        //   });
+        // }
         
         return stabilization.currentTarget;
       }
@@ -638,22 +649,24 @@ export class NPCStateManager {
       // Цель не изменилась - обновляем счет
       stabilization.targetScore = bestScore;
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[StableTarget] ${objId} UNCHANGED ${bestTargetId}`, {
-          score: bestTarget ? bestScore.toFixed(2) : 'null',
-          candidateCount: candidates.length
-        });
-      }
+      // Debug logging disabled
+      // if (process.env.NODE_ENV === 'development') {
+      //   console.log(`[StableTarget] ${objId} UNCHANGED ${bestTargetId}`, {
+      //     score: bestTarget ? bestScore.toFixed(2) : 'null',
+      //     candidateCount: candidates.length
+      //   });
+      // }
       
       // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем
-      if (!bestTarget && process.env.NODE_ENV === 'development') {
-        console.warn(`[StableTarget] ${objId} RETURNING NULL!`, {
-          candidateScores,
-          bestScore,
-          hasCurrentTarget: !!stabilization.currentTarget,
-          reason: 'no_valid_target_found'
-        });
-      }
+      // Debug logging disabled
+      // if (!bestTarget && process.env.NODE_ENV === 'development') {
+      //   console.warn(`[StableTarget] ${objId} RETURNING NULL!`, {
+      //     candidateScores,
+      //     bestScore,
+      //     hasCurrentTarget: !!stabilization.currentTarget,
+      //     reason: 'no_valid_target_found'
+      //   });
+      // }
       
       return bestTarget;
     }
@@ -680,6 +693,9 @@ export class NPCStateManager {
 
   // Основной цикл обновления
   private update(_time: number, deltaMs: number): void {
+    // Пропускаем обновление если игра на паузе
+    if (this.pauseManager?.getPaused()) return;
+    
     const toDelete: any[] = [];
     
     for (const [obj, context] of this.contexts.entries()) {

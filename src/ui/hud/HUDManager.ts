@@ -1,10 +1,14 @@
 import Phaser from 'phaser';
 import { MinimapManager } from '@/sys/MinimapManager';
 import type { ConfigManager } from '@/sys/ConfigManager';
+import type { PauseManager } from '@/sys/PauseManager';
+import type { TimeManager } from '@/sys/TimeManager';
 
 export class HUDManager {
   private scene: Phaser.Scene;
   private configRef?: ConfigManager;
+  private pauseManager?: PauseManager;
+  private timeManager?: TimeManager;
   
   // HUD elements
   private speedText?: Phaser.GameObjects.Text;
@@ -26,6 +30,13 @@ export class HUDManager {
   private minimapHit?: Phaser.GameObjects.Zone;
   private isMinimapDragging: boolean = false;
   private minimapBounds?: { x: number; y: number; w: number; h: number };
+  
+  // Pause and Time UI elements
+  private pauseIndicator?: Phaser.GameObjects.Text;
+  private pauseBlinkTween?: Phaser.Tweens.Tween;
+  private cycleCounterText?: Phaser.GameObjects.Text;
+  private cycleProgressBar?: Phaser.GameObjects.Rectangle;
+  private cycleProgressBarBg?: Phaser.GameObjects.Rectangle;
   // Combat UI state
   private slotRecords: Array<{
     slotIndex: number;
@@ -51,8 +62,11 @@ export class HUDManager {
     this.scene = scene;
   }
 
-  init(config: ConfigManager, ship: Phaser.GameObjects.GameObject) {
+  init(config: ConfigManager, ship: Phaser.GameObjects.GameObject, pauseManager?: PauseManager, timeManager?: TimeManager) {
     this.configRef = config;
+    this.pauseManager = pauseManager;
+    this.timeManager = timeManager;
+    
     // сброс локального UI-состояния
     this.selectedSlots.clear();
     this.cursorOrder = [];
@@ -62,6 +76,8 @@ export class HUDManager {
     this.createWeaponBar();
     this.createMinimap(ship);
     this.createSystemTitle();
+    this.createPauseUI();
+    this.createTimeUI();
 
     const starScene = this.scene.scene.get('StarSystemScene') as any;
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
@@ -80,6 +96,7 @@ export class HUDManager {
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.realignCursorIcons());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.syncSlotsVisual());
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateTimeUI());
 
     // Клавиши
     const kb = this.scene.input.keyboard;
@@ -1025,6 +1042,143 @@ export class HUDManager {
   }
 
   // Game Over overlay with rexUI button
+  private createPauseUI() {
+    // Индикатор паузы в центре экрана
+    const sw = this.scene.scale.width;
+    const sh = this.scene.scale.height;
+    
+    this.pauseIndicator = this.scene.add.text(sw / 2, sh / 2 - 100, 'ПАУЗА', {
+      color: '#ffffff',
+      fontSize: '72px',
+      fontFamily: 'HooskaiChamferedSquare',
+      stroke: '#000000',
+      strokeThickness: 8
+    }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(5000).setVisible(false);
+    
+    try { 
+      (this.pauseIndicator as any).setResolution?.(this.uiTextResolution); 
+    } catch {}
+    
+    // Подписываемся на события паузы
+    this.scene.events.on('game-paused', () => this.showPauseIndicator());
+    this.scene.events.on('game-resumed', () => this.hidePauseIndicator());
+    
+    // Обновляем позицию при ресайзе
+    this.scene.scale.on('resize', (gameSize: any) => {
+      if (this.pauseIndicator) {
+        this.pauseIndicator.setPosition(gameSize.width / 2, gameSize.height / 2 - 100);
+      }
+    });
+  }
+
+  private createTimeUI() {
+    if (!this.minimapBounds) {
+      // Создаем с дефолтными позициями, если миникарта еще не готова
+      const sw = this.scene.scale.width;
+      const sh = this.scene.scale.height;
+      const mapX = sw - 512 - 40; // дефолтная позиция миникарты
+      const mapY = 40;
+      const mapW = 512;
+      this.minimapBounds = { x: mapX, y: mapY, w: mapW, h: 384 };
+    }
+    
+    const mapX = this.minimapBounds.x;
+    const mapY = this.minimapBounds.y;
+    const mapW = this.minimapBounds.w;
+    
+    // Счетчик циклов над миникартой
+    const cycleX = mapX + mapW / 2;
+    const cycleY = mapY - 80; // Отступ от миникарты
+    
+    this.cycleCounterText = this.scene.add.text(cycleX, cycleY, 'Имперская эпоха\nЦикл: 0010', {
+      color: '#ffffff',
+      fontSize: '28px',
+      fontFamily: 'HooskaiChamferedSquare',
+      align: 'center',
+      lineSpacing: 8
+    }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1501);
+    
+    try { 
+      (this.cycleCounterText as any).setResolution?.(this.uiTextResolution); 
+    } catch {}
+    
+    // Прогресс-бар под счетчиком циклов
+    const barY = cycleY + 12;
+    const barW = mapW - 40; // Чуть уже миникарты
+    const barH = 4;
+    const barX = mapX + 20; // Центрируем
+    
+    this.cycleProgressBarBg = this.scene.add.rectangle(barX, barY, barW, barH, 0x2c2a2d, 1)
+      .setOrigin(0, 0.5).setScrollFactor(0).setDepth(1500);
+    this.cycleProgressBarBg.setStrokeStyle(1, 0xA28F6E, 1);
+    
+    this.cycleProgressBar = this.scene.add.rectangle(barX + 1, barY, 0, barH - 2, 0x22c55e, 1)
+      .setOrigin(0, 0.5).setScrollFactor(0).setDepth(1501);
+    
+    // Обновляем позицию при ресайзе
+    this.scene.scale.on('resize', (gameSize: any) => {
+      if (this.cycleCounterText && this.minimapBounds) {
+        const newMapX = gameSize.width - this.minimapBounds.w - 40;
+        const newCycleX = newMapX + this.minimapBounds.w / 2;
+        this.cycleCounterText.setPosition(newCycleX, cycleY);
+        
+        if (this.cycleProgressBarBg) {
+          this.cycleProgressBarBg.setPosition(newMapX + 20, barY);
+        }
+        if (this.cycleProgressBar) {
+          this.cycleProgressBar.setPosition(newMapX + 21, barY);
+        }
+      }
+    });
+  }
+
+  private showPauseIndicator() {
+    if (!this.pauseIndicator) return;
+    
+    this.pauseIndicator.setVisible(true);
+    
+    // Создаем мигающий эффект
+    if (this.pauseBlinkTween) {
+      this.pauseBlinkTween.destroy();
+    }
+    
+    this.pauseBlinkTween = this.scene.tweens.add({
+      targets: this.pauseIndicator,
+      alpha: 0.3,
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  private hidePauseIndicator() {
+    if (!this.pauseIndicator) return;
+    
+    this.pauseIndicator.setVisible(false);
+    
+    if (this.pauseBlinkTween) {
+      this.pauseBlinkTween.destroy();
+      this.pauseBlinkTween = undefined;
+    }
+    
+    // Восстанавливаем альфу
+    this.pauseIndicator.setAlpha(1);
+  }
+
+  private updateTimeUI() {
+    if (!this.timeManager || !this.cycleCounterText || !this.cycleProgressBar) return;
+    
+    // Обновляем текст счетчика циклов
+    const cycleFormatted = this.timeManager.getCurrentCycleFormatted();
+    this.cycleCounterText.setText(`Имперская эпоха\nЦикл: ${cycleFormatted}`);
+    
+    // Обновляем прогресс-бар
+    const progress = this.timeManager.getCycleProgress();
+    const maxWidth = (this.minimapBounds?.w ?? 512) - 42; // -42 для отступов и рамки
+    this.cycleProgressBar.width = Math.max(0, progress * maxWidth);
+  }
+
   // Публичный метод для полного обновления HUD при смене системы
   public updateForNewSystem(config: ConfigManager, ship: Phaser.GameObjects.GameObject) {
     this.configRef = config;
@@ -1048,9 +1202,14 @@ export class HUDManager {
     // уничтожить HUD элементы
     this.speedText?.destroy(); this.followToggle?.destroy(); this.shipNameText?.destroy(); this.shipIcon?.destroy();
     this.weaponSlotsContainer?.destroy(); this.weaponPanel?.destroy(); this.hullFill?.destroy(); this.followLabel?.destroy(); this.gameOverGroup?.destroy(); this.minimapHit?.destroy();
+    
+    // уничтожить элементы паузы и времени
+    this.pauseIndicator?.destroy(); this.cycleCounterText?.destroy(); this.cycleProgressBar?.destroy(); this.cycleProgressBarBg?.destroy();
+    if (this.pauseBlinkTween) { this.pauseBlinkTween.destroy(); this.pauseBlinkTween = undefined; }
 
     // очистить ссылки
     this.speedText = undefined; this.followToggle = undefined; this.shipNameText = undefined; this.shipIcon = undefined; this.weaponSlotsContainer = undefined; this.weaponPanel = undefined; this.hullFill = undefined; this.followLabel = undefined; this.gameOverGroup = undefined; this.minimapHit = undefined;
+    this.pauseIndicator = undefined; this.cycleCounterText = undefined; this.cycleProgressBar = undefined; this.cycleProgressBarBg = undefined;
 
     // уничтожить текстовые ref
     const hpText = (this.scene as any).__hudHullValue as Phaser.GameObjects.Text | undefined; hpText?.destroy(); (this.scene as any).__hudHullValue = undefined;

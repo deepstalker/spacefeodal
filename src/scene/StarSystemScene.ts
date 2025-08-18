@@ -7,6 +7,8 @@ import { PathfindingManager } from '@/sys/PathfindingManager';
 import { MovementManager } from '@/sys/MovementManager';
 import { CombatManager } from '@/sys/CombatManager';
 import { EnhancedFogOfWar } from '@/sys/fog-of-war/EnhancedFogOfWar';
+import { PauseManager } from '@/sys/PauseManager';
+import { TimeManager } from '@/sys/TimeManager';
 // Тип не импортируем, чтобы не тянуть модуль на этап линтинга; используем any
 import { StaticObjectType, DynamicObjectType } from '@/sys/fog-of-war/types';
 import { MovementPriority } from '@/sys/NPCStateManager';
@@ -20,6 +22,8 @@ export default class StarSystemScene extends Phaser.Scene {
   private movement!: MovementManager;
   private combat!: CombatManager;
   private fogOfWar!: EnhancedFogOfWar;
+  private pauseManager!: PauseManager;
+  private timeManager!: TimeManager;
   private npcs: any[] = [];
   
   // Состояние для удержания правой кнопки мыши
@@ -81,6 +85,24 @@ export default class StarSystemScene extends Phaser.Scene {
     this.movement = new MovementManager(this, this.config);
     this.combat = new CombatManager(this, this.config);
     this.fogOfWar = new EnhancedFogOfWar(this, this.config);
+    
+    // Инициализируем системы паузы и времени
+    this.pauseManager = new PauseManager(this);
+    this.timeManager = new TimeManager(this);
+    this.timeManager.init();
+    
+    // Передаем PauseManager во все системы
+    this.combat.setPauseManager(this.pauseManager);
+    this.combat.npcStateManager?.setPauseManager(this.pauseManager);
+    this.movement.setPauseManager(this.pauseManager);
+    
+    // Связываем паузу с тайм-менеджером
+    this.events.on('game-paused', () => {
+      this.timeManager.pause();
+    });
+    this.events.on('game-resumed', () => {
+      this.timeManager.resume();
+    });
 
     const system = this.config.system;
     const maxSize = 25000;
@@ -101,12 +123,16 @@ export default class StarSystemScene extends Phaser.Scene {
       nebula = new BackgroundTiler(this, 'bg_nebula_blue', -25, 0.8, 0.8, Phaser.BlendModes.SCREEN);
       nebula.init(system.size.width, system.size.height);
     }
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => { stars.update(); if (nebula) nebula.update(); });
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => { 
+      // Background всегда обновляется (не зависит от паузы)
+      stars.update(); 
+      if (nebula) nebula.update(); 
+    });
     // Optional extra starfield
     this.starfield = this.add.graphics().setDepth(-15);
     this.drawStarfield();
 
-    // Parallax update and resize handling
+    // Parallax update and resize handling (всегда активно)
     this.events.on(Phaser.Scenes.Events.UPDATE, this.updateBackground, this);
     this.scale.on('resize', (gameSize: any) => {
       if (this.bgTile) {
@@ -232,7 +258,12 @@ export default class StarSystemScene extends Phaser.Scene {
     // Врагов не спауним напрямую — они будут привязаны к энкаунтерам (POI)
 
     // Сообщаем другим сценам, что система готова (конфиги загружены, корабль создан)
-    this.events.emit('system-ready', { config: this.config, ship: this.ship });
+    this.events.emit('system-ready', { 
+      config: this.config, 
+      ship: this.ship, 
+      pauseManager: this.pauseManager, 
+      timeManager: this.timeManager 
+    });
 
     // Настраиваем обработку мыши для радиального меню
     this.setupMouseControls();
@@ -243,6 +274,12 @@ export default class StarSystemScene extends Phaser.Scene {
     followKey?.on('down', () => {
       if (this.cameraMgr.isFollowing()) this.cameraMgr.disableFollow();
       else this.cameraMgr.enableFollow(this.ship);
+    });
+
+    // Toggle pause (P key - изменил с SPACE из-за возможных конфликтов)
+    const pauseKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+    pauseKey?.on('down', () => {
+      this.pauseManager.togglePause();
     });
 
     this.events.on(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -256,15 +293,38 @@ export default class StarSystemScene extends Phaser.Scene {
       this.save.flush();
     });
 
-    this.events.on(Phaser.Scenes.Events.UPDATE, this.updateSystem, this);
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updatePatrolNPCs(dt));
+    // Регистрируем UPDATE обработчики с поддержкой паузы
+    this.events.on(Phaser.Scenes.Events.UPDATE, (time: number, delta: number) => {
+      if (!this.pauseManager.getPaused()) {
+        this.updateSystem(time, delta);
+      }
+    });
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => {
+      if (!this.pauseManager.getPaused()) {
+        this.drawAimLine();
+      }
+    });
+    this.events.on(Phaser.Scenes.Events.UPDATE, () => {
+      if (!this.pauseManager.getPaused()) {
+        this.updateEncounters();
+      }
+    });
     this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      // Update fog of war with current player position
-      if (this.ship && this.fogOfWar) {
-        this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+      if (!this.pauseManager.getPaused()) {
+        this.updateNPCs(dt);
+      }
+    });
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
+      if (!this.pauseManager.getPaused()) {
+        this.updatePatrolNPCs(dt);
+      }
+    });
+    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
+      if (!this.pauseManager.getPaused()) {
+        // Update fog of war with current player position
+        if (this.ship && this.fogOfWar) {
+          this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+        }
       }
     });
 
@@ -284,6 +344,14 @@ export default class StarSystemScene extends Phaser.Scene {
     if (this.playerHp <= 0) {
       this.gameOver();
     }
+  }
+
+  public getPauseManager(): PauseManager {
+    return this.pauseManager;
+  }
+
+  public getTimeManager(): TimeManager {
+    return this.timeManager;
   }
 
   private gameOver() {

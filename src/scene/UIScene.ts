@@ -29,12 +29,12 @@ export default class UIScene extends Phaser.Scene {
     
     // Инициализация UI компонентов: ждём готовности StarSystemScene
     const starScene = this.scene.get('StarSystemScene') as Phaser.Scene & any;
-    const onReady = (payload: { config: ConfigManager; ship: Phaser.GameObjects.GameObject }) => {
+    const onReady = (payload: { config: ConfigManager; ship: Phaser.GameObjects.GameObject; pauseManager?: any; timeManager?: any }) => {
       this.configRef = payload.config;
       
-      // Инициализация HUD (включая миникарту)
+      // Инициализация HUD (включая миникарту, паузу и время)
       this.hud = new HUDManager(this);
-      this.hud.init(payload.config, payload.ship);
+      this.hud.init(payload.config, payload.ship, payload.pauseManager, payload.timeManager);
       
       // при смене системы полностью пересоздаем HUD для корректной работы шрифтов
       starScene.events.on('system-ready', (pl: any) => {
@@ -44,7 +44,12 @@ export default class UIScene extends Phaser.Scene {
     };
     // Если уже создана — попробуем сразу
     if ((starScene as any).config && (starScene as any).ship) {
-      onReady({ config: (starScene as any).config, ship: (starScene as any).ship });
+      onReady({ 
+        config: (starScene as any).config, 
+        ship: (starScene as any).ship, 
+        pauseManager: (starScene as any).pauseManager, 
+        timeManager: (starScene as any).timeManager 
+      });
     } else {
       starScene.events.once('system-ready', onReady);
     }

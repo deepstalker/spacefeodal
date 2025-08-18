@@ -78,7 +78,8 @@ export class NPCLazySimulationManager {
         const id = `${keyPrefix}:${prefab}:${i}`;
         const spawnAt = { x: this.clamp(x, 0, sys.size.width), y: this.clamp(y, 0, sys.size.height) };
         this.pending.push({ id, prefab, home, spawnAt, created: false });
-        try { console.log('[NPCSim] pending created', { id, prefab, home, spawnAt }); } catch {}
+        // Debug logging disabled
+        // try { console.log('[NPCSim] pending created', { id, prefab, home, spawnAt }); } catch {}
       }
     }
   }
@@ -101,7 +102,8 @@ export class NPCLazySimulationManager {
       if (p.created) continue;
       const d = Math.hypot(p.spawnAt.x - player.x, p.spawnAt.y - player.y);
       if (d <= threshold) {
-        try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
+        // Debug logging disabled
+        // try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
         this.createNPC(p);
       }
     }
@@ -147,7 +149,8 @@ export class NPCLazySimulationManager {
     // Страховка: проставим профиль ИИ в боевой системе (поведение/retreatHpPct)
     try { if (aiKey) cm.setAIProfileFor?.(npc, aiKey); } catch {}
     p.created = true;
-    try { console.log('[NPCSim] npc created', { id: p.id, prefab: p.prefab, at: p.spawnAt, home: p.home }); } catch {}
+    // Debug logging disabled
+    // try { console.log('[NPCSim] npc created', { id: p.id, prefab: p.prefab, at: p.spawnAt, home: p.home }); } catch {}
   }
 
   private scheduleReplenish() {
@@ -185,11 +188,13 @@ export class NPCLazySimulationManager {
         const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:repl:${Date.now()}:${i}`, prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
         const delay = delayMin + Math.random() * (delayMax - delayMin);
         totalScheduled++;
-        try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
+        // Debug logging disabled
+        // try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
         this.scene.time.delayedCall(delay, () => this.createNPC(p));
       }
     }
-    try { if (totalScheduled > 0) console.log('[NPCSim] replenish complete', { totalScheduled }); } catch {}
+    // Debug logging disabled
+    // try { if (totalScheduled > 0) console.log('[NPCSim] replenish complete', { totalScheduled }); } catch {}
   }
 
   private listQuotaEntries(): Array<{ prefab: string; count: number; home: HomeRef }> {

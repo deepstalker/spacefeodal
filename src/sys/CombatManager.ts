@@ -7,7 +7,8 @@ import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
 export class CombatManager {
-  private static npcCounter = 0; // Счетчик для уникальных ID
+  private static npcCounter = 0;
+  private pauseManager?: any; // PauseManager reference
   private scene: Phaser.Scene;
   private config: ConfigManager;
   private npcMovement: NPCMovementManager;
@@ -82,6 +83,10 @@ export class CombatManager {
 
   setFogOfWar(fogOfWar: EnhancedFogOfWar) {
     this.fogOfWar = fogOfWar;
+  }
+
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
   }
 
   getTargetObjects(): Phaser.GameObjects.GameObject[] {
@@ -354,6 +359,9 @@ export class CombatManager {
   }
 
   private update(_time: number, deltaMs: number) {
+    // Пропускаем обновление если игра на паузе
+    if (this.pauseManager?.getPaused()) return;
+    
     // pulse selection
     if (this.selectedTarget && this.selectionCircle) {
       this.selectionPulsePhase += deltaMs * 0.01;
@@ -473,15 +481,16 @@ export class CombatManager {
     for (const t of this.targets) {
       if (!t.ai || !t.intent || t.intent.type !== 'attack') {
         // Отладочная информация почему NPC не атакует
-        if (process.env.NODE_ENV === 'development' && Math.random() < 0.005) { // 0.5% логов
-          const hasAI = !!t.ai;
-          const hasIntent = !!t.intent;
-          const intentType = t.intent?.type;
-          console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} not firing`, {
-            hasAI, hasIntent, intentType,
-            reason: !hasAI ? 'no_ai' : !hasIntent ? 'no_intent' : `intent_is_${intentType}`
-          });
-        }
+        // Debug logging disabled
+        // if (process.env.NODE_ENV === 'development' && Math.random() < 0.005) { // 0.5% логов
+        //   const hasAI = !!t.ai;
+        //   const hasIntent = !!t.intent;
+        //   const intentType = t.intent?.type;
+        //   console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} not firing`, {
+        //     hasAI, hasIntent, intentType,
+        //     reason: !hasAI ? 'no_ai' : !hasIntent ? 'no_intent' : `intent_is_${intentType}`
+        //   });
+        // }
         continue;
       }
       const targetObj = t.intent.target;
@@ -532,6 +541,9 @@ export class CombatManager {
   }
 
   private updateEnemiesAI(deltaMs: number) {
+    // Пропускаем обновление если игра на паузе
+    if (this.pauseManager?.getPaused()) return;
+    
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
       // If object is returning home (e.g., wave despawn), skip combat steering
@@ -676,18 +688,19 @@ export class CombatManager {
           }
             
           // ОТЛАДКА: проверяем включен ли игрок в кандидаты
-          if (process.env.NODE_ENV === 'development') {
-            const includesPlayer = candidates.includes(this.ship);
-            console.log(`[Candidates] ${t.shipId} #${(obj as any).__uniqueId} candidate check`, {
-              totalCandidates: candidates.length,
-              includesPlayer,
-              shouldIncludePlayer,
-              playerRelation,
-              faction: t.faction,
-              shipIsActive: this.ship?.active,
-              candidateIds: candidates.map(c => (c === this.ship ? 'PLAYER' : (c as any).__uniqueId))
-            });
-          }
+          // Debug logging disabled
+          // if (process.env.NODE_ENV === 'development') {
+          //   const includesPlayer = candidates.includes(this.ship);
+          //   console.log(`[Candidates] ${t.shipId} #${(obj as any).__uniqueId} candidate check`, {
+          //     totalCandidates: candidates.length,
+          //     includesPlayer,
+          //     shouldIncludePlayer,
+          //     playerRelation,
+          //     faction: t.faction,
+          //     shipIsActive: this.ship?.active,
+          //     candidateIds: candidates.map(c => (c === this.ship ? 'PLAYER' : (c as any).__uniqueId))
+          //   });
+          // }
             
           const stateContext = this.npcStateManager.getContext(obj);
           

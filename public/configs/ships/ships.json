@@ -12,7 +12,7 @@
       },
       "combat": {
         "weaponSlots": 3,
-        "accuracy": 0.999,
+        "accuracy": 1,
         "slots": [
           { "offset": { "x": -20, "y": -30 } },
           { "offset": { "x": 0, "y": -40 } },
