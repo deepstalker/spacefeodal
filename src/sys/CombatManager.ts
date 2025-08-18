@@ -988,6 +988,8 @@ export class CombatManager {
     const speed = w.projectileSpeed;
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
+    
+
 
     // Рассчитываем время жизни снаряда: дистанция / скорость. Добавляем небольшой буфер (50 мс).
     const lifetimeMs = (w.range / Math.max(1, speed)) * 1000 + 50;
@@ -1545,6 +1547,39 @@ export class CombatManager {
     }
   }
 
+  /**
+   * Итеративный расчет времени перехвата для более точного наведения
+   * Особенно важно для прямых углов и больших расстояний
+   */
+  private calculateInterceptTime(rx: number, ry: number, vx: number, vy: number, projectileSpeed: number): number {
+    const maxIterations = 10;
+    const tolerance = 0.1;
+    
+    // Начальная оценка времени
+    let t = Math.sqrt(rx * rx + ry * ry) / projectileSpeed;
+    
+    for (let i = 0; i < maxIterations; i++) {
+      // Позиция цели в момент времени t
+      const futureX = rx + vx * t;
+      const futureY = ry + vy * t;
+      
+      // Расстояние до будущей позиции цели
+      const distanceToFuture = Math.sqrt(futureX * futureX + futureY * futureY);
+      
+      // Время полета снаряда до этой позиции
+      const newT = distanceToFuture / projectileSpeed;
+      
+      // Проверяем сходимость
+      if (Math.abs(newT - t) < tolerance / 1000) {
+        return newT;
+      }
+      
+      t = newT;
+    }
+    
+    return t;
+  }
+
   private getAimedTargetPoint(shooter: any, target: any, w: any) {
     // Итоговая точность = точность оружия * модификатор точности корабля
     let weaponAccuracy = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
@@ -1562,11 +1597,25 @@ export class CombatManager {
       if (typeof sa === 'number') shipAccuracy = Phaser.Math.Clamp(sa, 0, 1);
     }
     const accuracy = Phaser.Math.Clamp(weaponAccuracy * shipAccuracy, 0, 1);
-    const prev = (target as any).__prevPos || { x: target.x, y: target.y };
-    const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
-    const vx = (target.x - prev.x) / dt;
-    const vy = (target.y - prev.y) / dt;
-    (target as any).__prevPos = { x: target.x, y: target.y };
+    
+
+    // Получаем реальную скорость цели из её системы движения
+    let vx = 0, vy = 0;
+    
+    // Проверяем есть ли у цели движение (NPC и player имеют __moveRef)
+    const moveRef = (target as any).__moveRef;
+    if (moveRef && typeof moveRef.speed === 'number' && typeof moveRef.headingRad === 'number') {
+      // Получаем скорость напрямую из MovementManager
+      // MovementManager.speed в пикселях/кадр, нужно конвертировать в пикселях/сек
+      const speedPerFrame = moveRef.speed;
+      const speedPerSecond = speedPerFrame * 60; // предполагаем 60 FPS
+      const heading = moveRef.headingRad;
+      
+      vx = Math.cos(heading) * speedPerSecond;
+      vy = Math.sin(heading) * speedPerSecond;
+    }
+    
+
     const projectileSpeed = w.projectileSpeed;
     const sx = shooter.x;
     const sy = shooter.y;
@@ -1574,26 +1623,74 @@ export class CombatManager {
     const ty = target.y;
     const rx = tx - sx;
     const ry = ty - sy;
-    const a2 = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
-    const b = 2 * (rx * vx + ry * vy);
-    const c = rx * rx + ry * ry;
+    const targetSpeed = Math.sqrt(vx * vx + vy * vy);
+    const distance = Math.sqrt(rx * rx + ry * ry);
+    
     let tHit: number;
-    if (Math.abs(a2) < 1e-3) {
-      tHit = c / Math.max(1, -b);
+    
+    // Для неподвижной или очень медленной цели - простой расчет
+    if (targetSpeed < 1) {
+      tHit = distance / projectileSpeed;
     } else {
-      const disc = b * b - 4 * a2 * c;
-      if (disc < 0) tHit = 0; else {
-        const t1 = (-b - Math.sqrt(disc)) / (2 * a2);
-        const t2 = (-b + Math.sqrt(disc)) / (2 * a2);
-        tHit = Math.min(t1, t2);
-        if (tHit < 0) tHit = Math.max(t1, t2);
-        if (tHit < 0) tHit = 0;
+      // Используем итеративный метод для более точного расчета
+      // Особенно важно для прямых углов и больших расстояний
+      tHit = this.calculateInterceptTime(rx, ry, vx, vy, projectileSpeed);
+      
+      // Для сравнения - старый метод
+      const oldMethod = () => {
+        const a2 = vx * vx + vy * vy - projectileSpeed * projectileSpeed;
+        const b = 2 * (rx * vx + ry * vy);
+        const c = rx * rx + ry * ry;
+        
+        if (Math.abs(a2) < 1e-6) {
+          return c / Math.max(1, -b);
+        } else {
+          const disc = b * b - 4 * a2 * c;
+          if (disc < 0) {
+            return distance / projectileSpeed;
+          } else {
+            const t1 = (-b - Math.sqrt(disc)) / (2 * a2);
+            const t2 = (-b + Math.sqrt(disc)) / (2 * a2);
+            let oldT = Math.min(t1, t2);
+            if (oldT < 0) oldT = Math.max(t1, t2);
+            if (oldT < 0) oldT = distance / projectileSpeed;
+            return oldT;
+          }
+        }
+      };
+      
+      const oldTHit = oldMethod();
+      console.log(`🔍 Time calculation comparison: Old=${oldTHit.toFixed(3)}, New=${tHit.toFixed(3)}, Diff=${Math.abs(oldTHit - tHit).toFixed(3)}`);
+      
+      // Fallback: если итеративный метод не дал результата
+      if (tHit <= 0 || isNaN(tHit)) {
+        tHit = distance / projectileSpeed;
       }
     }
-    const leadX = tx + vx * tHit * accuracy;
-    const leadY = ty + vy * tHit * accuracy;
-    const aimX = Phaser.Math.Linear(tx, leadX, accuracy);
-    const aimY = Phaser.Math.Linear(ty, leadY, accuracy);
+    // Рассчитываем идеальную точку упреждения (где будет цель)
+    const perfectLeadX = tx + vx * tHit;
+    const perfectLeadY = ty + vy * tHit;
+    
+    // При 100% точности стреляем точно в упрежденную позицию
+    // При меньшей точности добавляем случайную ошибку
+    const accuracyError = 1 - accuracy; // Величина ошибки (0 = идеально, 1 = максимальная ошибка)
+    
+    // Фиксированная максимальная ошибка + небольшая зависимость от расстояния
+    // При нулевой точности максимальная ошибка = 100 пикселей + 2% от расстояния
+    const maxErrorRadius = 100 + distance * 0.02;
+    
+    // Генерируем случайную ошибку в круге
+    const errorRadius = maxErrorRadius * accuracyError * Math.random();
+    const errorAngle = Math.random() * Math.PI * 2;
+    const errorX = Math.cos(errorAngle) * errorRadius;
+    const errorY = Math.sin(errorAngle) * errorRadius;
+    
+    const aimX = perfectLeadX + errorX;
+    const aimY = perfectLeadY + errorY;
+    
+
+
+    
     return { x: aimX, y: aimY };
   }
 
