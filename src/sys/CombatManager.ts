@@ -313,7 +313,8 @@ export class CombatManager {
 
     } else {
       this.playerWeaponTargets.delete(slotKey);
-
+      // Скрываем out-of-range текст при снятии цели
+      try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
     }
     
     this.refreshSelectionCircleColor();
@@ -328,6 +329,10 @@ export class CombatManager {
       const clearedSlots = Array.from(this.playerWeaponTargets.keys());
       this.playerWeaponTargets.clear();
       if (clearedSlots.length > 0) {
+        // Скрываем out-of-range текст для всех очищенных слотов
+        for (const slotKey of clearedSlots) {
+          try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+        }
         // try { this.scene.events.emit('player-weapon-target-cleared', null, clearedSlots); } catch {}
       }
     }
@@ -1609,30 +1614,50 @@ export class CombatManager {
       // обновление визуала произойдет в тиках
       return;
     }
+    // Принудительно останавливаем существующий beam перед созданием нового
+    this.stopBeamIfAny(shooter, slotKey);
+    
     // Старт нового луча (ниже корабля-стрелка)
     const baseDepth = ((((shooter as any)?.depth) ?? 1) - 0.05);
     const gfx = this.scene.add.graphics().setDepth(baseDepth);
     const tickMs = Math.max(10, w?.beam?.tickMs ?? 100);
     const durationMs = Math.max(tickMs, w?.beam?.durationMs ?? 1000);
     const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-    const dmgTick = typeof w?.beam?.damagePerTick === 'number' ? w.beam.damagePerTick : Math.max(1, Math.round((w.damage ?? 1) * (tickMs / 1000)));
+    const dmgTick = w?.beam?.damagePerTick ?? 1; // Для beam оружия всегда используем damagePerTick
+    
     const timer = this.scene.time.addEvent({ delay: tickMs, loop: true, callback: () => {
       // Проверяем паузу боевых систем
       if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
         return;
       }
       
-      if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
+      if (!shooter?.active || !target?.active) { 
+        this.stopBeamIfAny(shooter, slotKey); 
+        return; 
+      }
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
-      if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
+      if (d > w.range) { 
+        this.stopBeamIfAny(shooter, slotKey); 
+        return; 
+      }
+      
       // Наносим урон по тикам
       this.applyDamage(target, dmgTick, shooter);
+      
+      // Вычисляем точку попадания в край цели для эффекта
+      if (w.hitEffect) {
+        const targetRadius = this.getEffectiveRadius(target);
+        const beamVector = new Phaser.Math.Vector2(dx, dy).normalize();
+        const hitPoint = {
+          x: target.x - beamVector.x * targetRadius,
+          y: target.y - beamVector.y * targetRadius
+        };
+        this.spawnHitEffect(hitPoint.x, hitPoint.y, w);
+      }
     }});
     
-    // Регистрируем таймер для паузы
-    if (this.pauseManager) {
-      this.pauseManager.pauseTimer(timer, `beam-tick-${shooter.__uniqueId || 'player'}-${slotKey}`);
-    }
+    // ПРИМЕЧАНИЕ: Регистрация таймеров в PauseManager отключена из-за конфликтов
+    // Beam таймеры работают как обычные Phaser таймеры, паузы обрабатываются вручную в callback
     // Перерисовка луча на каждом кадре (не наносит урон)
     const redraw = () => {
       // Проверяем паузу боевых систем
@@ -1644,6 +1669,15 @@ export class CombatManager {
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
       if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
       const muzzle = this.getMuzzleWorldPositionFor(shooter, w.muzzleOffset);
+      
+      // Для beam оружия целимся в край цели вместо центра
+      const targetRadius = this.getEffectiveRadius(target);
+      const beamVector = new Phaser.Math.Vector2(dx, dy).normalize();
+      const hitPoint = {
+        x: target.x - beamVector.x * targetRadius,
+        y: target.y - beamVector.y * targetRadius
+      };
+      
       gfx.clear();
       const colorHex = (w?.beam?.color || w?.hitEffect?.color || w?.projectile?.color || '#60a5fa').replace('#','0x');
       const outerW = Math.max(1, Math.floor(w?.beam?.outerWidth ?? 6));
@@ -1651,10 +1685,13 @@ export class CombatManager {
       const outerA = Phaser.Math.Clamp(w?.beam?.outerAlpha ?? 0.25, 0, 1);
       const innerA = Phaser.Math.Clamp(w?.beam?.innerAlpha ?? 0.9, 0, 1);
       gfx.lineStyle(outerW, Number(colorHex), outerA);
-      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(target.x, target.y); gfx.strokePath();
+      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(hitPoint.x, hitPoint.y); gfx.strokePath();
       gfx.lineStyle(innerW, Number(colorHex), innerA);
-      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(target.x, target.y); gfx.strokePath();
+      gfx.beginPath(); gfx.moveTo(muzzle.x, muzzle.y); gfx.lineTo(hitPoint.x, hitPoint.y); gfx.strokePath();
       gfx.setAlpha(1);
+      
+      // Сохраняем точку попадания для эффекта урона
+      (gfx as any).__hitPoint = hitPoint;
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, redraw);
     (gfx as any).__beamRedraw = redraw;
@@ -1675,10 +1712,8 @@ export class CombatManager {
       this.stopBeamIfAny(shooter, slotKey);
     });
     
-    // Регистрируем таймер остановки для паузы
-    if (this.pauseManager) {
-      this.pauseManager.pauseTimer(durationTimer, `beam-duration-${shooter.__uniqueId || 'player'}-${slotKey}`);
-    }
+    // ПРИМЕЧАНИЕ: Регистрация таймеров в PauseManager отключена из-за конфликтов
+    // Duration таймер работает как обычный Phaser таймер
     if (shooter === this.ship) { try { this.scene.events.emit('player-weapon-fired', slotKey, target); } catch {} }
   }
 
@@ -1687,16 +1722,10 @@ export class CombatManager {
     if (!map) return;
     const s = map.get(slotKey);
     if (!s) return;
+    
     try { s.timer.remove(false); } catch {}
     try { const cb = (s.gfx as any).__beamRedraw; if (cb) this.scene.events.off(Phaser.Scenes.Events.UPDATE, cb); } catch {}
     try { s.gfx.clear(); s.gfx.destroy(); } catch {}
-    
-    // Отменяем регистрацию таймеров в PauseManager
-    if (this.pauseManager) {
-      const shooterId = shooter.__uniqueId || 'player';
-      this.pauseManager.unregisterUpdateHandler(`beam-tick-${shooterId}-${slotKey}`);
-      this.pauseManager.unregisterUpdateHandler(`beam-duration-${shooterId}-${slotKey}`);
-    }
     
     map.delete(slotKey);
   }
