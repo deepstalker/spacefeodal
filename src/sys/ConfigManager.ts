@@ -13,6 +13,13 @@ export type SettingsConfig = {
     };
     combat?: {
       rightClickCancelSelectedWeapons?: boolean;
+      weaponRanges?: {
+        color?: string;        // e.g. '#4ade80'
+        fillAlpha?: number;    // 0..1
+        strokeColor?: string;  // e.g. '#4ade80'
+        strokeAlpha?: number;  // 0..1
+        strokeWidth?: number;  // px
+      };
     };
   };
   camera: { minZoom: number; maxZoom: number; edgePanMargin: number; edgePanSpeed: number };

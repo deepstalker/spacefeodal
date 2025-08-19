@@ -6,13 +6,13 @@
       "hull": 10000,
       "sprite": {
         "key": "ship_explorer",
-        "displaySize": { "width": 128, "height": 256 },
+        "displaySize": { "width": 128, "height": 384 },
         "origin": { "x": 0.5, "y": 0.5 },
         "noseOffsetDeg": 90
       },
       "combat": {
         "weaponSlots": 3,
-        "accuracy": 1,
+        "accuracy": 0.8,
         "slots": [
           { "offset": { "x": -20, "y": -30 } },
           { "offset": { "x": 0, "y": -40 } },
@@ -36,7 +36,7 @@
       "hull": 7000,
       "sprite": {
         "key": "ship_ordo_patrol_gunship",
-        "displaySize": { "width": 64, "height": 128 },
+        "displaySize": { "width": 64, "height": 192 },
         "origin": { "x": 0.5, "y": 0.5 },
         "noseOffsetDeg": -90
       },

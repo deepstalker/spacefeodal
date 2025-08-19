@@ -568,6 +568,12 @@ export class HUDManager {
     // иконка на курсоре
     this.addCursorIcon(rec);
     this.realignCursorIcons();
+
+    // Сообщаем сцене о выборе слота оружия (для чисто визуальных эффектов)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      star?.events?.emit('weapon-slot-selected', rec.slotKey, true);
+    } catch {}
   }
 
   private deselectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
@@ -608,6 +614,12 @@ export class HUDManager {
     }
     this.removeCursorIcon(rec.slotIndex);
     this.realignCursorIcons();
+
+    // Сообщаем сцене о снятии выбора слота оружия (для чисто визуальных эффектов)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      star?.events?.emit('weapon-slot-selected', rec.slotKey, false);
+    } catch {}
   }
 
   private addCursorIcon(rec: { slotIndex: number; slotKey: string; size: number; }) {
@@ -651,6 +663,13 @@ export class HUDManager {
     }
     this.selectedSlots.clear();
     this.cursorOrder = [];
+
+    // Дополнительно информируем сцену, что все выборы сняты (для страховки)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      const slots = (this.configRef!.player?.weapons ?? []).filter((k: string)=>!!k);
+      for (const slotKey of slots) star?.events?.emit('weapon-slot-selected', slotKey, false);
+    } catch {}
   }
 
   private handleLeftClickForWeapons(p: Phaser.Input.Pointer) {

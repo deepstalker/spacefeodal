@@ -53,6 +53,8 @@ export class CombatManager {
     };
   }>=[];
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
+  // Кольца радиусов оружия игрока: slotKey -> graphics circle
+  private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -63,6 +65,10 @@ export class CombatManager {
     
     // Обработка снятия паузы для корректировки временных меток
     this.scene.events.on('game-resumed', this.onGameResumed, this);
+    // Подписка на визуальные события выбора слотов оружия (только визуал)
+    this.scene.events.on('weapon-slot-selected', (slotKey: string, selected: boolean) => {
+      try { this.togglePlayerWeaponRangeCircle(slotKey, !!selected); } catch {}
+    });
     
 
   }
@@ -400,8 +406,10 @@ export class CombatManager {
           t.nameLabel = this.scene.add.text(0, 0, uniqueName, { color: '#ffffff', fontSize: '20px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
         }
         // Цвет имени по отношению к игроку: neutral -> 0x9E9382, enemy -> 0xA93226
-        const rel = this.getRelation('player', t.faction, t.overrides?.factions);
-        const color = (rel === 'confrontation') ? '#A93226' : '#9E9382';
+        const relAB = this.getRelation('player', t.faction, undefined);
+        const relBA = this.getRelation(t.faction, 'player', t.overrides?.factions);
+        const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
+        const color = isEnemyNow ? '#A93226' : '#9E9382';
         const baseName = this.resolveDisplayName(t) || 'Unknown';
         const uniqueName = `${baseName} #${(t.obj as any).__uniqueId || ''}`;
         
@@ -620,6 +628,19 @@ export class CombatManager {
     }
     // ensure HP bars for all combat targets remain visible
     this.refreshCombatUIAssigned();
+
+    // Обновляем позиции кругов радиуса оружия игрока (закреплены на корабле)
+    if (this.ship && this.playerWeaponRangeCircles.size > 0) {
+      for (const [slotKey, circle] of this.playerWeaponRangeCircles.entries()) {
+        if (!circle || !circle.active) continue;
+        circle.setPosition(this.ship.x, this.ship.y);
+        // на случай изменения конфига оружия на лету — обновим радиус
+        const w = this.config.weapons?.defs?.[slotKey];
+        if (w && typeof w.range === 'number') {
+          circle.setRadius(w.range);
+        }
+      }
+    }
   }
 
   private refreshSelectionCircleColor() {
@@ -1018,6 +1039,9 @@ export class CombatManager {
         const obj = rec.obj as any;
         if (!obj || !obj.active) continue;
         if (obj === shooter) continue;
+        // Пропускаем основную целевую точку здесь — она обрабатывается ниже отдельной веткой,
+        // чтобы не потерять урон по нейтральной цели из-за фильтра союзников
+        if (obj === target) continue;
         const st = obj.__state;
         const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof obj.alpha === 'number' && obj.alpha <= 0.05) || obj.visible === false;
         if (invulnerable) continue;
@@ -1026,18 +1050,23 @@ export class CombatManager {
         if (dAny <= hitR) {
           // Relation filter: only damage if shooter considers target as confrontation
           const victimFaction = rec.faction;
-          const rel = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
-          if (rel === 'confrontation') {
+          const relSV = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
+          const relVS = this.getRelation(victimFaction, shooterFaction, rec.overrides?.factions);
+          const allow = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          if (allow) {
             this.applyDamage(obj, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+            this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+            // Дерегистрируем снаряд из fog of war
+            if (this.fogOfWar) {
+              this.fogOfWar.unregisterObject(proj);
+            }
+            (proj as any).destroy?.();
+            return;
+          } else {
+            // нейтральная/союзная цель — не разрушаем снаряд, он продолжает движение
+            continue;
           }
-          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-          // Дерегистрируем снаряд из fog of war
-          if (this.fogOfWar) {
-            this.fogOfWar.unregisterObject(proj);
-          }
-          (proj as any).destroy?.();
-          return;
         }
       }
       const hitDist = this.getEffectiveRadius(target as any);
@@ -1047,16 +1076,26 @@ export class CombatManager {
         const st = (target as any).__state;
         const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof (target as any).alpha === 'number' && (target as any).alpha <= 0.05) || (target as any).visible === false;
         if (!invulnerable) {
-
-          this.applyDamage(target, w.damage, shooter);
-          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+          // Фильтр отношений учитывает overrides с обеих сторон
+          const targetEntry = this.targets.find(t => t.obj === target);
+          const targetFaction = targetEntry?.faction ?? (target === this.ship ? 'player' : undefined);
+          const targetOverrides = (targetEntry as any)?.overrides?.factions;
+          const relSV = this.getRelation(shooterFaction, targetFaction, shooterOverrides);
+          const relVS = this.getRelation(targetFaction, shooterFaction, targetOverrides);
+          const allow = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          if (allow) {
+            this.applyDamage(target, w.damage, shooter);
+            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+            this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+            if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
+            (proj as any).destroy?.();
+          } // иначе снаряд пролетает через цель, не разрушаясь
+        } else {
+          // цель в состоянии дока — не принимаем урон, но снаряд уничтожаем
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+          if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
+          (proj as any).destroy?.();
         }
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-        // Дерегистрируем снаряд из fog of war
-        if (this.fogOfWar) {
-          this.fogOfWar.unregisterObject(proj);
-        }
-        (proj as any).destroy?.();
       }
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
@@ -1278,6 +1317,22 @@ export class CombatManager {
               });
             }
           }
+        } else {
+          // В радиусе радара: немедленно переходим в атаку на атакующего (временный враг)
+          t.intent = { type: 'attack', target: attacker };
+          // Удерживаем реакцию некоторое время, чтобы sensors не сбросил раньше
+          const now2 = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+          (t as any).forceIntentUntil = now2 + 4000; // 4s
+          // Подстрахуем новую систему приоритетов движения
+          this.npcStateManager.addMovementCommand(
+            t.obj as any,
+            'pursue',
+            { x: (attacker as any).x, y: (attacker as any).y, targetObject: attacker },
+            undefined,
+            MovementPriority.COMBAT,
+            'combat_manager_reactive_aggro'
+          );
+          // без лишнего спама в проде
         }
         // Проставляем конфронтацию к фракции атакера
         (t as any).overrides = (t as any).overrides ?? {};
@@ -1886,8 +1941,10 @@ export class CombatManager {
           const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
           rec.nameLabel = this.scene.add.text(0, 0, uniqueName, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
         }
-        const rel = this.getRelation('player', rec.faction, rec.overrides?.factions);
-        const color = (rel === 'confrontation') ? '#A93226' : '#9E9382';
+        const relAB = this.getRelation('player', rec.faction, undefined);
+        const relBA = this.getRelation(rec.faction, 'player', rec.overrides?.factions);
+        const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
+        const color = isEnemyNow ? '#A93226' : '#9E9382';
         rec.nameLabel.setColor(color);
         const baseName = this.resolveDisplayName(rec) || 'Unknown';
         const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
@@ -1940,6 +1997,48 @@ export class CombatManager {
       }
     }
   }
+
+  // ВКЛ/ВЫКЛ визуального круга радиуса оружия игрока (строго визуально)
+  private togglePlayerWeaponRangeCircle(slotKey: string, show: boolean) {
+    const def = this.config.weapons?.defs?.[slotKey];
+    if (!def || typeof def.range !== 'number') {
+      // если нет данных — просто скрываем существующий круг
+      const old = this.playerWeaponRangeCircles.get(slotKey);
+      if (old) { try { old.setVisible(false); } catch {} }
+      return;
+    }
+    // создаем при необходимости
+    let circle = this.playerWeaponRangeCircles.get(slotKey);
+    if (show) {
+      if (!circle) {
+        const wr = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
+        const fillColorNum = Number((wr.color ?? '#4ade80').replace('#','0x'));
+        const fillAlpha = typeof wr.fillAlpha === 'number' ? Phaser.Math.Clamp(wr.fillAlpha, 0, 1) : 0.08;
+        const strokeColorNum = Number((wr.strokeColor ?? wr.color ?? '#4ade80').replace('#','0x'));
+        const strokeAlpha = typeof wr.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr.strokeAlpha, 0, 1) : 0.8;
+        const strokeWidth = typeof wr.strokeWidth === 'number' ? Math.max(0, Math.floor(wr.strokeWidth)) : 1;
+        circle = this.scene.add.circle(this.ship?.x ?? 0, this.ship?.y ?? 0, def.range, fillColorNum, fillAlpha).setDepth(0.35);
+        circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
+        this.playerWeaponRangeCircles.set(slotKey, circle);
+      }
+      // на случай, если параметры были изменены в рантайме — обновим стиль
+      const wr2 = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
+      const fillColorNum2 = Number((wr2.color ?? '#4ade80').replace('#','0x'));
+      const fillAlpha2 = typeof wr2.fillAlpha === 'number' ? Phaser.Math.Clamp(wr2.fillAlpha, 0, 1) : 0.08;
+      const strokeColorNum2 = Number((wr2.strokeColor ?? wr2.color ?? '#4ade80').replace('#','0x'));
+      const strokeAlpha2 = typeof wr2.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr2.strokeAlpha, 0, 1) : 0.8;
+      const strokeWidth2 = typeof wr2.strokeWidth === 'number' ? Math.max(0, Math.floor(wr2.strokeWidth)) : 1;
+      circle.setFillStyle(fillColorNum2, fillAlpha2);
+      circle.setStrokeStyle(strokeWidth2, strokeColorNum2, strokeAlpha2);
+      circle.setRadius(def.range);
+      circle.setPosition(this.ship?.x ?? 0, this.ship?.y ?? 0);
+      circle.setVisible(true);
+    } else {
+      if (circle) {
+        circle.setVisible(false);
+      }
+    }
+  }
   private clearAssignmentsForTarget(objAny: any) {
     const clearedSlots: string[] = [];
     for (const [slot, tgt] of Array.from(this.playerWeaponTargets.entries())) {
@@ -1979,6 +2078,9 @@ export class CombatManager {
   public destroy() {
     this.npcStateManager.destroy();
     this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
+    // Очистка визуальных кругов радиусов
+    for (const c of this.playerWeaponRangeCircles.values()) { try { c.destroy(); } catch {} }
+    this.playerWeaponRangeCircles.clear();
   }
 }
 
