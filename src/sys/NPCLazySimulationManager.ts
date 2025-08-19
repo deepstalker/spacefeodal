@@ -111,7 +111,10 @@ export class NPCLazySimulationManager {
     for (const p of this.pending) {
       if (p.created) continue;
       const d = Math.hypot(p.spawnAt.x - player.x, p.spawnAt.y - player.y);
-      if (d <= threshold) {
+      // Изначальная партия может частично лежать внутри радара: такие создаём сразу на первом апдейте
+      // Остальные ждут, пока игрок подлетит в их порог threshold
+      const isInitialInsideRadar = d <= radar;
+      if (d <= threshold && (isInitialInsideRadar || this.scene.time.now > 0)) {
         // Debug logging disabled
         // try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
         // Дополнительная защита: проверим текущие квоты с учётом активных и pending перед созданием
@@ -357,6 +360,11 @@ export class NPCLazySimulationManager {
       }
     }
     return result;
+  }
+
+  /** Отладочный снимок очереди ожидающих */
+  public getPendingSnapshot(): ReadonlyArray<PendingNPC> {
+    return this.pending.slice();
   }
 }
 

@@ -10,6 +10,8 @@ export default class UIScene extends Phaser.Scene {
   private uiTextResolution: number = 1;
   private systemMenu?: any;
   private radialMenu!: RadialMenuManager;
+  private npcDebugText?: Phaser.GameObjects.Text;
+  private npcDebugTimer?: Phaser.Time.TimerEvent;
   constructor() {
     super('UIScene');
   }
@@ -61,6 +63,13 @@ export default class UIScene extends Phaser.Scene {
       const inputMgr = stars?.inputMgr;
       inputMgr?.onAction('systemMenu', () => this.toggleSystemMenu());
     } catch {}
+
+    // Debug overlay: NPC quotas/active/pending
+    this.npcDebugText = this.add.text(16, 100, '', { color: '#ffffff', fontFamily: 'roboto', fontSize: '20px' })
+      .setScrollFactor(0)
+      .setDepth(1200)
+      .setOrigin(0, 0);
+    this.npcDebugTimer = this.time.addEvent({ delay: 500, loop: true, callback: this.updateNpcDebug, callbackScope: this });
   }
 
 
@@ -120,6 +129,73 @@ export default class UIScene extends Phaser.Scene {
   isRadialMenuVisible(): boolean {
     return this.radialMenu.isMenuVisible();
   }
+
+  private updateNpcDebug = () => {
+    if (!this.npcDebugText) return;
+    const stars: any = this.scene.get('StarSystemScene');
+    const cfg: ConfigManager | undefined = this.configRef ?? (stars?.config as ConfigManager | undefined);
+    if (!cfg) { this.npcDebugText.setText(''); return; }
+
+    // Суммарные квоты по префабам
+    const quotaByPrefab = new Map<string, number>();
+    try {
+      const sys = cfg.system as any;
+      const add = (prefab: string, count: number) => quotaByPrefab.set(prefab, (quotaByPrefab.get(prefab) ?? 0) + (count ?? 0));
+      for (const p of (sys?.planets ?? []) as any[]) {
+        const q = p?.spawn?.quotas as Record<string, number> | undefined;
+        if (!q) continue; for (const [k, v] of Object.entries(q)) add(k, v ?? 0);
+      }
+      for (const s of (sys?.stations ?? []) as any[]) {
+        const q = s?.spawn?.quotas as Record<string, number> | undefined;
+        if (!q) continue; for (const [k, v] of Object.entries(q)) add(k, v ?? 0);
+      }
+    } catch {}
+
+    // Активные по префабам
+    const activeByPrefab = new Map<string, number>();
+    try {
+      const npcs: any[] = (stars?.npcs ?? []).filter((o: any) => o?.active);
+      for (const o of npcs) {
+        const k = (o as any).__prefabKey ?? 'unknown';
+        activeByPrefab.set(k, (activeByPrefab.get(k) ?? 0) + 1);
+      }
+    } catch {}
+
+    // Ожидающие (pending) по префабам
+    const pendingByPrefab = new Map<string, number>();
+    try {
+      const sim: any = stars?.npcSim;
+      const arr: any[] = (sim?.getPendingSnapshot?.() ?? sim?.pending ?? []).filter((p: any) => p && p.created === false);
+      for (const p of arr) {
+        const k = p.prefab ?? 'unknown';
+        pendingByPrefab.set(k, (pendingByPrefab.get(k) ?? 0) + 1);
+      }
+    } catch {}
+
+    const allPrefabs = new Set<string>([
+      ...Array.from(quotaByPrefab.keys()),
+      ...Array.from(activeByPrefab.keys()),
+      ...Array.from(pendingByPrefab.keys())
+    ]);
+    const names = Array.from(allPrefabs.values()).sort();
+
+    const lines: string[] = [];
+    lines.push('Активные NPC');
+    for (const name of names) {
+      const c = activeByPrefab.get(name) ?? 0;
+      const limit = quotaByPrefab.get(name) ?? 0;
+      lines.push(`${name} x ${c}/${limit}`);
+    }
+    lines.push('');
+    lines.push('Ожидающие NPC');
+    for (const name of names) {
+      const c = pendingByPrefab.get(name) ?? 0;
+      const limit = quotaByPrefab.get(name) ?? 0;
+      lines.push(`${name} x ${c}/${limit}`);
+    }
+
+    this.npcDebugText.setText(lines.join('\n'));
+  };
 }
 
 
