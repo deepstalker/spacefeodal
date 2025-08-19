@@ -114,12 +114,17 @@ export class NPCLazySimulationManager {
       if (d <= threshold) {
         // Debug logging disabled
         // try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
-        this.createNPC(p);
+        // Дополнительная защита: проверим текущие квоты с учётом активных и pending перед созданием
+        if (this.canSpawnForHomeAndPrefab(p.home, p.prefab)) {
+          this.createNPC(p);
+        }
       }
     }
   }
 
   private createNPC(p: PendingNPC, opts?: { fadeIfInRadar?: boolean }) {
+    // Защита от двойного вызова (например, при ранее запланированной задаче и одновременном попадании в радиус)
+    if (p.created) return;
     const cm: any = (this.scene as any).combat;
     if (!cm?.spawnNPCPrefab) return;
     const npc = cm.spawnNPCPrefab(p.prefab, p.spawnAt.x, p.spawnAt.y) as any;
@@ -227,6 +232,14 @@ export class NPCLazySimulationManager {
       const key = `${prefab}__${homeId}`;
       active[key] = (active[key] ?? 0) + 1;
     }
+    // Учтём отложенные (pending) по тем же ключам
+    const pendingCounts: Record<string, number> = {};
+    for (const p of this.pending) {
+      if (p.created) continue;
+      const homeId = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
+      const key = `${p.prefab}__${homeId}`;
+      pendingCounts[key] = (pendingCounts[key] ?? 0) + 1;
+    }
 
     // Целевые квоты из конфигов систем (планеты/станции)
     const entries = this.listQuotaEntries();
@@ -234,7 +247,7 @@ export class NPCLazySimulationManager {
     let totalScheduled = 0;
     for (const e of entries) {
       const key = `${e.prefab}__${e.home.id}`;
-      const have = active[key] ?? 0;
+      const have = (active[key] ?? 0) + (pendingCounts[key] ?? 0);
       const deficit = Math.max(0, e.count - have);
       for (let i = 0; i < deficit; i++) {
         // создаём разово отложенную заявку
@@ -247,6 +260,7 @@ export class NPCLazySimulationManager {
         totalScheduled++;
         // Debug logging disabled
         // try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
+        this.pending.push(p);
         this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
       }
     }
@@ -270,9 +284,18 @@ export class NPCLazySimulationManager {
       active[key] = (active[key] ?? 0) + 1;
     }
     let scheduled = 0;
+    // Учёт pending как «запланированных» к обработке
+    const pendingCounts: Record<string, number> = {};
+    for (const p of this.pending) {
+      if (p.created) continue;
+      const homeId = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
+      const key = `${p.prefab}__${homeId}`;
+      pendingCounts[key] = (pendingCounts[key] ?? 0) + 1;
+    }
+
     for (const e of entries) {
       const key = `${e.prefab}__${e.home.id}`;
-      const have = active[key] ?? 0;
+      const have = (active[key] ?? 0) + (pendingCounts[key] ?? 0);
       const deficit = Math.max(0, e.count - have);
       for (let i = 0; i < deficit; i++) {
         const ang = Math.random() * Math.PI * 2;
@@ -282,11 +305,35 @@ export class NPCLazySimulationManager {
         const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:cycle:${Date.now()}:${i}` , prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
         const delay = Math.random() * 1000; // до 1 секунды для живости
         scheduled++;
+        this.pending.push(p);
         this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
       }
     }
     // Debug logging disabled
     // try { if (scheduled > 0) console.log('[NPCSim] cycle replenish scheduled', { scheduled }); } catch {}
+  }
+
+  private canSpawnForHomeAndPrefab(home: HomeRef, prefab: string): boolean {
+    const entries = this.listQuotaEntries();
+    const target = entries.find(e => e.home.id === (home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`) && e.prefab === prefab);
+    if (!target) return true; // нет квоты — не ограничиваем
+    const key = `${prefab}__${home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`}`;
+    let have = 0;
+    const npcs: any[] = ((this.scene as any).npcs ?? []).filter((o: any) => o?.active);
+    for (const o of npcs) {
+      const hr = (o as any).__homeRef as HomeRef | undefined;
+      const pf = (o as any).__prefabKey ?? 'unknown';
+      const hid = hr?.id ?? `${hr?.type ?? 'unknown'}_${Math.floor(hr?.x ?? 0)}_${Math.floor(hr?.y ?? 0)}`;
+      const k = `${pf}__${hid}`;
+      if (k === key) have++;
+    }
+    for (const p of this.pending) {
+      if (p.created) continue;
+      const hid = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
+      const k = `${p.prefab}__${hid}`;
+      if (k === key) have++;
+    }
+    return have < target.count;
   }
 
   private listQuotaEntries(): Array<{ prefab: string; count: number; home: HomeRef }> {
