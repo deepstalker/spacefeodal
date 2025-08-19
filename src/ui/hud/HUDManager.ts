@@ -58,6 +58,9 @@ export class HUDManager {
   private cooldownBarsBySlot: Map<string, { bg: Phaser.GameObjects.Rectangle; outline: Phaser.GameObjects.Rectangle; fill: Phaser.GameObjects.Rectangle; width: number; height: number }>= new Map();
   private outOfRangeTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private assignedBlinkTweens: Map<string, Phaser.Tweens.Tween[]> = new Map();
+  // Speed display state
+  private lastSpeedU: number = 0;
+  private pausedSpeedU: number | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -97,6 +100,8 @@ export class HUDManager {
     this.scene.events.on('game-resumed', () => {
       // Немедленно обновляем прогресс-бары после снятия паузы
       this.updateWeaponChargeBars();
+      // Возврат отображения скорости к фактической
+      this.pausedSpeedU = null;
     });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
@@ -471,15 +476,28 @@ export class HUDManager {
     if (ship && this.speedText) {
       const mv = this.getMovementConfig();
       const max = mv?.MAX_SPEED ?? 1;
-      const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
-      const dx = ship.x - prev.x;
-      const dy = ship.y - prev.y;
-      const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
-      const v = Math.hypot(dx, dy) / dt; // px per second
-      (ship as any).__prevPos = { x: ship.x, y: ship.y };
-      const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
+      let displayU: number;
+      if (this.pauseManager?.getPaused()) {
+        // Во время паузы показываем зафиксированную скорость
+        if (this.pausedSpeedU == null) {
+          // Если по какой-то причине не зафиксирована — используем последнюю вычисленную
+          displayU = this.lastSpeedU;
+        } else {
+          displayU = this.pausedSpeedU;
+        }
+      } else {
+        const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
+        const dx = ship.x - prev.x;
+        const dy = ship.y - prev.y;
+        const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
+        const v = Math.hypot(dx, dy) / dt; // px per second
+        (ship as any).__prevPos = { x: ship.x, y: ship.y };
+        const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
+        this.lastSpeedU = u;
+        displayU = u;
+      }
       const txt = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
-      if (txt) txt.setText(`${u}`);
+      if (txt) txt.setText(`${displayU}`);
     }
 
     // HULL percentage
@@ -1092,6 +1110,14 @@ export class HUDManager {
     // Подписываемся на события паузы
     this.scene.events.on('game-paused', () => this.showPauseIndicator());
     this.scene.events.on('game-resumed', () => this.hidePauseIndicator());
+    // Зафиксировать скорость при входе в паузу (для отображения)
+    this.scene.events.on('game-paused', () => {
+      const currentText = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
+      if (currentText) {
+        const val = parseInt(currentText.text || '0', 10);
+        if (!Number.isNaN(val)) this.pausedSpeedU = val;
+      }
+    });
     
     // Обновляем позицию при ресайзе
     this.scene.scale.on('resize', (gameSize: any) => {
