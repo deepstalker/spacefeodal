@@ -99,6 +99,16 @@ export class MovementManager {
     return this.command;
   }
 
+  // Установка начальной скорости как доли от MAX_SPEED (для плавного "выплывания")
+  public setInitialSpeedFraction(fraction: number) {
+    const clamped = Phaser.Math.Clamp(fraction, 0, 1);
+    const selectedId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
+    const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
+    const mv = selected?.movement ?? this.config.gameplay.movement;
+    const max = Math.max(0, mv?.MAX_SPEED ?? 0);
+    this.speed = max * clamped;
+  }
+
   // Для совместимости с существующим кодом - получение простого движения к цели
   moveTo(target: Phaser.Math.Vector2, obj: Phaser.GameObjects.GameObject & { x: number; y: number; rotation: number }) {
     this.setMovementCommand({ mode: 'move_to', target }, obj);

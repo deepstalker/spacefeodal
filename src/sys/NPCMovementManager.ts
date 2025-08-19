@@ -64,6 +64,13 @@ export class NPCMovementManager {
     this.npcStates.delete(npc);
   }
 
+  // Установить стартовую скорость как долю от MAX_SPEED (для "выплывания" при спавне)
+  setInitialSpeedFraction(npc: any, fraction: number) {
+    const state = this.npcStates.get(npc);
+    if (!state) return;
+    state.movementManager.setInitialSpeedFraction(fraction);
+  }
+
   // Устанавливаем цель для NPC с учетом его режима движения
   setNPCTarget(npc: any, target: { x: number; y: number; targetObject?: any }) {
     const state = this.npcStates.get(npc);

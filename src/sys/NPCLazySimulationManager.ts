@@ -170,6 +170,8 @@ export class NPCLazySimulationManager {
           // Начинаем с прозрачности и плавно показываем
           (npc as any).setAlpha(0);
           this.scene.tweens.add({ targets: npc, alpha: 1, duration: 800, ease: 'Sine.easeOut' });
+          // Стартовая скорость 75% от MAX_SPEED, чтобы "выплывал" из невидимости
+          try { (cm as any).npcMovement?.setInitialSpeedFraction?.(npc, 0.75); } catch {}
         }
       } catch {}
     }
