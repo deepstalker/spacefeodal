@@ -299,6 +299,8 @@ export class CombatManager {
     const oldTarget = this.playerWeaponTargets.get(slotKey);
     
     if (target) {
+      // Если цель не враждебна — делаем временно враждебной к игроку
+      this.markTargetHostileToPlayer(target as any);
       this.playerWeaponTargets.set(slotKey, target);
       // Новое назначение цели: начинаем с перезарядки
       const w = this.config.weapons.defs[slotKey];
@@ -326,6 +328,21 @@ export class CombatManager {
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
+  }
+
+  /**
+   * Сделать цель временно враждебной к игроку через overrides
+   */
+  public markTargetHostileToPlayer(targetObj: any) {
+    const t = this.targets.find(tt => tt.obj === targetObj);
+    if (!t) return;
+    const relAB = this.getRelation('player', t.faction, undefined);
+    const relBA = this.getRelation(t.faction, 'player', t.overrides?.factions);
+    const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
+    if (isEnemyNow) return;
+    (t as any).overrides = (t as any).overrides ?? {};
+    (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+    (t as any).overrides.factions['player'] = 'confrontation';
   }
 
   public clearPlayerWeaponTargets() {
@@ -675,7 +692,7 @@ export class CombatManager {
 
   private isTargetCombatSelected(target: Target | null): boolean {
     if (!target) return false;
-    for (const t of this.playerWeaponTargets.values()) { if (t === target) return true; }
+    for (const t of this.playerWeaponTargets.values()) if (t === target) return true;
     return false;
   }
 

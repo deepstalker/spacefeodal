@@ -61,6 +61,8 @@ export class HUDManager {
   // Speed display state
   private lastSpeedU: number = 0;
   private pausedSpeedU: number | null = null;
+  private isPaused: boolean = false;
+  private lastChargeProgressBySlot: Map<string, number> = new Map();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -103,6 +105,8 @@ export class HUDManager {
       // Возврат отображения скорости к фактической
       this.pausedSpeedU = null;
     });
+    this.scene.events.on('game-paused', () => { this.isPaused = true; });
+    this.scene.events.on('game-resumed', () => { this.isPaused = false; });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
@@ -972,11 +976,24 @@ export class HUDManager {
         
         // Обновляем ширину напрямую на основе прогресса таймера
         bar.fill.width = progress * (bar.width - 4);
+        this.lastChargeProgressBySlot.set(slotKey, progress);
         
         // Скрываем out-of-range во время зарядки
         this.toggleOutOfRange(slotKey, false);
       } else {
-        // Скрываем прогресс-бар
+        // Во время паузы не скрываем полоски — фиксируем на последнем значении
+        if (this.isPaused) {
+          const last = this.lastChargeProgressBySlot.get(slotKey);
+          if (last != null) {
+            const bar = this.ensureHudBar(slotKey, recSlot);
+            bar.bg.setVisible(true);
+            bar.outline.setVisible(true);
+            bar.fill.setVisible(true);
+            bar.fill.width = last * (bar.width - 4);
+            continue;
+          }
+        }
+        // Не на паузе: скрываем прогресс-бар, если оружие не заряжается
         const bar = this.cooldownBarsBySlot.get(slotKey);
         if (bar) {
           bar.bg.setVisible(false);

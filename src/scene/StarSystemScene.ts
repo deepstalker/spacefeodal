@@ -295,17 +295,10 @@ export default class StarSystemScene extends Phaser.Scene {
       const cm: any = this.combat as any;
       const t = cm.getSelectedTarget?.();
       if (!t || t === this.ship) return;
-      const relAB = cm.getRelationPublic?.('player', t.faction, undefined);
-      const relBA = cm.getRelationPublic?.(t.faction, 'player', (t as any)?.overrides?.factions);
-      const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
-      // Если цель не враг — помечаем временным врагом и назначаем оружие
-      if (!isEnemyNow) {
-        (t as any).overrides = (t as any).overrides ?? {};
-        (t as any).overrides.factions = (t as any).overrides.factions ?? {};
-        (t as any).overrides.factions['player'] = 'confrontation';
-      }
-      // Назначаем все выбранные слоты оружия на цель (HUD управляет выбором слотов)
-      try { (cm as any).assignAllSelectedWeaponsToTarget?.(t); } catch {}
+      // централизованная пометка врагом
+      cm.markTargetHostileToPlayer?.(t);
+      // Назначение целей слотов делает HUD от этого же действия; здесь только страховка выделения
+      cm.forceSelectTarget?.(t);
     });
     
     // Отладочная команда для проверки конфига паузы (Ctrl+Shift+D)
