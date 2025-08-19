@@ -106,7 +106,13 @@ export class HUDManager {
       this.pausedSpeedU = null;
     });
     this.scene.events.on('game-paused', () => { this.isPaused = true; });
-    this.scene.events.on('game-resumed', () => { this.isPaused = false; });
+    this.scene.events.on('game-resumed', () => { 
+      this.isPaused = false;
+      // При снятии с паузы очищаем кэш прогресса перезарядки
+      this.lastChargeProgressBySlot.clear();
+      // Скрываем все прогресс-бары перезарядки при снятии с паузы
+      this.hideAllCooldownBars();
+    });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
@@ -981,24 +987,15 @@ export class HUDManager {
         // Скрываем out-of-range во время зарядки
         this.toggleOutOfRange(slotKey, false);
       } else {
-        // Во время паузы не скрываем полоски — фиксируем на последнем значении
-        if (this.isPaused) {
-          const last = this.lastChargeProgressBySlot.get(slotKey);
-          if (last != null) {
-            const bar = this.ensureHudBar(slotKey, recSlot);
-            bar.bg.setVisible(true);
-            bar.outline.setVisible(true);
-            bar.fill.setVisible(true);
-            bar.fill.width = last * (bar.width - 4);
-            continue;
-          }
-        }
+        // На паузе скрываем бары, чтобы избежать зависания
         // Не на паузе: скрываем прогресс-бар, если оружие не заряжается
         const bar = this.cooldownBarsBySlot.get(slotKey);
         if (bar) {
           bar.bg.setVisible(false);
           bar.outline.setVisible(false);
           bar.fill.setVisible(false);
+          // Удаляем из кэша прогресса при скрытии бара
+          this.lastChargeProgressBySlot.delete(slotKey);
         }
       }
     }
@@ -1034,6 +1031,21 @@ export class HUDManager {
       bar.outline.setVisible(true); 
       bar.fill.setVisible(true);
     });
+  }
+
+  /**
+   * Скрыть все прогресс-бары перезарядки оружия
+   */
+  private hideAllCooldownBars() {
+    for (const [slotKey, bar] of this.cooldownBarsBySlot.entries()) {
+      // Скрываем все элементы бара
+      bar.bg.setVisible(false);
+      bar.outline.setVisible(false);
+      bar.fill.setVisible(false);
+      
+      // Удаляем из кэша прогресса
+      this.lastChargeProgressBySlot.delete(slotKey);
+    }
   }
 
 
@@ -1331,6 +1343,17 @@ export class HUDManager {
     // очистить выборы
     this.selectedSlots.clear();
     this.cursorOrder = [];
+    
+    // очистить кэш прогресса перезарядки
+    this.lastChargeProgressBySlot.clear();
+    
+    // уничтожить все прогресс-бары перезарядки
+    for (const [slotKey, bar] of this.cooldownBarsBySlot.entries()) {
+      try { bar.bg.destroy(); } catch {}
+      try { bar.fill.destroy(); } catch {}
+      try { bar.outline.destroy(); } catch {}
+    }
+    this.cooldownBarsBySlot.clear();
   }
 
   public showGameOver() {

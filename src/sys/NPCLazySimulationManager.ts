@@ -111,19 +111,67 @@ export class NPCLazySimulationManager {
     for (const p of this.pending) {
       if (p.created) continue;
       const d = Math.hypot(p.spawnAt.x - player.x, p.spawnAt.y - player.y);
-      // Изначальная партия может частично лежать внутри радара: такие создаём сразу на первом апдейте
-      // Остальные ждут, пока игрок подлетит в их порог threshold
-      const isInitialInsideRadar = d <= radar;
-      if (d <= threshold && (isInitialInsideRadar || this.scene.time.now > 0)) {
-        // Debug logging disabled
-        // try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
-        // Дополнительная защита: проверим текущие квоты с учётом активных и pending перед созданием
+      if (d <= threshold) {
+        // Проверяем, можем ли мы спаунить этого NPC, не превышая квоты
         if (this.canSpawnForHomeAndPrefab(p.home, p.prefab, p.id)) {
           // Плавное появление, если точка спавна в радиусе радара игрока
           this.createNPC(p, { fadeIfInRadar: true });
         }
       }
     }
+  }
+
+  /**
+   * Проверяет, можно ли спаунить NPC для конкретного дома и префаба, не превышая квоты
+   */
+  private canSpawnForHomeAndPrefab(home: HomeRef, prefab: string, pendingId: string): boolean {
+    // Получаем текущие активные NPC
+    const npcs: any[] = ((this.scene as any).npcs ?? []).filter((o: any) => o?.active);
+    
+    // Подсчитываем активных NPC с тем же домом и префабом
+    let count = 0;
+    for (const o of npcs) {
+      const hr = (o as any).__homeRef as HomeRef | undefined;
+      const npcPrefab = (o as any).__prefabKey ?? 'unknown';
+      
+      // Проверяем совпадение дома
+      const homeId = hr?.id ?? `${hr?.type ?? 'unknown'}_${Math.floor(hr?.x ?? 0)}_${Math.floor(hr?.y ?? 0)}`;
+      const thisHomeId = home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`;
+      
+      if (homeId === thisHomeId && npcPrefab === prefab) {
+        count++;
+      }
+    }
+    
+    // Получаем квоту для этого дома и префаба
+    const sys = this.config.system as SystemConfig;
+    let quota = 0;
+    
+    if (home.type === 'planet' && home.id) {
+      const planet = (sys.planets as any[]).find(p => p.id === home.id);
+      quota = planet?.spawn?.quotas?.[prefab] ?? 0;
+    } else if (home.type === 'station') {
+      const station = (sys.stations ?? []).find(s => {
+        const sid = (s as any).id ?? `${(s as any).type}_${Math.floor((s as any).x)}_${Math.floor((s as any).y)}`;
+        return sid === home.id;
+      });
+      quota = (station as any)?.spawn?.quotas?.[prefab] ?? 0;
+    }
+    
+    // Также учитываем других ожидающих NPC с тем же домом и префабом
+    for (const p of this.pending) {
+      if (p.created || p.id === pendingId) continue;
+      
+      const pHomeId = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
+      const thisHomeId = home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`;
+      
+      if (pHomeId === thisHomeId && p.prefab === prefab) {
+        count++;
+      }
+    }
+    
+    // Можно спаунить, если текущее количество меньше квоты
+    return count < quota;
   }
 
   private createNPC(p: PendingNPC, opts?: { fadeIfInRadar?: boolean }) {
@@ -134,7 +182,17 @@ export class NPCLazySimulationManager {
     const npc = cm.spawnNPCPrefab(p.prefab, p.spawnAt.x, p.spawnAt.y) as any;
     if (!npc) return;
     (npc as any).__homeRef = p.home; // сохраняем источник (порт приписки)
-    (this.scene as any).npcs?.push?.(npc);
+    
+    // Убедимся, что массив npcs существует и является массивом перед добавлением
+    if (!(this.scene as any).npcs) {
+      (this.scene as any).npcs = [];
+    }
+    
+    const npcsArray = (this.scene as any).npcs;
+    if (Array.isArray(npcsArray)) {
+      npcsArray.push(npc);
+    }
+    
     this.fog.registerDynamicObject(npc, DynamicObjectType.NPC);
     // Установим поведение на объект согласно aiProfile префаба
     const pref = this.config.stardwellers?.prefabs?.[p.prefab];
