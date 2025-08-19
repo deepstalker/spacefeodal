@@ -29,6 +29,15 @@
       "combat": { "retreatHpPct": 0.3 },
       "random": { "speedVarPct": 0.2, "turnVarPct": 0.2, "offsetRadius": 140 }
     }
+    ,
+    "pirate_raider": {
+      "behavior": "pirate_raider",
+      "sensors": { "react": {
+        "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore", "cautious": "retreat" }
+      } },
+      "combat": { "retreatHpPct": 0.3 },
+      "random": { "speedVarPct": 0.2, "turnVarPct": 0.2, "offsetRadius": 140 }
+    }
   }
 }
 

@@ -52,7 +52,7 @@
       "projectileSpeed": 800,
       "fireRatePerSec": 0.25,
       "damage": 16,
-      "range": 1500,
+      "range": 1200,
       "burst": { "count": 3, "delayMs": 100 },
       "muzzleOffset": { "x": -20, "y": -30 }
     },
@@ -66,7 +66,7 @@
       "projectileSpeed": 500,
       "fireRatePerSec": 1,
       "damage": 26,
-      "range": 2000,
+      "range": 1500,
       "muzzleOffset": { "x": 20, "y": -30 }
     }
     ,
@@ -80,7 +80,7 @@
       "projectileSpeed": 3000,
       "fireRatePerSec": 1,
       "damage": 100,
-      "range": 2500,
+      "range": 2000,
       "muzzleOffset": { "x": 0, "y": -42 }
     },
     "plasma": {
@@ -93,7 +93,7 @@
       "projectileSpeed": 700,
       "fireRatePerSec": 2.5,
       "damage": 250,
-      "range": 1500,
+      "range": 1200,
       "muzzleOffset": { "x": 12, "y": -36 }
     },
     "flak": {
@@ -106,7 +106,7 @@
       "projectileSpeed": 800,
       "fireRatePerSec": 0.25,
       "damage": 3,
-      "range": 1250,
+      "range": 1000,
       "burst": { "count": 10, "delayMs": 50 },
       "muzzleOffset": { "x": -12, "y": -36 }
     }

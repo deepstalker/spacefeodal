@@ -63,7 +63,7 @@ export class NPCBehaviorManager {
     const sys = this.config?.system as any;
     if (!sys || !Array.isArray(sys.planets)) return;
     for (const o of this.npcs) {
-      if ((o as any).__behavior !== 'patrol') continue;
+      if ((o as any).__behavior !== 'patrol' && (o as any).__behavior !== 'pirate_raider') continue;
       const cm: any = this.combat;
       const entry = cm?.targets?.find((t: any) => t.obj === o);
       if (entry && entry.intent) {

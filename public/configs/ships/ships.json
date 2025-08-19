@@ -49,10 +49,10 @@
           { "offset": { "x": 20, "y": -30 } }
         ]
       },
-      "sensors": { "radar_range": 1500 },
+      "sensors": { "radar_range": 1250 },
       "movement": {
         "MAX_SPEED": 1.5,
-        "ACCELERATION": 0.015,
+        "ACCELERATION": 0.025,
         "DECELERATION": 0.075,
         "TURN_SPEED": 0.03,
         "SLOWING_RADIUS": 300,
@@ -63,7 +63,7 @@
     },
     "trader": {
       "displayName": "Trader",
-      "hull": 6000,
+      "hull": 10000,
       "sprite": {
         "key": "ship_trader",
         "displaySize": { "width": 96, "height": 192 },
@@ -82,7 +82,7 @@
       "sensors": { "radar_range": 1000 },
       "movement": {
         "MAX_SPEED": 1.5,
-        "ACCELERATION": 0.05,
+        "ACCELERATION": 0.075,
         "DECELERATION": 0.085,
         "TURN_SPEED": 0.02,
         "SLOWING_RADIUS": 300,
@@ -93,7 +93,7 @@
     },
     "fighter": {
       "displayName": "Fighter",
-      "hull": 7000,
+      "hull": 5000,
       "sprite": {
         "key": "ship_alpha",
         "displaySize": { "width": 64, "height": 128 },
@@ -109,12 +109,12 @@
           { "offset": { "x": 18, "y": -32 } }
         ]
       },
-      "sensors": { "radar_range": 2000 },
+      "sensors": { "radar_range": 2200 },
       "movement": {
-        "MAX_SPEED": 1.7,
-        "ACCELERATION": 0.075,
+        "MAX_SPEED": 1.8,
+        "ACCELERATION": 0.09,
         "DECELERATION": 0.05,
-        "TURN_SPEED": 0.03,
+        "TURN_SPEED": 0.04,
         "SLOWING_RADIUS": 300,
         "TURN_PENALTY_MULTIPLIER": 1.8,
         "TURN_DECELERATION_FACTOR": 0.05,
