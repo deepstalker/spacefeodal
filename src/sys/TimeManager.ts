@@ -156,27 +156,20 @@ export class TimeManager {
     if (!this.isPaused) return;
     
     this.isPaused = false;
-    // Обновим опорную точку старта цикла с учетом времени паузы: оставим текущий оставшийся срок
-    // Пересоздадим таймер, чтобы он соответствовал остаточному времени
-    if (this.cycleTimer) {
-      try { this.cycleTimer.remove(false); } catch {}
-      const remaining = Math.max(0, this.getCycleTimeRemaining());
-      this.cycleTimer = this.scene.time.delayedCall(
-        remaining,
-        this.onCycleComplete,
-        [],
-        this
-      );
-    }
-    // Сместим старт цикла так, чтобы прогресс оставался на месте после возобновления
+    // Используем сохранённый остаток времени, чтобы корректно продолжить таймер
+    const remaining = Math.max(0, this.pausedRemainingMs || (this.CYCLE_DURATION_MS - Math.floor(this.CYCLE_DURATION_MS * this.pausedProgress)));
+    if (this.cycleTimer) { try { this.cycleTimer.remove(false); } catch {} }
+    this.cycleTimer = this.scene.time.delayedCall(
+      remaining,
+      this.onCycleComplete,
+      [],
+      this
+    );
+    // Пересчитываем опорную точку старта так, чтобы HUD-прогресс не «прыгнул»
     const elapsedBeforePause = Math.floor(this.CYCLE_DURATION_MS * this.pausedProgress);
     this.cycleStartTime = this.scene.time.now - elapsedBeforePause;
     this.pausedProgress = 0;
     this.pausedRemainingMs = 0;
-    
-    if (this.cycleTimer) {
-      this.cycleTimer.paused = false;
-    }
     
     // Time system resumed
   }

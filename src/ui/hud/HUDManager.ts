@@ -58,6 +58,7 @@ export class HUDManager {
   private cooldownBarsBySlot: Map<string, { bg: Phaser.GameObjects.Rectangle; outline: Phaser.GameObjects.Rectangle; fill: Phaser.GameObjects.Rectangle; width: number; height: number }>= new Map();
   private outOfRangeTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private assignedBlinkTweens: Map<string, Phaser.Tweens.Tween[]> = new Map();
+  private beamDurationActive: Set<string> = new Set();
   // Speed display state
   private lastSpeedU: number = 0;
   private pausedSpeedU: number | null = null;
@@ -95,6 +96,8 @@ export class HUDManager {
     starScene.events.on('player-weapon-target-cleared', (_target: any, slots: string[]) => slots.forEach(s => this.removeAssignedIcon(s)));
     // Beam HUD: показывать duration как 100% и затем refresh обрабатывается в updateWeaponChargeBars
     starScene.events.on('beam-start', (slotKey: string, durationMs: number) => this.showBeamDuration(slotKey, durationMs));
+    // Снять флаг duration при старте refresh
+    starScene.events.on('beam-refresh', (slotKey: string) => { this.beamDurationActive.delete(slotKey); });
     // Out of range — отдельный текст
     starScene.events.on('weapon-out-of-range', (slotKey: string, show: boolean) => this.toggleOutOfRange(slotKey, show));
 
@@ -108,10 +111,7 @@ export class HUDManager {
     this.scene.events.on('game-paused', () => { this.isPaused = true; });
     this.scene.events.on('game-resumed', () => { 
       this.isPaused = false;
-      // При снятии с паузы очищаем кэш прогресса перезарядки
-      this.lastChargeProgressBySlot.clear();
-      // Скрываем все прогресс-бары перезарядки при снятии с паузы
-      this.hideAllCooldownBars();
+      // Без очистки и скрытия: оставляем бары в актуальном состоянии, чтобы избежать скачков
     });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
@@ -963,6 +963,15 @@ export class HUDManager {
       const recSlot = this.slotRecords[i];
       if (!recSlot) continue;
       
+      // Если активен луч (duration) — держим 100% без скачков
+      if (this.beamDurationActive.has(slotKey)) {
+        const bar = this.ensureHudBar(slotKey, recSlot);
+        bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
+        bar.fill.width = (bar.width - 4);
+        // Не продолжаем — прогрессом управляет duration/refresh
+        continue;
+      }
+      
       const isCharging = this.combatManager.isWeaponCharging(slotKey);
       
       if (isCharging) {
@@ -980,9 +989,12 @@ export class HUDManager {
         bar.outline.setVisible(true);
         bar.fill.setVisible(true);
         
-        // Обновляем ширину напрямую на основе прогресса таймера
-        bar.fill.width = progress * (bar.width - 4);
-        this.lastChargeProgressBySlot.set(slotKey, progress);
+        // Обновляем ширину напрямую на основе прогресса таймера с клампом монотонности
+        const prev = this.lastChargeProgressBySlot.get(slotKey);
+        const next = Phaser.Math.Clamp(progress, 0, 1);
+        const stable = (this.pauseManager?.getPaused?.() ? Math.max(prev ?? 0, next) : next);
+        bar.fill.width = stable * (bar.width - 4);
+        this.lastChargeProgressBySlot.set(slotKey, stable);
         
         // Скрываем out-of-range во время зарядки
         this.toggleOutOfRange(slotKey, false);
@@ -991,11 +1003,14 @@ export class HUDManager {
         // Не на паузе: скрываем прогресс-бар, если оружие не заряжается
         const bar = this.cooldownBarsBySlot.get(slotKey);
         if (bar) {
-          bar.bg.setVisible(false);
-          bar.outline.setVisible(false);
-          bar.fill.setVisible(false);
-          // Удаляем из кэша прогресса при скрытии бара
-          this.lastChargeProgressBySlot.delete(slotKey);
+          // Во время паузы не скрываем и не обнуляем — закрепляем текущую ширину
+          if (!this.pauseManager?.getPaused?.()) {
+            bar.bg.setVisible(false);
+            bar.outline.setVisible(false);
+            bar.fill.setVisible(false);
+            // Удаляем из кэша прогресса при скрытии бара
+            this.lastChargeProgressBySlot.delete(slotKey);
+          }
         }
       }
     }
@@ -1012,6 +1027,11 @@ export class HUDManager {
     }
     const x = recSlot.baseX; const y = (recSlot as any).bg.y + recSlot.size + 6 + 10; // по центру полосы
     txt.setPosition(x, y).setVisible(show);
+    // Если просят показать, но у слота нет назначенной цели — скрываем (нет смысла показывать)
+    if (show) {
+      const slotAssigned = Array.from(this.assignedIconsBySlot.keys()).includes(slotKey);
+      if (!slotAssigned) txt.setVisible(false);
+    }
   }
 
   private showBeamDuration(slotKey: string, durationMs: number) {
@@ -1019,18 +1039,10 @@ export class HUDManager {
     if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
     const bar = this.ensureHudBar(slotKey, recSlot);
     bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    // 100% заполнение на время длительности луча
+    // 100% заполнение на время длительности луча (без таймеров, дергаем флаг)
     bar.fill.width = Math.max(0, bar.width - 4);
-    // Больше не используем твин для анимации, rely on updateWeaponChargeBars
-    // this.scene.time.delayedCall используется только для синхронизации с логикой боевой системы
     try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.time.delayedCall(Math.max(0, durationMs), () => { 
-      // После duration ожидаем refresh-событие
-      // Просто убедимся, что бар видим, дальнейшее обновление будет в updateWeaponChargeBars
-      bar.bg.setVisible(true); 
-      bar.outline.setVisible(true); 
-      bar.fill.setVisible(true);
-    });
+    this.beamDurationActive.add(slotKey);
   }
 
   /**

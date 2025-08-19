@@ -518,8 +518,8 @@ export class CombatManager {
         const target = this.playerWeaponTargets.get(slot);
         if (target) clearedTargets.add(target);
         this.playerWeaponTargets.delete(slot);
-        // Отправляем событие weapon-out-of-range для скрытия текста
-        try { this.scene.events.emit('weapon-out-of-range', slot, true); } catch {}
+        // Скрываем надпись OUT OF RANGE, т.к. назначение цели снято
+        try { this.scene.events.emit('weapon-out-of-range', slot, false); } catch {}
       }
       try { this.scene.events.emit('player-weapon-target-cleared', null, slotsToClear); } catch {}
       this.refreshCombatRings();
@@ -1058,6 +1058,14 @@ export class CombatManager {
         return;
       }
       
+      // Быстрое скрытие снаряда вне радара игрока (не ждём батч-апдейт FoW)
+      if (this.fogOfWar) {
+        try {
+          const visible = this.fogOfWar.isObjectVisible(proj as any);
+          (proj as any).setVisible?.(visible);
+        } catch {}
+      }
+
       (proj as any).x += vx * (dt/1000);
       (proj as any).y += vy * (dt/1000);
       // collision simple distance check
@@ -1132,8 +1140,7 @@ export class CombatManager {
       }
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
-    // Создаем таймер с уникальным ID для снаряда
-    const projId = `projectile-${shooter.__uniqueId || 'player'}-${_slot}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Создаем таймер жизни снаряда (без немедленной постановки на паузу)
     const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
       this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
       // Дерегистрируем снаряд из fog of war при истечении времени жизни
@@ -1142,19 +1149,7 @@ export class CombatManager {
       }
       (proj as any).destroy?.();
     });
-    
-    // Регистрируем таймер жизни снаряда для паузы
-    if (this.pauseManager) {
-      this.pauseManager.pauseTimer(lifetimeTimer, projId);
-    }
-    
-    // Регистрируем таймер снаряда для паузы
-    if (this.pauseManager) {
-      const projId = `projectile-${Date.now()}-${Math.random()}`;
-      this.pauseManager.pauseTimer(lifetimeTimer, projId);
-      // Сохраняем ID для возможности отмены регистрации
-      (proj as any).__pauseTimerId = projId;
-    }
+
     // Сигнализируем UI о выстреле игрока для мигания иконки
     if (shooter === this.ship) {
       try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
@@ -1176,12 +1171,7 @@ export class CombatManager {
         const w2 = { ...w, muzzleOffset };
         this.fireWeapon(slot, w2, target, shooter);
       });
-      
-      // Регистрируем burst таймер для паузы
-      if (this.pauseManager) {
-        const burstId = `burst-${shooter.__uniqueId || 'player'}-${slot}-${k}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        this.pauseManager.pauseTimer(burstTimer, burstId);
-      }
+
     }
   }
 
@@ -1831,6 +1821,7 @@ export class CombatManager {
       }
       
       // Наносим урон по тикам
+      // Если цель вне радара игрока и не видима по FoW — не рисуем эффект, но урон сохраняем
       this.applyDamage(target, dmgTick, shooter);
       
       // Вычисляем точку попадания в край цели для эффекта
@@ -1841,7 +1832,16 @@ export class CombatManager {
           x: target.x - beamVector.x * targetRadius,
           y: target.y - beamVector.y * targetRadius
         };
-        this.spawnHitEffect(hitPoint.x, hitPoint.y, w);
+        // Порождаем эффект только если видим хотя бы стрелка или цель в FoW
+        let canShow = true;
+        if (this.fogOfWar) {
+          try {
+            const sVis = this.fogOfWar.isObjectVisible(shooter as any);
+            const tVis = this.fogOfWar.isObjectVisible(target as any);
+            canShow = sVis || tVis;
+          } catch {}
+        }
+        if (canShow) this.spawnHitEffect(hitPoint.x, hitPoint.y, w);
       }
     }});
     
@@ -1867,6 +1867,17 @@ export class CombatManager {
         y: target.y - beamVector.y * targetRadius
       };
       
+      // Скрываем луч, если и стрелок, и цель находятся вне радара игрока (fog of war)
+      if (this.fogOfWar) {
+        try {
+          const shooterVisible = this.fogOfWar.isObjectVisible(shooter as any);
+          const targetVisible = this.fogOfWar.isObjectVisible(target as any);
+          const shouldShow = shooterVisible || targetVisible;
+          gfx.setVisible(shouldShow);
+          if (!shouldShow) { return; }
+        } catch {}
+      }
+
       gfx.clear();
       const colorHex = (w?.beam?.color || w?.hitEffect?.color || w?.projectile?.color || '#60a5fa').replace('#','0x');
       const outerW = Math.max(1, Math.floor(w?.beam?.outerWidth ?? 6));

@@ -323,7 +323,15 @@ export class NPCLazySimulationManager {
         // Debug logging disabled
         // try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
         this.pending.push(p);
-        this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
+        // Если игра на паузе — не спауним сразу после таймера, а проверяем состояние
+        const createWhenReady = () => {
+          if (this.pauseManager?.getPaused() && this.pauseManager?.isSystemPausable('npcLazySimulation')) {
+            this.scene.time.delayedCall(250, createWhenReady);
+          } else {
+            this.createNPC(p, { fadeIfInRadar: true });
+          }
+        };
+        this.scene.time.delayedCall(delay, createWhenReady);
       }
     }
     // Debug logging disabled
@@ -368,7 +376,14 @@ export class NPCLazySimulationManager {
         const delay = Math.random() * 1000; // до 1 секунды для живости
         scheduled++;
         this.pending.push(p);
-        this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
+        const createWhenReady2 = () => {
+          if (this.pauseManager?.getPaused() && this.pauseManager?.isSystemPausable('npcLazySimulation')) {
+            this.scene.time.delayedCall(250, createWhenReady2);
+          } else {
+            this.createNPC(p, { fadeIfInRadar: true });
+          }
+        };
+        this.scene.time.delayedCall(delay, createWhenReady2);
       }
     }
     // Debug logging disabled

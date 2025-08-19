@@ -87,8 +87,21 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
             continue;
           }
 
-          // Обновляем видимость динамических объектов
-          this.visibilityManager.updateObjectVisibility(gameObject, distance, radarRange);
+          // Обновляем видимость динамических объектов с учётом настройки fadeZone из конфига
+          const fogCfg = this.config.gameplay?.fogOfWar;
+          const fadeInner = Math.min(Math.max(fogCfg?.fadeZone?.innerRadius ?? 0.98, 0.0), 1.0);
+          const fadeOuter = Math.max(fogCfg?.fadeZone?.outerRadius ?? 1.03, 1.0);
+          const alpha = this.visibilityManager.calculateAlpha(
+            distance,
+            radarRange,
+            { innerRadius: fadeInner, outerRadius: fadeOuter }
+          );
+          if (alpha <= 0) {
+            this.visibilityManager.setObjectVisible(gameObject, false);
+          } else {
+            this.visibilityManager.setObjectVisible(gameObject, true);
+            this.visibilityManager.setObjectAlpha(gameObject, alpha);
+          }
           
           trackedObj.lastDistance = distance;
           processedCount++;
@@ -143,6 +156,21 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
 
     try {
       const originalAlpha = (obj as any).alpha ?? 1.0;
+      // Немедленная инициализация видимости для только что созданных динамических объектов
+      const radarRange = this.radarSystem.getRadarRange();
+      const dx = ((obj as any).x ?? 0) - this.playerX;
+      const dy = ((obj as any).y ?? 0) - this.playerY;
+      const dist = Math.hypot(dx, dy);
+      const fogCfg = this.config.gameplay?.fogOfWar;
+      const fadeInner = Math.min(Math.max(fogCfg?.fadeZone?.innerRadius ?? 0.98, 0.0), 1.0);
+      const fadeOuter = Math.max(fogCfg?.fadeZone?.outerRadius ?? 1.03, 1.0);
+      const alphaNow = this.visibilityManager.calculateAlpha(dist, radarRange, { innerRadius: fadeInner, outerRadius: fadeOuter });
+      if (alphaNow <= 0) {
+        this.visibilityManager.setObjectVisible(obj, false);
+      } else {
+        this.visibilityManager.setObjectVisible(obj, true);
+        this.visibilityManager.setObjectAlpha(obj, alphaNow);
+      }
       
       const trackedObj: TrackedObject = {
         gameObject: obj,
@@ -198,17 +226,14 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
   // Методы для интеграции с миникартой
   isObjectVisible(obj: Phaser.GameObjects.GameObject): boolean {
     const trackedObj = this.trackedObjects.get(obj);
-    if (!trackedObj) return true; // Если объект не отслеживается, считаем его видимым
-    
     // Статические объекты всегда видимы
-    if (trackedObj.isStatic) return true;
-    
-    // Динамические объекты видимы только в радиусе радара
+    if (trackedObj?.isStatic) return true;
+    // Для динамических и нетреканных объектов — видимость по радиусу радара
     const objX = (obj as any).x;
     const objY = (obj as any).y;
+    if (typeof objX !== 'number' || typeof objY !== 'number') return true;
     const distance = Math.hypot(objX - this.playerX, objY - this.playerY);
     const radarRange = this.radarSystem.getRadarRange();
-    
     return distance <= radarRange;
   }
 
