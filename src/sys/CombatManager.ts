@@ -501,6 +501,8 @@ export class CombatManager {
         const target = this.playerWeaponTargets.get(slot);
         if (target) clearedTargets.add(target);
         this.playerWeaponTargets.delete(slot);
+        // Отправляем событие weapon-out-of-range для скрытия текста
+        try { this.scene.events.emit('weapon-out-of-range', slot, true); } catch {}
       }
       try { this.scene.events.emit('player-weapon-target-cleared', null, slotsToClear); } catch {}
       this.refreshCombatRings();
@@ -514,6 +516,17 @@ export class CombatManager {
       }
     }
 
+    // Проверка действительности назначенных целей и сброс недействительных
+    for (const [slotKey, target] of this.playerWeaponTargets.entries()) {
+      if (!target.active || target.destroyed) {
+        this.playerWeaponTargets.delete(slotKey);
+        // Отправляем событие weapon-out-of-range для скрытия текста при сбросе недействительной цели
+        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+        // Уведомляем UI о сбросе назначения
+        try { this.scene.events.emit('player-weapon-target-cleared', target, [slotKey]); } catch {}
+      }
+    }
+    
     // Player fire only по назначенным целям для каждого слота оружия
     const playerSlots = this.config.player?.weapons ?? [];
     if (playerSlots.length) {
@@ -1045,7 +1058,7 @@ export class CombatManager {
           const victimFaction = rec.faction;
           const relSV = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
           const relVS = this.getRelation(victimFaction, shooterFaction, rec.overrides?.factions);
-          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation');
           if (hostile) {
             this.applyDamage(obj, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
@@ -1075,7 +1088,7 @@ export class CombatManager {
           const targetOverrides = (targetEntry as any)?.overrides?.factions;
           const relSV = this.getRelation(shooterFaction, targetFaction, shooterOverrides);
           const relVS = this.getRelation(targetFaction, shooterFaction, targetOverrides);
-          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation');
           if (hostile) {
             this.applyDamage(target, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
@@ -1396,6 +1409,10 @@ export class CombatManager {
           if (tgt === target) { this.playerWeaponTargets.delete(slot); removedSlots.push(slot); }
         }
         if (removedSlots.length) {
+          // Отправляем событие weapon-out-of-range для скрытия надписи перед удалением назначений
+          for (const slot of removedSlots) {
+            try { this.scene.events.emit('weapon-out-of-range', slot, false); } catch {}
+          }
           try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
         }
         // убираем из системы движения NPC
