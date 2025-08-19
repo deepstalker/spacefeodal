@@ -21,6 +21,7 @@ export class PauseManager {
   private scene: Phaser.Scene;
   private isPaused: boolean = false;
   private pausedTimers: Map<string, Phaser.Time.TimerEvent> = new Map();
+  private managedTimers: Map<string, Phaser.Time.TimerEvent> = new Map();
   private pausedTweens: Phaser.Tweens.Tween[] = [];
   private pausedPhysics: boolean = false;
   private config: PauseConfig | null = null;
@@ -150,6 +151,22 @@ export class PauseManager {
       timer.paused = false;
       this.pausedTimers.delete(id);
     }
+  }
+
+  /** Зарегистрировать таймер для автоматической паузы/резюма */
+  public registerTimer(id: string, timer: Phaser.Time.TimerEvent): void {
+    this.managedTimers.set(id, timer);
+    // Если уже на паузе — приостанавливаем немедленно
+    if (this.isPaused) {
+      try { timer.paused = true; } catch {}
+      this.pausedTimers.set(id, timer);
+    }
+  }
+
+  /** Отменить регистрацию таймера */
+  public unregisterTimer(id: string): void {
+    this.managedTimers.delete(id);
+    this.pausedTimers.delete(id);
   }
   
 
@@ -296,8 +313,17 @@ export class PauseManager {
   }
   
   private pauseTimers(): void {
-    // Автоматическое управление таймерами отключено - управляем через registerTimer
-    // В данной версии Phaser нет прямого доступа к списку всех таймеров
+    // Приостанавливаем только те таймеры, которые были явно зарегистрированы
+    for (const [id, timer] of this.managedTimers.entries()) {
+      if (!timer) continue;
+      // Не трогаем уже завершённые или уже приостановленные таймеры
+      const done = typeof timer.getProgress === 'function' ? timer.getProgress() >= 1 : false;
+      if (done || (timer as any).paused === true) continue;
+      try {
+        (timer as any).paused = true;
+        this.pausedTimers.set(id, timer);
+      } catch {}
+    }
   }
   
   private resumeTimers(): void {

@@ -87,9 +87,16 @@
 
 - **Группировка сервисов**:
   - Создать папку `src/services`.
-  - Перенести туда существующие менеджеры:
-    - Все файлы из `src/sys/` -> `src/services/`.
-    - `src/ui/hud/HUDManager.ts` переносится как `src/components/HUDComponent.ts`.
+  - Добавить новые сервисы-обёртки для разгрузки сцен:
+    - `src/services/StarfieldRenderer.ts` — многослойный фон (звёзды/небулы) + случайный starfield.
+    - `src/services/SystemInitializer.ts` — инициализация звезды, планет, POI, регистрация в FOW.
+    - `src/services/SystemLoaderService.ts` — загрузка активной звёздной системы (static/procedural).
+    - `src/services/PlanetOrbitManager.ts` — обновление орбит планет, проксирование _x/_y в конфиг.
+    - `src/services/EncounterManager.ts` — активация POI/баннеры/очистка маркеров.
+    - `src/services/InputHandler.ts` — ПКМ/радиальное меню/команды движения игрока.
+    - `src/services/NPCBehaviorManager.ts` — поведения NPC (торговцы/патруль) с делегированием в CombatManager.
+    - `src/services/PathRenderService.ts` — отрисовка линии цели и пользовательского пути.
+    - `src/services/GameUpdateManager.ts` — единая точка подписки на UPDATE и политика паузы.
   - Обновить пути импортов.
 
 - **Модульность сцен**:

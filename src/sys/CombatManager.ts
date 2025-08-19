@@ -1141,6 +1141,7 @@ export class CombatManager {
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
     // Создаем таймер жизни снаряда (без немедленной постановки на паузу)
+    const projId = `projectile_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
     const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
       this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
       // Дерегистрируем снаряд из fog of war при истечении времени жизни
@@ -1148,7 +1149,11 @@ export class CombatManager {
         this.fogOfWar.unregisterObject(proj);
       }
       (proj as any).destroy?.();
+      // Снимаем регистрацию таймера
+      try { this.pauseManager?.unregisterTimer?.(projId); } catch {}
     });
+    // Регистрируем таймер в PauseManager, чтобы он замораживался на паузе
+    try { this.pauseManager?.registerTimer?.(projId, lifetimeTimer); } catch {}
 
     // Сигнализируем UI о выстреле игрока для мигания иконки
     if (shooter === this.ship) {
@@ -1160,6 +1165,7 @@ export class CombatManager {
     const count = Math.max(1, w?.burst?.count ?? 3);
     const delayMs = Math.max(1, w?.burst?.delayMs ?? 80);
     for (let k = 0; k < count; k++) {
+      const burstId = `burst_${slot}_${k}_${Date.now()}`;
       const burstTimer = this.scene.time.delayedCall(k * delayMs, () => {
         // Проверяем паузу боевых систем
         if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
@@ -1170,7 +1176,9 @@ export class CombatManager {
         const muzzleOffset = w.muzzleOffset;
         const w2 = { ...w, muzzleOffset };
         this.fireWeapon(slot, w2, target, shooter);
+        try { this.pauseManager?.unregisterTimer?.(burstId); } catch {}
       });
+      try { this.pauseManager?.registerTimer?.(burstId, burstTimer); } catch {}
 
     }
   }
@@ -1901,6 +1909,7 @@ export class CombatManager {
       try { this.scene.events.emit('beam-start', slotKey, durationMs); } catch {}
     }
     // Автоматическое отключение по duration и установка refresh
+    const durationId = `beam_duration_${slotKey}_${Date.now()}`;
     const durationTimer = this.scene.time.delayedCall(durationMs, () => {
       const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
       const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
@@ -1910,7 +1919,9 @@ export class CombatManager {
         try { this.scene.events.emit('beam-refresh', slotKey, refreshMs); } catch {}
       }
       this.stopBeamIfAny(shooter, slotKey);
+      try { this.pauseManager?.unregisterTimer?.(durationId); } catch {}
     });
+    try { this.pauseManager?.registerTimer?.(durationId, durationTimer); } catch {}
     
     // ПРИМЕЧАНИЕ: Регистрация таймеров в PauseManager отключена из-за конфликтов
     // Duration таймер работает как обычный Phaser таймер
