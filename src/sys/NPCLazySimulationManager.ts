@@ -119,7 +119,7 @@ export class NPCLazySimulationManager {
     }
   }
 
-  private createNPC(p: PendingNPC) {
+  private createNPC(p: PendingNPC, opts?: { fadeIfInRadar?: boolean }) {
     const cm: any = (this.scene as any).combat;
     if (!cm?.spawnNPCPrefab) return;
     const npc = cm.spawnNPCPrefab(p.prefab, p.spawnAt.x, p.spawnAt.y) as any;
@@ -159,11 +159,25 @@ export class NPCLazySimulationManager {
     // Страховка: проставим профиль ИИ в боевой системе (поведение/retreatHpPct)
     try { if (aiKey) cm.setAIProfileFor?.(npc, aiKey); } catch {}
     p.created = true;
+
+    // Плавное появление при спавне в радиусе радара игрока по событию цикла
+    if (opts?.fadeIfInRadar && this.fog && typeof (npc as any).setAlpha === 'function') {
+      try {
+        const player = this.fog.getPlayerPosition();
+        const radar = this.fog.getRadarRange();
+        const dist = Math.hypot(p.spawnAt.x - player.x, p.spawnAt.y - player.y);
+        if (dist <= radar) {
+          // Начинаем с прозрачности и плавно показываем
+          (npc as any).setAlpha(0);
+          this.scene.tweens.add({ targets: npc, alpha: 1, duration: 800, ease: 'Sine.easeOut' });
+        }
+      } catch {}
+    }
     // Debug logging disabled
     // try { console.log('[NPCSim] npc created', { id: p.id, prefab: p.prefab, at: p.spawnAt, home: p.home }); } catch {}
   }
 
-  private scheduleReplenish() {
+  public scheduleReplenish() {
     // Проверяем текущие активные NPC и досоздаём недостающих по квотам из конфигов
     const gp = this.config.gameplay;
     const sim = gp?.simulation ?? {} as any;
@@ -200,11 +214,46 @@ export class NPCLazySimulationManager {
         totalScheduled++;
         // Debug logging disabled
         // try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
-        this.scene.time.delayedCall(delay, () => this.createNPC(p));
+        this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
       }
     }
     // Debug logging disabled
     // try { if (totalScheduled > 0) console.log('[NPCSim] replenish complete', { totalScheduled }); } catch {}
+  }
+
+  /**
+   * Немедленное пополнение квот в начале нового цикла
+   * Спавнит недостающих с минимальной задержкой, чтобы создать эффект "взлёта с началом цикла".
+   */
+  public replenishOnCycleStart() {
+    const entries = this.listQuotaEntries();
+    const npcs: any[] = ((this.scene as any).npcs ?? []).filter((o: any) => o?.active);
+    const active: Record<string, number> = {};
+    for (const o of npcs) {
+      const hr = (o as any).__homeRef as HomeRef | undefined;
+      const prefab = (o as any).__prefabKey ?? 'unknown';
+      const homeId = hr?.id ?? `${hr?.type ?? 'unknown'}_${Math.floor(hr?.x ?? 0)}_${Math.floor(hr?.y ?? 0)}`;
+      const key = `${prefab}__${homeId}`;
+      active[key] = (active[key] ?? 0) + 1;
+    }
+    let scheduled = 0;
+    for (const e of entries) {
+      const key = `${e.prefab}__${e.home.id}`;
+      const have = active[key] ?? 0;
+      const deficit = Math.max(0, e.count - have);
+      for (let i = 0; i < deficit; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const r = Math.random() * (Math.max(this.config.system.size.width, this.config.system.size.height) * (this.config.gameplay?.simulation?.initialSpawnRadiusPct ?? 0.25));
+        const x = e.home.x + Math.cos(ang) * r;
+        const y = e.home.y + Math.sin(ang) * r;
+        const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:cycle:${Date.now()}:${i}` , prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
+        const delay = Math.random() * 1000; // до 1 секунды для живости
+        scheduled++;
+        this.scene.time.delayedCall(delay, () => this.createNPC(p, { fadeIfInRadar: true }));
+      }
+    }
+    // Debug logging disabled
+    // try { if (scheduled > 0) console.log('[NPCSim] cycle replenish scheduled', { scheduled }); } catch {}
   }
 
   private listQuotaEntries(): Array<{ prefab: string; count: number; home: HomeRef }> {

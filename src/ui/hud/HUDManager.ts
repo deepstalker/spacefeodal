@@ -1016,7 +1016,7 @@ export class HUDManager {
     const minimapW = 512; // увеличиваем с 480 до 640
     const minimapH = 384; // увеличиваем с 360 до 480
     const minimapX = this.scene.scale.width - minimapW - 40; // отступ от правого края
-    const minimapY = 40; // отступ от верхнего края
+    const minimapY = 80; // отступ от верхнего края
     this.minimapBounds = { x: minimapX, y: minimapY, w: minimapW, h: minimapH };
     
     // Инициализируем миникарту с новыми размерами
@@ -1118,11 +1118,11 @@ export class HUDManager {
     const mapY = this.minimapBounds.y;
     const mapW = this.minimapBounds.w;
     
-    // Счетчик циклов над миникартой
+    // Счетчик циклов рядом с миникартой (гарантированно в пределах экрана)
     const cycleX = mapX + mapW / 2;
-    const cycleY = mapY - 80; // Отступ от миникарты
+    const cycleY = Math.max(24, mapY - 26);
     
-    this.cycleCounterText = this.scene.add.text(cycleX, cycleY, 'Имперская эпоха\nЦикл: 0010', {
+    this.cycleCounterText = this.scene.add.text(cycleX, cycleY, 'Цикл: 0010', {
       color: '#ffffff',
       fontSize: '28px',
       fontFamily: 'HooskaiChamferedSquare',
@@ -1206,7 +1206,7 @@ export class HUDManager {
     
     // Обновляем текст счетчика циклов
     const cycleFormatted = this.timeManager.getCurrentCycleFormatted();
-    this.cycleCounterText.setText(`Имперская эпоха\nЦикл: ${cycleFormatted}`);
+    this.cycleCounterText.setText(`Цикл: ${cycleFormatted}`);
     
     // Обновляем прогресс-бар
     const progress = this.timeManager.getCycleProgress();

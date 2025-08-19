@@ -518,7 +518,7 @@ export class CombatManager {
 
     // Проверка действительности назначенных целей и сброс недействительных
     for (const [slotKey, target] of this.playerWeaponTargets.entries()) {
-      if (!target.active || target.destroyed) {
+      if (!target.active) {
         this.playerWeaponTargets.delete(slotKey);
         // Отправляем событие weapon-out-of-range для скрытия текста при сбросе недействительной цели
         try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
@@ -2082,6 +2082,47 @@ export class CombatManager {
       this.refreshCombatRings();
       this.refreshCombatUIAssigned();
     }
+  }
+
+  /**
+   * Корректно удалить NPC из всех систем (например, после успешного докинга)
+   */
+  public despawnNPC(target: any, reason?: string) {
+    const t = this.targets.find(tt => tt.obj === target);
+    if (!t) {
+      try { (target as any)?.destroy?.(); } catch {}
+      return;
+    }
+
+    // Снимаем назначенные слоты игрока на цель
+    this.clearAssignmentsForTarget(target);
+
+    // Удаляем визуальные элементы HP/имён/колец
+    try { t.hpBarBg.destroy(); } catch {}
+    try { t.hpBarFill.destroy(); } catch {}
+    try { t.nameLabel?.destroy(); } catch {}
+    const ring = this.combatRings.get(target);
+    if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
+
+    // Удаляем из систем движения/состояний/тумана войны
+    try { this.npcMovement.unregisterNPC(target); } catch {}
+    try { this.npcStateManager.unregisterNPC(target); } catch {}
+    try { if (this.fogOfWar) this.fogOfWar.unregisterObject(target); } catch {}
+
+    // Снимаем выделение если это был выбранный таргет
+    if (this.selectedTarget === target) this.clearSelection();
+
+    // Убираем из списка целей и уничтожаем объект
+    this.targets = this.targets.filter(rec => rec.obj !== target);
+    // Убираем из массива NPC сцены, если используется
+    try {
+      const arr: any[] | undefined = (this.scene as any).npcs;
+      if (Array.isArray(arr)) {
+        const idx = arr.indexOf(target);
+        if (idx >= 0) arr.splice(idx, 1);
+      }
+    } catch {}
+    try { (target as any).destroy?.(); } catch {}
   }
 
   public forceCleanupInactiveTargets() {

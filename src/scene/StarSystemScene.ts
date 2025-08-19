@@ -104,6 +104,12 @@ export default class StarSystemScene extends Phaser.Scene {
       this.timeManager.resume();
     });
 
+    // Пополнение квот на старте каждого цикла
+    try {
+      const onCycleStart = (_e: any) => { try { this.npcSim?.replenishOnCycleStart?.(); } catch {} };
+      this.events.on('time-cycle_start', onCycleStart);
+    } catch {}
+
     const system = this.config.system;
     const maxSize = 25000;
     const w = Math.min(system.size.width, maxSize);
@@ -605,51 +611,24 @@ export default class StarSystemScene extends Phaser.Scene {
           (o as any).__state = 'docking';
           // Сбрасываем любые боевые назначения на этот объект
           try { (cmAny as any).clearAssignmentsForTarget?.(o); } catch {}
-          
-          const dur = 3000 + Math.random() * 1000;
+
+          // Анимация «посадки» и немедленный деспаун по завершении
+          const dur = 1200;
           const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
           const bsy = (o as any).__baseScaleY ?? o.scaleY ?? 1;
-          
-          this.tweens.add({ 
-            targets: o, 
-            x: planetPos.x, 
-            y: planetPos.y, 
-            scaleX: bsx * 0.2, 
-            scaleY: bsy * 0.2, 
-            alpha: 0, 
-            duration: dur, 
-            ease: 'Sine.easeInOut', 
+          this.tweens.add({
+            targets: o,
+            x: planetPos.x,
+            y: planetPos.y,
+            scaleX: bsx * 0.2,
+            scaleY: bsy * 0.2,
+            alpha: 0,
+            duration: dur,
+            ease: 'Sine.easeInOut',
             onComplete: () => {
               (o as any).__state = 'docked';
-              this.time.delayedCall(10000 + Math.random() * 50000, () => {
-                if (!o.active) return;
-                const otherPlanets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
-                if (otherPlanets.length > 0) {
-                  (o as any).__targetPlanet = otherPlanets[Math.floor(Math.random() * otherPlanets.length)];
-                } else {
-                  (o as any).__targetPlanet = target;
-                }
-                (o as any).__state = 'undocking';
-                const ang = Math.random() * Math.PI * 2;
-                const livePos = this.getPlanetWorldPosById(target.id);
-                const cx = livePos?.x ?? (sys.star.x + target.orbit.radius);
-                const cy = livePos?.y ?? sys.star.y;
-                o.x = cx;
-                o.y = cy;
-                this.tweens.add({ 
-                  targets: o, 
-                  x: cx + Math.cos(ang) * 200, 
-                  y: cy + Math.sin(ang) * 200, 
-                  scaleX: bsx, 
-                  scaleY: bsy, 
-                  alpha: 1, 
-                  duration: dur, 
-                  ease: 'Sine.easeInOut', 
-                  onComplete: () => {
-                    (o as any).__state = 'travel';
-                  }
-                });
-              });
+              // Удаляем NPC из системы (торговец «приземлился» и исчез)
+              try { (this.combat as any).despawnNPC?.(o, 'docked'); } catch {}
             }
           });
         }
