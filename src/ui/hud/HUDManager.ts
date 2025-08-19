@@ -227,9 +227,9 @@ export class HUDManager {
     }).layout().setScrollFactor(0).setDepth(1500)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => {
+        // Дублируем клик на кнопку в действие высокого уровня
         const stars = this.scene.scene.get('StarSystemScene') as any;
-        if (stars?.cameraMgr?.isFollowing?.()) stars.cameraMgr.disableFollow();
-        else stars?.cameraMgr?.enableFollow?.(ship);
+        stars?.inputMgr?.emitAction?.('toggleFollow');
       });
     // Move follow toggle to right-bottom corner
     this.followToggle.setPosition(sw - pad - 150, hudY - 160);

@@ -276,17 +276,19 @@ export default class StarSystemScene extends Phaser.Scene {
     this.setupMouseControls();
     this.combat.bindInput(this.inputMgr);
 
-    // Toggle follow camera (F)
-    const followKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-    followKey?.on('down', () => {
+    // Действия высокого уровня через InputManager
+    this.inputMgr.onAction('toggleFollow', () => {
       if (this.cameraMgr.isFollowing()) this.cameraMgr.disableFollow();
       else this.cameraMgr.enableFollow(this.ship);
     });
-
-    // Toggle pause (P key - изменил с SPACE из-за возможных конфликтов)
-    const pauseKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.P);
-    pauseKey?.on('down', () => {
+    this.inputMgr.onAction('pause', () => {
       this.pauseManager.togglePause();
+    });
+    this.inputMgr.onAction('zoomIn', () => {
+      this.cameraMgr.zoomDelta(0.1);
+    });
+    this.inputMgr.onAction('zoomOut', () => {
+      this.cameraMgr.zoomDelta(-0.1);
     });
     
     // Отладочная команда для проверки конфига паузы (Ctrl+Shift+D)

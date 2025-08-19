@@ -55,9 +55,12 @@ export default class UIScene extends Phaser.Scene {
     }
 
 
-    // Debug menu to switch systems
-    const key = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.M);
-    key?.on('down', () => this.toggleSystemMenu());
+    // Открытие меню систем через InputManager действия
+    try {
+      const stars = this.scene.get('StarSystemScene') as any;
+      const inputMgr = stars?.inputMgr;
+      inputMgr?.onAction('systemMenu', () => this.toggleSystemMenu());
+    } catch {}
   }
 
 

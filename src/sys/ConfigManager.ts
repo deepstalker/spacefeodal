@@ -120,7 +120,14 @@ export type AssetsConfig = {
   };
 };
 
-export type KeybindsConfig = { toggleFollow: string; zoomIn: string; zoomOut: string };
+export type KeybindsConfig = {
+  toggleFollow: string;
+  zoomIn: string;
+  zoomOut: string;
+  // Дополнительно (необязательно):
+  pause?: string;
+  systemMenu?: string;
+};
 export type ModulesConfig = { navigation: boolean; combat: boolean; llm: boolean };
 export type PersistenceConfig = { saveKey: string };
 export type ItemsConfig = { rarities: Record<string, { name: string; color: string }> };
