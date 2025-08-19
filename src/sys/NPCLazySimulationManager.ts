@@ -169,9 +169,29 @@ export class NPCLazySimulationManager {
         if (dist <= radar) {
           // Начинаем с прозрачности и плавно показываем
           (npc as any).setAlpha(0);
-          this.scene.tweens.add({ targets: npc, alpha: 1, duration: 800, ease: 'Sine.easeOut' });
+          this.scene.tweens.add({ targets: npc, alpha: 1, duration: 2400, ease: 'Sine.easeOut' });
           // Стартовая скорость 75% от MAX_SPEED, чтобы "выплывал" из невидимости
           try { (cm as any).npcMovement?.setInitialSpeedFraction?.(npc, 0.75); } catch {}
+
+          // Немедленно задать цель движения, чтобы объект не стоял на месте во время проявления
+          try {
+            const behavior = (npc as any).__behavior as string | undefined;
+            const sys = this.config.system;
+            if (behavior === 'planet_trader') {
+              const pl = (npc as any).__targetPlanet;
+              if (pl) {
+                const px = (pl as any)._x ?? (sys.star.x + pl.orbit.radius);
+                const py = (pl as any)._y ?? sys.star.y;
+                (cm as any).npcMovement?.setNPCTarget?.(npc, { x: px, y: py });
+              }
+            } else if (behavior === 'patrol') {
+              const ang = Math.random() * Math.PI * 2;
+              const r = 200 + Math.random() * 200;
+              const tx = this.clamp(p.spawnAt.x + Math.cos(ang) * r, 0, sys.size.width);
+              const ty = this.clamp(p.spawnAt.y + Math.sin(ang) * r, 0, sys.size.height);
+              (cm as any).npcMovement?.setNPCTarget?.(npc, { x: tx, y: ty });
+            }
+          } catch {}
         }
       } catch {}
     }
