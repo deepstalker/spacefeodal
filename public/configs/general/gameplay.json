@@ -29,8 +29,8 @@
   "dock_range": 220,
   "simulation": {
     "enabled": true,
-    "initialSpawnRadiusPct": 0.25,
-    "lazySpawnRadarBufferPct": 0.01,
+    "initialSpawnRadiusPct": 0.15,
+    "lazySpawnRadarBufferPct": 0.2,
     "replenish": {
       "checkIntervalMs": 240000,
       "spawnDelayMsRange": { "min": 5000, "max": 45000 }

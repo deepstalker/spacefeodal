@@ -207,16 +207,6 @@ export default class StarSystemScene extends Phaser.Scene {
     }
     // Fog of War disabled for now
 
-    // Инициализация симуляции NPC (ленивый спавн по квотам)
-    try {
-      const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
-      this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
-      this.npcSim.setPauseManager(this.pauseManager);
-      this.npcSim.init();
-    } catch {}
-
-    // NPC спавн теперь полностью управляется NPCLazySimulationManager по квотам
-
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
     const cfgStart = this.config.player?.start ?? {} as any;
@@ -249,6 +239,16 @@ export default class StarSystemScene extends Phaser.Scene {
     
     // Set initial player position for fog of war
     this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+
+    // Инициализация симуляции NPC (ленивый спавн по квотам) — после установки позиции игрока в FOW
+    try {
+      const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
+      this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
+      this.npcSim.setPauseManager(this.pauseManager);
+      this.npcSim.init();
+    } catch {}
+    
+    // NPC спавн теперь полностью управляется NPCLazySimulationManager по квотам
 
     // Player HP
     this.playerHpMax = (selected as any)?.hull ?? 100;

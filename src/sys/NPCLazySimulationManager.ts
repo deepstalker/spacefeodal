@@ -118,8 +118,9 @@ export class NPCLazySimulationManager {
         // Debug logging disabled
         // try { console.log('[NPCSim] player touched pending', { id: p.id, prefab: p.prefab, distance: Math.round(d), threshold: Math.round(threshold) }); } catch {}
         // Дополнительная защита: проверим текущие квоты с учётом активных и pending перед созданием
-        if (this.canSpawnForHomeAndPrefab(p.home, p.prefab)) {
-          this.createNPC(p);
+        if (this.canSpawnForHomeAndPrefab(p.home, p.prefab, p.id)) {
+          // Плавное появление, если точка спавна в радиусе радара игрока
+          this.createNPC(p, { fadeIfInRadar: true });
         }
       }
     }
@@ -316,7 +317,7 @@ export class NPCLazySimulationManager {
     // try { if (scheduled > 0) console.log('[NPCSim] cycle replenish scheduled', { scheduled }); } catch {}
   }
 
-  private canSpawnForHomeAndPrefab(home: HomeRef, prefab: string): boolean {
+  private canSpawnForHomeAndPrefab(home: HomeRef, prefab: string, excludePendingId?: string): boolean {
     const entries = this.listQuotaEntries();
     const target = entries.find(e => e.home.id === (home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`) && e.prefab === prefab);
     if (!target) return true; // нет квоты — не ограничиваем
@@ -332,6 +333,7 @@ export class NPCLazySimulationManager {
     }
     for (const p of this.pending) {
       if (p.created) continue;
+      if (excludePendingId && p.id === excludePendingId) continue; // не учитываем текущую заявку
       const hid = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
       const k = `${p.prefab}__${hid}`;
       if (k === key) have++;
