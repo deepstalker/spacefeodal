@@ -769,18 +769,8 @@ export class NPCStateManager {
         break;
         
       case NPCState.COMBAT_SEEKING:
-        // Переход в атаку если есть цель, или возврат к мирному поведению
-        if (context.aggression.level < 0.1) {
-          // Агрессия остыла - возвращаемся к базовому поведению
-          const baseProfile = context.aiProfile || context.legacy.__behavior;
-          if (baseProfile === 'patrol') {
-            this.transitionTo(context, NPCState.PATROLLING);
-          } else if (baseProfile === 'planet_trader' || baseProfile === 'orbital_trade') {
-            this.transitionTo(context, NPCState.TRADING);
-          } else {
-            this.transitionTo(context, NPCState.IDLE);
-          }
-        }
+        // Централизованный поиск цели и переход в атаку/бегство
+        this.handleCombatSeeking(context);
         break;
         
       case NPCState.COMBAT_ATTACKING:
@@ -788,6 +778,15 @@ export class NPCStateManager {
         if (!context.targetStabilization.currentTarget || 
             !context.targetStabilization.currentTarget.active) {
           this.transitionTo(context, NPCState.COMBAT_SEEKING);
+        } else {
+          // Если цель вышла за радиус интереса — переходим к поиску новой
+          const combat = (this.scene as any).combat as any;
+          const radar = combat?.getRadarRangeForPublic?.(context.obj) ?? 800;
+          const tgt = context.targetStabilization.currentTarget;
+          const d = Phaser.Math.Distance.Between(context.obj.x, context.obj.y, tgt.x, tgt.y);
+          if (d > radar) {
+            this.transitionTo(context, NPCState.COMBAT_SEEKING);
+          }
         }
         break;
         
@@ -797,6 +796,77 @@ export class NPCStateManager {
           this.transitionTo(context, NPCState.COMBAT_SEEKING);
         }
         break;
+    }
+  }
+
+  // Единая логика поиска/выбора боевой цели и решений (атака/бегство/мирное)
+  private handleCombatSeeking(context: NPCStateContext): void {
+    const combat = (this.scene as any).combat as any;
+    const my = context.obj;
+    const myFaction = context.faction;
+    const radar = combat?.getRadarRangeForPublic?.(my) ?? 800;
+    const all = combat?.getAllNPCs?.() ?? [];
+    const selfRec = all.find((r: any) => r.obj === my);
+    const myOverrides = selfRec?.overrides?.factions;
+    // Профиль ИИ для реакций на фракции
+    const profile = context.aiProfile ? this.config.aiProfiles?.profiles?.[context.aiProfile] : undefined as any;
+    const behavior = profile?.behavior as string | undefined;
+    const reactions = profile?.sensors?.react?.onFaction as Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> | undefined;
+    const candidates = all
+      .filter((r: any) => r && r.obj !== my && r.obj?.active)
+      .filter((r: any) => {
+        const d = Phaser.Math.Distance.Between(my.x, my.y, r.obj.x, r.obj.y);
+        if (d > radar) return false;
+        // враги по отношениям с учетом overrides с обеих сторон (временная вражда)
+        const relAB = combat.getRelationPublic(myFaction, r.faction, myOverrides);
+        const relBA = combat.getRelationPublic(r.faction, myFaction, r.overrides?.factions);
+        return relAB === 'confrontation' || relBA === 'confrontation';
+      })
+      .map((r: any) => r.obj);
+    // Добавляем игрока как потенциальную цель если близко
+    const player = combat?.getPlayerShip?.();
+    if (player && player.active) {
+      const dp = Phaser.Math.Distance.Between(my.x, my.y, player.x, player.y);
+      if (dp <= radar) {
+        const relToPlayer = combat.getRelationPublic(myFaction, 'player', myOverrides);
+        const reactionToRel = reactions?.[relToPlayer] ?? 'ignore';
+        const wantsAttackPlayer = (behavior === 'aggressive') || (reactionToRel === 'attack');
+        if (wantsAttackPlayer && !candidates.includes(player)) {
+          candidates.push(player);
+        }
+      }
+    }
+    // Выбор стабильной цели
+    let best = this.selectStableTarget(context, candidates);
+    // Если ещё нет цели, но игрок рядом и поведение агрессивное — выберем игрока
+    if (!best && player && player.active) {
+      const dp = Phaser.Math.Distance.Between(my.x, my.y, player.x, player.y);
+      const relToPlayer = combat.getRelationPublic(myFaction, 'player', myOverrides);
+      const reactionToRel = reactions?.[relToPlayer] ?? 'ignore';
+      const wantsAttackPlayer = (behavior === 'aggressive') || (reactionToRel === 'attack');
+      if (dp <= radar && wantsAttackPlayer) { best = player; }
+    }
+    if (best && best.active) {
+      context.targetStabilization.currentTarget = best;
+      // Решение: бежать или атаковать (порог по агрессии/здоровью может быть из combatAI профиля)
+      const retreatPct =  context.combatAI ? (this.config.combatAI?.profiles?.[context.combatAI]?.retreatHpPct ?? 0) : 0;
+      const shouldFlee = false; // расширится в будущем (по HP и пр.)
+      if (shouldFlee) {
+        this.transitionTo(context, NPCState.COMBAT_FLEEING);
+      } else {
+        this.transitionTo(context, NPCState.COMBAT_ATTACKING);
+        // Добавим движение к цели с приоритетом боя и применим его немедленно через CombatManager
+        this.addMovementCommand(my, 'pursue', { x: best.x, y: best.y, targetObject: best }, undefined, MovementPriority.COMBAT, 'npc_fsm_combat');
+        (this.scene as any).combat?.applyMovementFromFSM?.(my, 'pursue', { x: best.x, y: best.y, targetObject: best });
+      }
+    } else {
+      // Нет цели: если агрессия остыла — вернуться к базовому поведению
+      if (context.aggression.level < 0.1) {
+        const base = context.aiProfile || context.legacy.__behavior;
+        if (base === 'patrol') this.transitionTo(context, NPCState.PATROLLING);
+        else if (base === 'planet_trader' || base === 'orbital_trade') this.transitionTo(context, NPCState.TRADING);
+        else this.transitionTo(context, NPCState.IDLE);
+      }
     }
   }
 

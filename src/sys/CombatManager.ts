@@ -589,21 +589,14 @@ export class CombatManager {
     }
     // enemies auto fire by intent
     for (const t of this.targets) {
-      if (!t.ai || !t.intent || t.intent.type !== 'attack') {
-        // Отладочная информация почему NPC не атакует
-        // Debug logging disabled
-        // if (process.env.NODE_ENV === 'development' && Math.random() < 0.005) { // 0.5% логов
-        //   const hasAI = !!t.ai;
-        //   const hasIntent = !!t.intent;
-        //   const intentType = t.intent?.type;
-        //   console.log(`[AutoFire] NPC ${t.shipId} #${(t.obj as any).__uniqueId} not firing`, {
-        //     hasAI, hasIntent, intentType,
-        //     reason: !hasAI ? 'no_ai' : !hasIntent ? 'no_intent' : `intent_is_${intentType}`
-        //   });
-        // }
-        continue;
-      }
-      const targetObj = t.intent.target;
+      // Используем FSM, но допускаем легаси intent как триггер боя
+      const ctx = this.npcStateManager.getContext(t.obj);
+      const st = ctx?.state;
+      const legacyAttack = t.intent?.type === 'attack' && t.intent.target?.active;
+      const legacyFlee = t.intent?.type === 'flee' && t.intent.target?.active;
+      const canShoot = (st === NPCState.COMBAT_ATTACKING) || (st === NPCState.COMBAT_FLEEING) || legacyAttack || legacyFlee;
+      const targetObj = ctx?.targetStabilization?.currentTarget ?? t.intent?.target;
+      if (!targetObj) { continue; }
       if (!targetObj || !targetObj.active) {
   
         continue;
@@ -613,10 +606,10 @@ export class CombatManager {
       const slots = (t as any).weaponSlots as string[] | undefined;
       if (slots && slots.length) this.weaponSlots = slots;
       
-      // Отладочная информация о стрельбе
-
-      
-      this.autoFire(t.obj as any, targetObj);
+      // Стреляем в режимах ATTACKING и FLEEING, а также при легаси intent attack/flee
+      if (canShoot) {
+        this.autoFire(t.obj as any, targetObj);
+      }
       this.weaponSlots = saved;
     }
     // update red rings for combat-selected targets
@@ -1033,7 +1026,7 @@ export class CombatManager {
         (proj as any).destroy?.();
         return;
       }
-      // Check collisions with any other valid enemy target along the path (no ally/neutral hits)
+      // Check collisions with any other valid enemy target along the path
       for (let i = 0; i < this.targets.length; i++) {
         const rec = this.targets[i];
         const obj = rec.obj as any;
@@ -1048,12 +1041,12 @@ export class CombatManager {
         const hitR = this.getEffectiveRadius(obj);
         const dAny = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
         if (dAny <= hitR) {
-          // Relation filter: only damage if shooter considers target as confrontation
+          // Relation filter: projectiles pass through non-hostile targets
           const victimFaction = rec.faction;
           const relSV = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
           const relVS = this.getRelation(victimFaction, shooterFaction, rec.overrides?.factions);
-          const allow = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
-          if (allow) {
+          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          if (hostile) {
             this.applyDamage(obj, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
             this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
@@ -1064,7 +1057,7 @@ export class CombatManager {
             (proj as any).destroy?.();
             return;
           } else {
-            // нейтральная/союзная цель — не разрушаем снаряд, он продолжает движение
+            // нейтральная/союзная цель — не наносим урон и не разрушаем снаряд
             continue;
           }
         }
@@ -1076,14 +1069,14 @@ export class CombatManager {
         const st = (target as any).__state;
         const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof (target as any).alpha === 'number' && (target as any).alpha <= 0.05) || (target as any).visible === false;
         if (!invulnerable) {
-          // Фильтр отношений учитывает overrides с обеих сторон
+          // Фильтр отношений учитывает overrides с обеих сторон: дружественные цели пропускаем
           const targetEntry = this.targets.find(t => t.obj === target);
           const targetFaction = targetEntry?.faction ?? (target === this.ship ? 'player' : undefined);
           const targetOverrides = (targetEntry as any)?.overrides?.factions;
           const relSV = this.getRelation(shooterFaction, targetFaction, shooterOverrides);
           const relVS = this.getRelation(targetFaction, shooterFaction, targetOverrides);
-          const allow = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
-          if (allow) {
+          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation') || (shooter === this.ship);
+          if (hostile) {
             this.applyDamage(target, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
             this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
@@ -1996,6 +1989,29 @@ export class CombatManager {
         }
       }
     }
+  }
+
+  // Публичные помощники для FSM NPC
+  public getAllNPCs(): Array<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> } }> {
+    return this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides }));
+  }
+  public getPlayerShip(): any { return this.ship; }
+  public getRelationPublic(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'>): 'ally'|'neutral'|'confrontation' {
+    return this.getRelation(ofFaction, otherFaction, overrides);
+  }
+  public getRadarRangeForPublic(obj: any): number { return this.getRadarRangeFor(obj); }
+
+  // Применение команды движения от FSM (без прямого доступа FSM к NPCMovementManager)
+  public applyMovementFromFSM(
+    obj: any,
+    mode: 'move_to' | 'follow' | 'orbit' | 'pursue',
+    target: { x: number; y: number; targetObject?: any },
+    distance?: number
+  ) {
+    try {
+      this.npcMovement.setNPCMode(obj, mode as any, distance);
+      this.npcMovement.setNPCTarget(obj, target);
+    } catch {}
   }
 
   // ВКЛ/ВЫКЛ визуального круга радиуса оружия игрока (строго визуально)
