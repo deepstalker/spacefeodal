@@ -10,6 +10,8 @@ export class TimeManager {
   private cycleTimer: Phaser.Time.TimerEvent | null = null;
   private cycleStartTime: number = 0;
   private isPaused: boolean = false;
+  private pausedProgress: number = 0;
+  private pausedRemainingMs: number = 0;
   
   // Константы
   private readonly CYCLE_DURATION_MS = 3 * 60 * 1000; // 3 минуты в миллисекундах
@@ -91,10 +93,12 @@ export class TimeManager {
    * Получить прогресс текущего цикла (0.0 - 1.0)
    */
   public getCycleProgress(): number {
-    if (!this.cycleTimer || this.isPaused) {
+    if (!this.cycleTimer) {
       return 0;
     }
-    
+    if (this.isPaused) {
+      return this.pausedProgress;
+    }
     const elapsed = this.scene.time.now - this.cycleStartTime;
     const progress = Math.min(elapsed / this.CYCLE_DURATION_MS, 1.0);
     return progress;
@@ -104,10 +108,12 @@ export class TimeManager {
    * Получить оставшееся время цикла в миллисекундах
    */
   public getCycleTimeRemaining(): number {
-    if (!this.cycleTimer || this.isPaused) {
+    if (!this.cycleTimer) {
       return this.CYCLE_DURATION_MS;
     }
-    
+    if (this.isPaused) {
+      return this.pausedRemainingMs;
+    }
     const elapsed = this.scene.time.now - this.cycleStartTime;
     return Math.max(0, this.CYCLE_DURATION_MS - elapsed);
   }
@@ -131,6 +137,10 @@ export class TimeManager {
     if (this.isPaused) return;
     
     this.isPaused = true;
+    // Зафиксировать текущее значение прогресса/остатка, чтобы HUD не обнулялся
+    const elapsed = this.scene.time.now - this.cycleStartTime;
+    this.pausedProgress = Math.min(Math.max(elapsed / this.CYCLE_DURATION_MS, 0), 1);
+    this.pausedRemainingMs = Math.max(0, this.CYCLE_DURATION_MS - elapsed);
     
     if (this.cycleTimer) {
       this.cycleTimer.paused = true;
@@ -146,6 +156,18 @@ export class TimeManager {
     if (!this.isPaused) return;
     
     this.isPaused = false;
+    // Обновим опорную точку старта цикла с учетом времени паузы: оставим текущий оставшийся срок
+    // Пересоздадим таймер, чтобы он соответствовал остаточному времени
+    if (this.cycleTimer) {
+      try { this.cycleTimer.remove(false); } catch {}
+      const remaining = Math.max(0, this.getCycleTimeRemaining());
+      this.cycleTimer = this.scene.time.delayedCall(
+        remaining,
+        this.onCycleComplete,
+        [],
+        this
+      );
+    }
     
     if (this.cycleTimer) {
       this.cycleTimer.paused = false;

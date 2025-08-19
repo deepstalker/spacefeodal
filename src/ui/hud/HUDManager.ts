@@ -895,9 +895,7 @@ export class HUDManager {
 
   private updateWeaponChargeBars() {
     // Если игра на паузе, не обновляем прогресс-бары
-    if (this.pauseManager?.getPaused()) {
-      return;
-    }
+    // Визуальные бары должны обновляться всегда (даже на паузе), поэтому не выходим
     
     if (!this.combatManager || !this.configRef?.player?.weapons) return;
     
