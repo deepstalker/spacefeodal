@@ -10,7 +10,7 @@
     },
     "pirate": {
       "relations": {
-        "player": "confrontation",
+        "player": "cautious",
         "pirate": "ally",
         "planet_traders": "confrontation",
         "orbital_patrol": "cautious"
