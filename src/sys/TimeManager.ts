@@ -168,6 +168,11 @@ export class TimeManager {
         this
       );
     }
+    // Сместим старт цикла так, чтобы прогресс оставался на месте после возобновления
+    const elapsedBeforePause = Math.floor(this.CYCLE_DURATION_MS * this.pausedProgress);
+    this.cycleStartTime = this.scene.time.now - elapsedBeforePause;
+    this.pausedProgress = 0;
+    this.pausedRemainingMs = 0;
     
     if (this.cycleTimer) {
       this.cycleTimer.paused = false;
