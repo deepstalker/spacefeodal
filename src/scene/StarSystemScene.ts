@@ -290,6 +290,23 @@ export default class StarSystemScene extends Phaser.Scene {
     this.inputMgr.onAction('zoomOut', () => {
       this.cameraMgr.zoomDelta(-0.1);
     });
+    // Space: осмысленная атака дружественной цели — пометить временным врагом и открыть огонь
+    this.inputMgr.onAction('attackSelected', () => {
+      const cm: any = this.combat as any;
+      const t = cm.getSelectedTarget?.();
+      if (!t || t === this.ship) return;
+      const relAB = cm.getRelationPublic?.('player', t.faction, undefined);
+      const relBA = cm.getRelationPublic?.(t.faction, 'player', (t as any)?.overrides?.factions);
+      const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
+      // Если цель не враг — помечаем временным врагом и назначаем оружие
+      if (!isEnemyNow) {
+        (t as any).overrides = (t as any).overrides ?? {};
+        (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+        (t as any).overrides.factions['player'] = 'confrontation';
+      }
+      // Назначаем все выбранные слоты оружия на цель (HUD управляет выбором слотов)
+      try { (cm as any).assignAllSelectedWeaponsToTarget?.(t); } catch {}
+    });
     
     // Отладочная команда для проверки конфига паузы (Ctrl+Shift+D)
     const debugKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D);

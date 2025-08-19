@@ -512,6 +512,16 @@ export class CombatManager {
     if (this.selectedTarget) {
       const distToSelected = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.selectedTarget.x, this.selectedTarget.y);
       if (distToSelected > playerRadarRange) {
+        // Если за пределами радара и нет наведённых слотов на цель — снимаем временную конфронтацию и сбрасываем выбор
+        const t = this.targets.find(tt => tt.obj === this.selectedTarget);
+        const anyOnThis = this.isTargetCombatSelected(this.selectedTarget);
+        if (t && !anyOnThis) {
+          (t as any).overrides = (t as any).overrides ?? {};
+          (t as any).overrides.factions = (t as any).overrides.factions ?? {};
+          if ((t as any).overrides.factions['player'] === 'confrontation') {
+            delete (t as any).overrides.factions['player'];
+          }
+        }
         this.clearSelection();
       }
     }

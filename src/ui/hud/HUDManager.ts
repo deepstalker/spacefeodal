@@ -138,6 +138,33 @@ export class HUDManager {
       else this.selectAllWeapons();
     });
 
+    // Действие атаки по выбранной цели: назначаем все выбранные слоты на текущую цель
+    try {
+      const stars = this.scene.scene.get('StarSystemScene') as any;
+      const inputMgr = stars?.inputMgr;
+      inputMgr?.onAction('attackSelected', () => {
+        const target = stars?.combat?.getSelectedTarget?.();
+        if (!target || this.selectedSlots.size === 0) return;
+        const playerSlots: string[] = (this.configRef!.player?.weapons ?? []).filter((w: string)=>!!w);
+        const bySlotIndex = Array.from(this.selectedSlots.values()).sort((a,b)=>a-b);
+        bySlotIndex.forEach((idx) => {
+          const slotKey = playerSlots[idx];
+          if (!slotKey) return;
+          const currentTarget = stars.combat.getPlayerWeaponTargets().get(slotKey);
+          if (currentTarget && currentTarget !== target) {
+            this.removeAssignedIcon(slotKey);
+          }
+          stars.combat.setPlayerWeaponTarget(slotKey, target);
+          stars.combat.forceSelectTarget(target);
+          this.createAssignedIcon(slotKey, target);
+          this.removeCursorIcon(idx);
+          const rec = this.slotRecords[idx];
+          if (rec) this.deselectSlot(rec as any);
+        });
+        this.selectedSlots.clear();
+      });
+    } catch {}
+
     // Клики
     this.scene.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.leftButtonReleased()) this.handleLeftClickForWeapons(p);

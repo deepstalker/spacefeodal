@@ -127,6 +127,7 @@ export type KeybindsConfig = {
   // Дополнительно (необязательно):
   pause?: string;
   systemMenu?: string;
+  attackSelected?: string;
 };
 export type ModulesConfig = { navigation: boolean; combat: boolean; llm: boolean };
 export type PersistenceConfig = { saveKey: string };

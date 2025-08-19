@@ -90,7 +90,8 @@ export class InputManager {
       ['zoomIn', kb.zoomIn],
       ['zoomOut', kb.zoomOut],
       ['pause', (kb as any).pause],
-      ['systemMenu', (kb as any).systemMenu]
+      ['systemMenu', (kb as any).systemMenu],
+      ['attackSelected', (kb as any).attackSelected]
     ];
     for (const [action, keyStr] of toBind) {
       const code = this.resolveKeyCode(keyStr);
