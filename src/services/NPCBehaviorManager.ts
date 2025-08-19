@@ -8,6 +8,7 @@ export class NPCBehaviorManager {
   private config: ConfigManager;
   private npcs: any[];
   private combat: any;
+  private escortTargets: Map<any, { target: any; lastSeen: number }> = new Map();
 
   constructor(scene: Phaser.Scene, config: ConfigManager, npcsRef: any[], combat: any) {
     this.scene = scene;
@@ -72,6 +73,36 @@ export class NPCBehaviorManager {
           if (!tgt?.active || (tgt as any).__state === 'docked') (o as any).__targetPatrol = null;
         }
         continue;
+      }
+
+      // ESCORT: только для фракции orbital_patrol — если рядом есть союзный торговец, орбита вокруг него
+      const myEntry = cm.targets?.find((t: any) => t.obj === o);
+      const myFaction = myEntry?.faction;
+      const isEscortCapable = myFaction === 'orbital_patrol';
+      if (isEscortCapable) {
+        const radar = cm.getRadarRangeForPublic?.(o) ?? 800;
+        const allies = (cm.getAllNPCs?.() ?? [])
+          .filter((r: any) => r && r.obj !== o && r.obj?.active)
+          .filter((r: any) => cm.getRelationPublic?.(myFaction, r.faction, myEntry?.overrides?.factions) === 'ally');
+
+        let escortTarget: any = null;
+        for (const allyRec of allies) {
+          const rec = cm.targets?.find((tt: any) => tt.obj === allyRec.obj);
+          const allyBehavior = rec?.ai?.behavior;
+          const allyState = (allyRec.obj as any)?.__state;
+          if (allyBehavior === 'planet_trader' && allyState !== 'docked' && allyState !== 'docking') {
+            const d = Phaser.Math.Distance.Between(o.x, o.y, allyRec.obj.x, allyRec.obj.y);
+            if (d <= radar) { escortTarget = allyRec.obj; break; }
+          }
+        }
+        if (escortTarget) {
+          const dist = 400;
+          cm.npcMovement.setNPCMode(o, 'orbit', dist);
+          cm.npcMovement.setNPCTarget(o, { x: escortTarget.x, y: escortTarget.y, targetObject: escortTarget });
+          // сбросить обычную цель патруля, чтобы после исчезновения эскорта вернуться к патрулю
+          (o as any).__targetPatrol = null;
+          continue;
+        }
       }
       let target = (o as any).__targetPatrol;
       if (!target || (target._isPlanet && !this.getPlanetWorldPosById(target.id))) {

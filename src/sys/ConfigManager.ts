@@ -187,15 +187,23 @@ export type StardwellersConfig = {
 };
 
 export type AIProfilesConfig = {
-  profiles: Record<string, { behavior: string; sensors?: { react?: { onFaction?: Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> } }; combat?: { retreatHpPct?: number } }>;
+  profiles: Record<string, { 
+    behavior: string; 
+    sensors?: { react?: { 
+      onFaction?: Record<'ally'|'neutral'|'confrontation'|'cautious', 'ignore'|'attack'|'flee'|'seekEscort'|'retreat'>
+    } }; 
+    combat?: { retreatHpPct?: number };
+    retreat?: { recalcIntervalMs?: number; distance?: number };
+  }>;
 };
 
 export type FactionsConfig = {
-  factions: Record<string, { relations: Record<string, 'ally'|'neutral'|'confrontation'> }>;
+  factions: Record<string, { relations: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }>;
 };
 
 export type CombatAIProfilesConfig = {
   profiles: Record<string, { 
+    nonCombat?: boolean;
     retreatHpPct?: number;
     movementMode?: 'orbit' | 'pursue' | 'move_to';
     movementDistance?: number;

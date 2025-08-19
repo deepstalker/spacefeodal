@@ -16,6 +16,13 @@
       "retreatHpPct": 0.1,
       "outdistance_attack": "target",
       "targetPriority": ["nearest","first_attacker","top_dps"]
+    },
+    "peaceful": {
+      "nonCombat": true,
+      "retreatHpPct": 1,
+      "movementMode": "move_to",
+      "outdistance_attack": "ignore",
+      "targetPriority": ["nearest"]
     }
   }
 }

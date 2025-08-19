@@ -2,7 +2,9 @@
   "profiles": {
     "aggressive": {
       "behavior": "aggressive",
-      "sensors": { "react": { "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore" } } },
+      "sensors": { "react": { 
+        "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore", "cautious": "retreat" }
+      } },
       "combat": { "retreatHpPct": 0.5 }
     },
     "static": {
@@ -12,13 +14,18 @@
     },
     "planet_trader": {
       "behavior": "planet_trader",
-      "sensors": { "react": { "onFaction": { "confrontation": "ignore", "ally": "seekEscort", "neutral": "ignore" } } },
+      "sensors": { "react": { 
+        "onFaction": { "confrontation": "flee", "ally": "ignore", "neutral": "ignore", "cautious": "retreat" }
+      } },
+      "retreat": { "recalcIntervalMs": 3500, "distance": 1000 },
       "combat": { "retreatHpPct": 0.99 }
     }
     ,
     "patrol": {
       "behavior": "patrol",
-      "sensors": { "react": { "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore" } } },
+      "sensors": { "react": { 
+        "onFaction": { "confrontation": "attack", "ally": "ignore", "neutral": "ignore", "cautious": "attack" }
+      } },
       "combat": { "retreatHpPct": 0.3 },
       "random": { "speedVarPct": 0.2, "turnVarPct": 0.2, "offsetRadius": 140 }
     }

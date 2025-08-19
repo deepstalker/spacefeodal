@@ -850,7 +850,8 @@ export class NPCStateManager {
       context.targetStabilization.currentTarget = best;
       // Решение: бежать или атаковать (порог по агрессии/здоровью может быть из combatAI профиля)
       const retreatPct =  context.combatAI ? (this.config.combatAI?.profiles?.[context.combatAI]?.retreatHpPct ?? 0) : 0;
-      const shouldFlee = false; // расширится в будущем (по HP и пр.)
+      const isNonCombat = !!(context.combatAI && this.config.combatAI?.profiles?.[context.combatAI!]?.nonCombat);
+      const shouldFlee = isNonCombat; // мирные всегда избегают боя
       if (shouldFlee) {
         this.transitionTo(context, NPCState.COMBAT_FLEEING);
       } else {
@@ -860,13 +861,11 @@ export class NPCStateManager {
         (this.scene as any).combat?.applyMovementFromFSM?.(my, 'pursue', { x: best.x, y: best.y, targetObject: best });
       }
     } else {
-      // Нет цели: если агрессия остыла — вернуться к базовому поведению
-      if (context.aggression.level < 0.1) {
-        const base = context.aiProfile || context.legacy.__behavior;
-        if (base === 'patrol') this.transitionTo(context, NPCState.PATROLLING);
-        else if (base === 'planet_trader' || base === 'orbital_trade') this.transitionTo(context, NPCState.TRADING);
-        else this.transitionTo(context, NPCState.IDLE);
-      }
+      // Нет цели в радиусе — немедленный возврат к базовому поведению
+      const base = context.aiProfile || context.legacy.__behavior;
+      if (base === 'patrol') this.transitionTo(context, NPCState.PATROLLING);
+      else if (base === 'planet_trader' || base === 'orbital_trade') this.transitionTo(context, NPCState.TRADING);
+      else this.transitionTo(context, NPCState.IDLE);
     }
   }
 

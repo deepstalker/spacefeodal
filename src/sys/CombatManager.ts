@@ -634,7 +634,10 @@ export class CombatManager {
       const st = ctx?.state;
       const legacyAttack = t.intent?.type === 'attack' && t.intent.target?.active;
       const legacyFlee = t.intent?.type === 'flee' && t.intent.target?.active;
-      const canShoot = (st === NPCState.COMBAT_ATTACKING) || (st === NPCState.COMBAT_FLEEING) || legacyAttack || legacyFlee;
+      // Мирные профили (nonCombat) никогда не стреляют
+      const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
+      const isNonCombat = !!combatProfile?.nonCombat;
+      const canShoot = !isNonCombat && ((st === NPCState.COMBAT_ATTACKING) || (st === NPCState.COMBAT_FLEEING) || legacyAttack || legacyFlee);
       const targetObj = ctx?.targetStabilization?.currentTarget ?? t.intent?.target;
       if (!targetObj) { continue; }
       if (!targetObj || !targetObj.active) {
@@ -713,9 +716,8 @@ export class CombatManager {
             intentType: t.intent?.type
           });
         }
-        
-        this.updateHpBar(t as any); 
-        continue; 
+        // Не выходим из функции: ниже отработает логика сенсоров (flee/escort/прочее)
+        this.updateHpBar(t as any);
       }
       
       const retreat = ((): number => {
@@ -726,7 +728,7 @@ export class CombatManager {
         return t.ai.retreatHpPct ?? 0;
       })();
       
-      let targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : this.ship;
+      let targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : null;
       const fleeObj = (t.intent && t.intent.type === 'flee') ? t.intent.target : null;
       
       // КРИТИЧНО: Проверяем валидность цели перед использованием
@@ -756,8 +758,12 @@ export class CombatManager {
       
       let target: { x: number; y: number };
       if (fleeObj) {
-        // Flee: фиксируем направление от top-dps источника и не меняем
-        if (!(t as any).__fleeDir) {
+        // Flee/Retreat sensor-driven: flee держит изначальную точку, retreat корректирует направление
+        const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+        const recalcInterval = this.config.aiProfiles?.profiles?.[t.aiProfileKey!]?.retreat?.recalcIntervalMs ?? 3500;
+        const mode = (t as any).__fleeMode as ('flee'|'retreat'|undefined);
+        const needRecalc = mode === 'retreat' ? (!(t as any).__fleeDir || !(t as any).__fleeDirTime || (nowMs - (t as any).__fleeDirTime > recalcInterval)) : !(t as any).__fleeDir;
+        if (needRecalc) {
           let source = fleeObj;
           if (t.damageLog?.totalDamageBySource?.size) {
             let b: any = null; let v = -1;
@@ -770,9 +776,9 @@ export class CombatManager {
           const dy0 = obj.y - (source as any).y;
           const d0 = Math.hypot(dx0, dy0) || 1;
           (t as any).__fleeDir = { x: dx0 / d0, y: dy0 / d0 };
-
+          (t as any).__fleeDirTime = nowMs;
         }
-        const fleeDistance = 1000;
+        const fleeDistance = this.config.aiProfiles?.profiles?.[t.aiProfileKey!]?.retreat?.distance ?? 1000;
                           target = { x: obj.x + (t as any).__fleeDir.x * fleeDistance, y: obj.y + (t as any).__fleeDir.y * fleeDistance };
         this.npcMovement.setNPCTarget(obj, target);
         
@@ -805,11 +811,11 @@ export class CombatManager {
           // Отступаем
           const dx = obj.x - targetObj.x;
           const dy = obj.y - targetObj.y;
-          const dist = Math.hypot(dx, dy);
+          const dist = Math.hypot(dx, dy) || 1;
           const retreatDistance = 800;
           target = {
-            x: targetObj.x + (dx / dist) * retreatDistance,
-            y: targetObj.y + (dy / dist) * retreatDistance
+            x: obj.x + (dx / dist) * retreatDistance,
+            y: obj.y + (dy / dist) * retreatDistance
           };
           this.npcMovement.setNPCTarget(obj, target);
           
@@ -827,14 +833,21 @@ export class CombatManager {
           const current = (t.intent?.type === 'attack') ? t.intent.target : null;
           
           // Пробуем новую систему выбора цели
+          const radar = this.getRadarRangeFor(t.obj);
           const candidates = this.targets
             .filter(o => o.obj !== obj && o.obj.active)
-            .filter(o => this.getRelation(t.faction, o.faction, t.overrides?.factions) === 'confrontation')
+            .filter(o => {
+              const rel = this.getRelation(t.faction, o.faction, t.overrides?.factions);
+              if (rel !== 'confrontation') return false;
+              const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, o.obj.x, o.obj.y);
+              return d <= radar;
+            })
             .map(o => o.obj);
             
           // КРИТИЧНО: Добавляем игрока в кандидаты если отношения враждебные
           const playerRelation = this.getRelation(t.faction, 'player', t.overrides?.factions);
-          const shouldIncludePlayer = playerRelation === 'confrontation' && this.ship && this.ship.active;
+          const shouldIncludePlayer = playerRelation === 'confrontation' && this.ship && this.ship.active &&
+            Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y) <= this.getRadarRangeFor(t.obj);
           
           if (shouldIncludePlayer && !candidates.includes(this.ship)) {
             candidates.push(this.ship);
@@ -906,7 +919,10 @@ export class CombatManager {
           }
           
           // КРИТИЧНО: Устанавливаем intent только если цель валидна
-          if (targetObj && targetObj.active && !targetObj.destroyed) {
+          // Профиль nonCombat запрещает установку атаки
+          const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
+          const isNonCombat = !!combatProfile?.nonCombat;
+          if (!isNonCombat && targetObj && targetObj.active && !targetObj.destroyed) {
             const wasAttacking = t.intent?.type === 'attack';
             const oldTarget = t.intent?.target;
             t.intent = { type: 'attack', target: targetObj };
@@ -935,7 +951,7 @@ export class CombatManager {
           }
           
           // Двигаемся к цели только если intent установлен корректно
-          if (t.intent?.type === 'attack' && t.intent.target && t.intent.target.active && !t.intent.target.destroyed) {
+          if (!isNonCombat && t.intent?.type === 'attack' && t.intent.target && t.intent.target.active && !t.intent.target.destroyed) {
             // Атакуем: по умолчанию орбита 500, если профиль не переопределяет
             const atkProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
             const atkMode = (atkProfile?.movementMode as any) ?? 'orbit';
@@ -963,8 +979,14 @@ export class CombatManager {
           // Возвращаемся к атаке предыдущей цели, если она ещё валидна, иначе нейтральное поведение
           const prev = (t as any).__lastIntentObj;
           if (prev && prev.active) {
-            t.intent = { type: 'attack', target: prev };
-            this.npcMovement.setNPCTarget(obj, { x: prev.x, y: prev.y, targetObject: prev });
+            const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
+            const isNonCombat = !!combatProfile?.nonCombat;
+            if (!isNonCombat) {
+              t.intent = { type: 'attack', target: prev };
+              this.npcMovement.setNPCTarget(obj, { x: prev.x, y: prev.y, targetObject: prev });
+            } else {
+              t.intent = null;
+            }
             
             if (process.env.NODE_ENV === 'development') {
               const targetName = prev === this.ship ? 'PLAYER' : `#${(prev as any).__uniqueId}`;
@@ -998,6 +1020,20 @@ export class CombatManager {
             context.targetStabilization.currentTarget = null;
             context.targetStabilization.targetScore = 0;
           }
+        }
+        // Немедленный выход из боевого режима: нет целей в радиусе радара
+        const radar = this.getRadarRangeFor(t.obj);
+        const anyHostileInRadar = this.targets.some(o => {
+          if (o === t) return false;
+          if (!o.obj?.active) return false;
+          const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, o.obj.x, o.obj.y);
+          if (d > radar) return false;
+          const rel = this.getRelation(t.faction, o.faction, t.overrides?.factions);
+          return rel === 'confrontation';
+        });
+        if (!anyHostileInRadar) {
+          delete (t as any).__fleeDir;
+          delete (t as any).__fleeDirTime;
         }
       }
       
@@ -1495,11 +1531,11 @@ export class CombatManager {
     return r;
   }
 
-  private getRelation(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'>): 'ally'|'neutral'|'confrontation' {
+  private getRelation(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'>): 'ally'|'neutral'|'confrontation'|'cautious' {
     if (!ofFaction || !otherFaction) return 'neutral';
     if (overrides && overrides[otherFaction]) return overrides[otherFaction];
     const rel = this.config.factions?.factions?.[ofFaction]?.relations?.[otherFaction];
-    return rel ?? 'neutral';
+    return (rel ?? 'neutral') as any;
   }
 
   private updateSensors(deltaMs: number) {
@@ -1574,18 +1610,20 @@ export class CombatManager {
       // prefer non-pirate targets first to avoid mutual pirate-pirate selection
       const sorted = sensed.sort((a,b) => (a.faction === 'pirate' ? 1 : 0) - (b.faction === 'pirate' ? 1 : 0));
       for (const s of sorted) {
-        const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions);
+        const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions) as 'ally'|'neutral'|'confrontation'|'cautious';
         const act = reactions?.[rel] ?? 'ignore';
         // пропускаем докованных целей
         if ((s.obj as any)?.__state === 'docked' || (s.obj as any)?.__state === 'docking') continue;
-        if (act === 'attack') { decided = { type: 'attack', target: s.obj }; break; }
-        if (act === 'flee') { decided = { type: 'flee', target: s.obj }; break; }
+        if (act === 'attack') { (t as any).__fleeMode = undefined; decided = { type: 'attack', target: s.obj }; break; }
+        if (act === 'flee')   { (t as any).__fleeMode = 'flee'; decided = { type: 'flee', target: s.obj }; break; }
+        if (act === 'retreat'){ (t as any).__fleeMode = 'retreat'; decided = { type: 'flee', target: s.obj }; break; }
       }
       // If current intent target is invalid (docked/docking/inactive) — clear it
       const curIntent: any = (t as any).intent;
       const curTarget: any = curIntent?.target;
       if (curTarget && (!curTarget.active || curTarget.__state === 'docked' || curTarget.__state === 'docking')) {
         (t as any).intent = null;
+        (t as any).__fleeMode = undefined;
       } else {
         (t as any).intent = decided;
       }
@@ -2058,11 +2096,11 @@ export class CombatManager {
   }
 
   // Публичные помощники для FSM NPC
-  public getAllNPCs(): Array<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> } }> {
+  public getAllNPCs(): Array<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> } }> {
     return this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides }));
   }
   public getPlayerShip(): any { return this.ship; }
-  public getRelationPublic(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'>): 'ally'|'neutral'|'confrontation' {
+  public getRelationPublic(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'>): 'ally'|'neutral'|'confrontation'|'cautious' {
     return this.getRelation(ofFaction, otherFaction, overrides);
   }
   public getRadarRangeForPublic(obj: any): number { return this.getRadarRangeFor(obj); }
