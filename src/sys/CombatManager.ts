@@ -292,6 +292,19 @@ export class CombatManager {
     // Последняя попытка: клик рядом с объектом в прямоугольнике дисплея
     hit = availableTargets.find(t => {
       const obj: any = t.obj;
+      // Если цель NPC — игрок, но игрок вне радара этого NPC, сбрасываем атакующий intent
+      if (t.intent?.type === 'attack' && t.intent.target === this.ship) {
+        const radar = this.getRadarRangeFor(t.obj);
+        const dToPlayer = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
+        if (dToPlayer > radar) {
+          t.intent = null;
+          const context = this.npcStateManager.getContext(obj);
+          if (context) {
+            context.targetStabilization.currentTarget = null;
+            context.targetStabilization.targetScore = 0;
+          }
+        }
+      }
       const w = obj.displayWidth ?? obj.width ?? 128;
       const h = obj.displayHeight ?? obj.height ?? 128;
       const x1 = obj.x - w * 0.5, y1 = obj.y - h * 0.5;
@@ -706,9 +719,11 @@ export class CombatManager {
   private refreshSelectionCircleColor() {
     const t = this.selectedTarget;
     if (!t || !this.selectionCircle) return;
-    // если хоть одно оружие нацелено на выбранную цель — выделение красным
+    // Красим красным если: (а) цель назначена на оружие игрока ИЛИ (б) цель держит игрока как свою цель
     const anyOnThis = Array.from(this.playerWeaponTargets.values()).some(v => v === t);
-    if (anyOnThis) {
+    const rec = this.targets.find(tt => tt.obj === t);
+    const targetsPlayer = !!rec?.intent && rec.intent.type === 'attack' && rec.intent.target === this.ship;
+    if (anyOnThis || targetsPlayer) {
       this.selectionCircle.setFillStyle(0xA93226, 0.15);
       this.selectionCircle.setStrokeStyle(2, 0xA93226, 1);
     } else {
@@ -1782,7 +1797,21 @@ export class CombatManager {
       const sorted = sensed.sort((a,b) => (a.faction === 'pirate' ? 1 : 0) - (b.faction === 'pirate' ? 1 : 0));
       for (const s of sorted) {
         const rel = this.getRelation(myFaction, s.faction, t.overrides?.factions) as 'ally'|'neutral'|'confrontation'|'cautious';
-        const act = reactions?.[rel] ?? 'ignore';
+        let act = reactions?.[rel] ?? 'ignore';
+        // Специальное правило: пираты, видя игрока в радиусе СВОЕГО оружия, выбирают retreat вместо attack
+        if (t.faction === 'pirate' && s.obj === (this.ship as any) && act === 'attack') {
+          try {
+            // Определяем макс.радиус оружия этого NPC
+            const maxRange = (t.weaponSlots ?? []).reduce((mx, slot) => {
+              const def = this.config.weapons?.defs?.[slot];
+              return Math.max(mx, def?.range ?? 0);
+            }, 0);
+            const dToPlayer = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, (this.ship as any).x, (this.ship as any).y);
+            if (maxRange > 0 && dToPlayer <= maxRange) {
+              act = 'retreat' as any;
+            }
+          } catch {}
+        }
         // пропускаем докованных целей
         if ((s.obj as any)?.__state === 'docked' || (s.obj as any)?.__state === 'docking') continue;
         if (act === 'attack') { (t as any).__fleeMode = undefined; decided = { type: 'attack', target: s.obj }; break; }
