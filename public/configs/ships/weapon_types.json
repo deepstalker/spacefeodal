@@ -1,0 +1,17 @@
+{
+  "homing": {
+    "lifetimeMs": 5000,
+    "turnSpeedDegPerSec": 100,
+    "backfireDeg": 180,
+    "backfireRandomDeg": 60,
+    "jitterDeg": 6,
+    "jitterHz": 1.2,
+    "biasDeg": 20,
+    "accuracyInfluenceMultiplier": 0.99,
+    "accuracyExponent": 0.6,
+    "maxAngleErrorDeg": 120,
+    "adjustIntervalMs": 300
+  }
+}
+
+

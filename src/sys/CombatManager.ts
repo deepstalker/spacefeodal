@@ -618,10 +618,10 @@ export class CombatManager {
               console.log(`[CombatManager] Weapon ${slotKey} fired: now=${now}, nextReady=${now + cooldownMs}`);
             }
             this.playerChargeUntil[slotKey] = now + cooldownMs;
-            const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, w.muzzleOffset);
+            const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, { x: 0, y: 0 });
             const w2 = { ...w, muzzleOffset };
-            const type = (w2.type ?? 'single');
-            if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
+            const isBurst = ((w2?.burst?.count ?? 1) > 1) || ((w2.type ?? 'single') === 'burst');
+            if (isBurst) this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
             else this.fireWeapon(slotKey, w2, target as any, this.ship);
           }
         }
@@ -1054,7 +1054,10 @@ export class CombatManager {
   }
 
   private fireWeapon(_slot: string, w: any, target: any, shooter: any) {
-    const muzzle = this.getMuzzleWorldPositionFor(shooter, w.muzzleOffset);
+    const slotIndex = 0; // слот уже разрешен на уровне вызова, здесь защищаемся
+    const fallbackOffset = { x: 0, y: 0 };
+    const mo = this.resolveMuzzleOffset(shooter, slotIndex, fallbackOffset);
+    const muzzle = this.getMuzzleWorldPositionFor(shooter, mo);
     const aim = this.getAimedTargetPoint(shooter, target, w);
     const angle = Math.atan2(aim.y - muzzle.y, aim.x - muzzle.x);
     // projectile visual
@@ -1076,39 +1079,23 @@ export class CombatManager {
     }
 
     const speed = w.projectileSpeed;
-    const vx = Math.cos(angle) * speed;
-    const vy = Math.sin(angle) * speed;
     
-
-
-    // Рассчитываем время жизни снаряда: дистанция / скорость. Добавляем небольшой буфер (50 мс).
-    const lifetimeMs = (w.range / Math.max(1, speed)) * 1000 + 50;
+    // Рассчитываем время жизни снаряда: для homing приоритет фиксированному; иначе дистанция/скорость
+    const lifetimeMs = Math.max(1,
+      (w?.type === 'homing' && w?.homing?.lifetimeMs)
+        ? w.homing.lifetimeMs
+        : ((w.range / Math.max(1, speed)) * 1000 + 50)
+    );
     // Capture shooter's faction once for friendly-fire filtering
     const shooterEntry = this.targets.find(t => t.obj === shooter);
     const shooterFaction = shooterEntry?.faction ?? (shooter === this.ship ? 'player' : undefined);
     const shooterOverrides = (shooterEntry as any)?.overrides?.factions;
 
-    const onUpdate = (_t: number, dt: number) => {
-      // Проверяем паузу боевых систем
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
-      
-      // Быстрое скрытие снаряда вне радара игрока (не ждём батч-апдейт FoW)
-      if (this.fogOfWar) {
-        try {
-          const visible = this.fogOfWar.isObjectVisible(proj as any);
-          (proj as any).setVisible?.(visible);
-        } catch {}
-      }
-
-      (proj as any).x += vx * (dt/1000);
-      (proj as any).y += vy * (dt/1000);
+    // Общая функция проверки столкновений и нанесения урона/эффектов
+    const tryCollisions = () => {
       // collision simple distance check
       if (!target || !target.active) {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-        (proj as any).destroy?.();
-        return;
+        return 'target_lost' as const;
       }
       // Check collisions with any other valid enemy target along the path
       for (let i = 0; i < this.targets.length; i++) {
@@ -1133,16 +1120,7 @@ export class CombatManager {
           if (hostile) {
             this.applyDamage(obj, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-            this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-            // Дерегистрируем снаряд из fog of war
-            if (this.fogOfWar) {
-              this.fogOfWar.unregisterObject(proj);
-            }
-            (proj as any).destroy?.();
-            return;
-          } else {
-            // нейтральная/союзная цель — не наносим урон и не разрушаем снаряд
-            continue;
+            return 'hit' as const;
           }
         }
       }
@@ -1163,16 +1141,184 @@ export class CombatManager {
           if (hostile) {
             this.applyDamage(target, w.damage, shooter);
             this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-            this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-            if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
-            (proj as any).destroy?.();
-          } // иначе снаряд пролетает через цель, не разрушаясь
+            return 'hit' as const;
+          }
         } else {
           // цель в состоянии дока — не принимаем урон, но снаряд уничтожаем
-          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-          if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
+          return 'expire' as const;
+        }
+      }
+      return 'none' as const;
+    };
+
+    // HOMING: управляемый снаряд со временем жизни
+    if ((w.type ?? 'single') === 'homing') {
+      // Цель для наведения с учетом точности оружия/корабля; обновление не чаще чем раз в 300мс
+      const adjustIntervalMs = Math.max(50, this.config.weaponTypes?.homing?.adjustIntervalMs ?? 300);
+      let desiredAngleCached = angle;
+      let lastDesiredUpdate = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+      const recomputeDesired = () => {
+        try {
+          // Получаем прицельную точку с учетом общей логики точности
+          const ap = this.getAimedTargetPoint(shooter, target, w) || { x: (target?.x ?? aim.x), y: (target?.y ?? aim.y) };
+          // Нелинейное сглаживание точности для homing
+          let wAcc = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
+          let sAcc = 1;
+          const entry = this.targets.find(t => t.obj === shooter);
+          if (shooter === this.ship) {
+            const playerShipId = this.config.player?.shipId ?? this.config.ships.current;
+            const shipDef = this.config.ships.defs[playerShipId];
+            const sa = shipDef?.combat?.accuracy;
+            if (typeof sa === 'number') sAcc = Phaser.Math.Clamp(sa, 0, 1);
+          } else if (entry) {
+            const eShipId = entry.shipId ?? this.config.ships.current;
+            const shipDef = this.config.ships.defs[eShipId];
+            const sa = shipDef?.combat?.accuracy;
+            if (typeof sa === 'number') sAcc = Phaser.Math.Clamp(sa, 0, 1);
+          }
+          const baseAcc = Phaser.Math.Clamp(wAcc * sAcc, 0, 1);
+          const exp = (typeof w?.homing?.accuracyExponent === 'number' && w.homing.accuracyExponent > 0) ? w.homing.accuracyExponent : (this.config.weaponTypes?.homing?.accuracyExponent ?? 0.6);
+          const effAcc = Math.pow(baseAcc, exp); // 0..1, выше — точнее
+          // уменьшение влияния неточности
+          const influence = Math.max(0, Math.min(1, w?.homing?.accuracyInfluenceMultiplier ?? this.config.weaponTypes?.homing?.accuracyInfluenceMultiplier ?? 0.35));
+          const cx = (target?.x ?? ap.x);
+          const cy = (target?.y ?? ap.y);
+          let aimX = cx + (ap.x - cx) * influence;
+          let aimY = cy + (ap.y - cy) * influence;
+          // Ограничиваем максимальную угловую ошибку
+          const maxErrDeg = Math.max(0, w?.homing?.maxAngleErrorDeg ?? this.config.weaponTypes?.homing?.maxAngleErrorDeg ?? 8);
+          const desiredCoreAngle = Math.atan2((target?.y ?? cy) - (proj as any).y, (target?.x ?? cx) - (proj as any).x);
+          const noisyAngle = Math.atan2(aimY - (proj as any).y, aimX - (proj as any).x);
+          let angleDelta = Phaser.Math.Angle.Wrap(noisyAngle - desiredCoreAngle);
+          const maxDelta = (maxErrDeg * (1 - effAcc)) * Math.PI / 180;
+          angleDelta = Phaser.Math.Clamp(angleDelta, -maxDelta, maxDelta);
+          const clampedAngle = Phaser.Math.Angle.Wrap(desiredCoreAngle + angleDelta);
+          desiredAngleCached = clampedAngle;
+        } catch {
+          const tx = (target?.x ?? aim.x);
+          const ty = (target?.y ?? aim.y);
+          desiredAngleCached = Math.atan2(ty - (proj as any).y, tx - (proj as any).x);
+        }
+      };
+      recomputeDesired();
+      const reverseLaunch = !!(w.__burstShot === true); // признак выстрела в серии для обратного старта
+      // Дополнительный "выброс" сверх 180° и случайность
+      const backfireDeg = (w?.homing?.backfireDeg ?? this.config.weaponTypes?.homing?.backfireDeg ?? 0);
+      const backfireRand = (w?.homing?.backfireRandomDeg ?? this.config.weaponTypes?.homing?.backfireRandomDeg ?? 0);
+      const backfireJitter = reverseLaunch ? ((backfireDeg + (Math.random()*2 - 1) * backfireRand) * Math.PI/180) : 0;
+      // Постоянное случайное смещение траектории на снаряд
+      const biasDeg = (w?.homing?.biasDeg ?? this.config.weaponTypes?.homing?.biasDeg ?? 0);
+      const biasRad = (biasDeg !== 0) ? ((Math.random()*2 - 1) * Math.abs(biasDeg) * Math.PI/180) : 0;
+      let currentAngle = (reverseLaunch ? angle + Math.PI + backfireJitter : angle) + biasRad;
+      (proj as any).setRotation?.(currentAngle);
+      const turnDegPerSec = (typeof w?.homing?.turnSpeedDegPerSec === 'number' && w.homing.turnSpeedDegPerSec > 0) ? w.homing.turnSpeedDegPerSec : (this.config.weaponTypes?.homing?.turnSpeedDegPerSec ?? 0);
+      const maxTurnRadPerMs = (turnDegPerSec > 0)
+        ? (turnDegPerSec * Math.PI / 180) / 1000
+        : Infinity;
+      // Параметры периодического шума направления
+      const jitterAmp = Math.max(0, (w?.homing?.jitterDeg ?? this.config.weaponTypes?.homing?.jitterDeg ?? 0)) * Math.PI/180;
+      const jitterHz = Math.max(0, (w?.homing?.jitterHz ?? this.config.weaponTypes?.homing?.jitterHz ?? 0));
+      let jitterPhase = Math.random() * Math.PI * 2;
+
+      const onUpdateHoming = (_t: number, dt: number) => {
+        // Проверяем паузу боевых систем
+        if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+          return;
+        }
+
+        // Быстрое скрытие снаряда вне радара игрока
+        if (this.fogOfWar) {
+          try {
+            const visible = this.fogOfWar.isObjectVisible(proj as any);
+            (proj as any).setVisible?.(visible);
+          } catch {}
+        }
+
+        // Поворот к цели с ограничением скорости поворота
+        const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
+        if (nowMs - lastDesiredUpdate >= adjustIntervalMs) {
+          recomputeDesired();
+          lastDesiredUpdate = nowMs;
+        }
+        let desired = desiredAngleCached;
+        // Периодический шум
+        if (jitterAmp > 0 && jitterHz > 0) {
+          jitterPhase += (Math.PI * 2) * jitterHz * (dt/1000);
+          desired += Math.sin(jitterPhase) * jitterAmp;
+        }
+        let delta = Phaser.Math.Angle.Wrap(desired - currentAngle);
+        const maxStep = maxTurnRadPerMs === Infinity ? Math.abs(delta) : (maxTurnRadPerMs * dt);
+        delta = Phaser.Math.Clamp(delta, -maxStep, maxStep);
+        currentAngle = Phaser.Math.Angle.Wrap(currentAngle + delta);
+        (proj as any).setRotation?.(currentAngle);
+
+        // Перемещение с постоянной скоростью
+        const vxH = Math.cos(currentAngle) * speed;
+        const vyH = Math.sin(currentAngle) * speed;
+        (proj as any).x += vxH * (dt/1000);
+        (proj as any).y += vyH * (dt/1000);
+
+        const col = tryCollisions();
+        if (col === 'hit' || col === 'target_lost' || col === 'expire') {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+          // Дерегистрируем снаряд из fog of war
+          if (this.fogOfWar) {
+            this.fogOfWar.unregisterObject(proj);
+          }
+          // Взрыв только визуально при истечении/потере цели
+          if (col !== 'hit' && w.hitEffect) {
+            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+          }
           (proj as any).destroy?.();
         }
+      };
+      this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+      // Таймер жизни: по окончании — взрыв в текущей точке
+      const projId = `projectile_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
+      const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+        if (this.fogOfWar) {
+          this.fogOfWar.unregisterObject(proj);
+        }
+        if (w.hitEffect) {
+          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
+        }
+        (proj as any).destroy?.();
+        try { this.pauseManager?.unregisterTimer?.(projId); } catch {}
+      });
+      try { this.pauseManager?.registerTimer?.(projId, lifetimeTimer); } catch {}
+
+      // Сигнализируем UI о выстреле игрока для мигания иконки
+      if (shooter === this.ship) {
+        try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
+      }
+      return;
+    }
+
+    // Прямая баллистика (single/burst)
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+
+    const onUpdate = (_t: number, dt: number) => {
+      // Проверяем паузу боевых систем
+      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
+        return;
+      }
+      
+      // Быстрое скрытие снаряда вне радара игрока (не ждём батч-апдейт FoW)
+      if (this.fogOfWar) {
+        try {
+          const visible = this.fogOfWar.isObjectVisible(proj as any);
+          (proj as any).setVisible?.(visible);
+        } catch {}
+      }
+      (proj as any).x += vx * (dt/1000);
+      (proj as any).y += vy * (dt/1000);
+      const col = tryCollisions();
+      if (col === 'hit' || col === 'target_lost' || col === 'expire') {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+        if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
+        (proj as any).destroy?.();
       }
     };
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
@@ -1209,8 +1355,9 @@ export class CombatManager {
         }
         
         if (!shooter?.active || !target?.active) return;
-        const muzzleOffset = w.muzzleOffset;
-        const w2 = { ...w, muzzleOffset };
+        const muzzleOffset = this.resolveMuzzleOffset(shooter, 0, { x: 0, y: 0 });
+        // Для homing серии отмечаем обратный старт при создании снаряда
+        const w2 = { ...w, muzzleOffset, __burstShot: (w.type === 'homing') ? true : undefined };
         this.fireWeapon(slot, w2, target, shooter);
         try { this.pauseManager?.unregisterTimer?.(burstId); } catch {}
       });
@@ -1285,10 +1432,10 @@ export class CombatManager {
         const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
         if (!isPaused) {
           times[slotKey] = now;
-          const muzzleOffset = this.resolveMuzzleOffset(shooter, i, w.muzzleOffset);
+          const muzzleOffset = this.resolveMuzzleOffset(shooter, i, { x: 0, y: 0 });
           const w2 = { ...w, muzzleOffset };
-          const type = (w2.type ?? 'single');
-          if (type === 'burst') this.fireBurstWeapon(slotKey, w2, target, shooter);
+          const isBurst = ((w2?.burst?.count ?? 1) > 1) || ((w2.type ?? 'single') === 'burst');
+          if (isBurst) this.fireBurstWeapon(slotKey, w2, target, shooter);
           else this.fireWeapon(slotKey, w2, target, shooter);
         }
       }
@@ -1903,7 +2050,7 @@ export class CombatManager {
       if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
       if (d > w.range) { this.stopBeamIfAny(shooter, slotKey); return; }
-      const muzzle = this.getMuzzleWorldPositionFor(shooter, w.muzzleOffset);
+      const muzzle = this.getMuzzleWorldPositionFor(shooter, this.resolveMuzzleOffset(shooter, 0, { x: 0, y: 0 }));
       
       // Для beam оружия целимся в край цели вместо центра
       const targetRadius = this.getEffectiveRadius(target);

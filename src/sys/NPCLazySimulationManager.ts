@@ -320,18 +320,9 @@ export class NPCLazySimulationManager {
         const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:repl:${Date.now()}:${i}`, prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
         const delay = delayMin + Math.random() * (delayMax - delayMin);
         totalScheduled++;
-        // Debug logging disabled
-        // try { console.log('[NPCSim] replenish schedule', { prefab: e.prefab, home: e.home, delayMs: Math.round(delay) }); } catch {}
-        this.pending.push(p);
-        // Если игра на паузе — не спауним сразу после таймера, а проверяем состояние
-        const createWhenReady = () => {
-          if (this.pauseManager?.getPaused() && this.pauseManager?.isSystemPausable('npcLazySimulation')) {
-            this.scene.time.delayedCall(250, createWhenReady);
-          } else {
-            this.createNPC(p, { fadeIfInRadar: true });
-          }
-        };
-        this.scene.time.delayedCall(delay, createWhenReady);
+        // Сохраняем только как pending. Фактический спавн произойдёт лениво в update(), когда игрок будет в радиусе.
+        // Для сохранения «раскатанного» эффекта — добавляем в очередь с задержкой.
+        this.scene.time.delayedCall(delay, () => { this.pending.push(p); });
       }
     }
     // Debug logging disabled
@@ -375,15 +366,8 @@ export class NPCLazySimulationManager {
         const p: PendingNPC = { id: `${e.home.id}:${e.prefab}:cycle:${Date.now()}:${i}` , prefab: e.prefab, home: e.home, spawnAt: { x: this.clamp(x, 0, this.config.system.size.width), y: this.clamp(y, 0, this.config.system.size.height) }, created: false };
         const delay = Math.random() * 1000; // до 1 секунды для живости
         scheduled++;
-        this.pending.push(p);
-        const createWhenReady2 = () => {
-          if (this.pauseManager?.getPaused() && this.pauseManager?.isSystemPausable('npcLazySimulation')) {
-            this.scene.time.delayedCall(250, createWhenReady2);
-          } else {
-            this.createNPC(p, { fadeIfInRadar: true });
-          }
-        };
-        this.scene.time.delayedCall(delay, createWhenReady2);
+        // Только добавляем в pending с небольшой задержкой для визуальной натуральности старта цикла.
+        this.scene.time.delayedCall(delay, () => { this.pending.push(p); });
       }
     }
     // Debug logging disabled
