@@ -3,6 +3,7 @@ import { NPCMovementManager } from './NPCMovementManager';
 import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
 import { DynamicObjectType } from './fog-of-war/types';
 import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
+import { RelationOverrideManager } from './RelationOverrideManager';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -55,6 +56,7 @@ export class CombatManager {
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
   // Кольца радиусов оружия игрока: slotKey -> graphics circle
   private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
+  private relationOverrides!: RelationOverrideManager;
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -62,7 +64,15 @@ export class CombatManager {
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
-    
+    // Централизованный менеджер временных переопределений отношений
+    this.relationOverrides = new RelationOverrideManager(scene, {
+      getTargets: () => this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides })),
+      getPlayer: () => this.ship,
+      getRadarRangeFor: (o: any) => this.getRadarRangeFor(o),
+      getNpcContext: (o: any) => this.npcStateManager.getContext(o),
+      clearAssignmentsForTarget: (o: any) => this.clearAssignmentsForTarget(o)
+    });
+
     // Обработка снятия паузы для корректировки временных меток
     this.scene.events.on('game-resumed', this.onGameResumed, this);
     // Подписка на визуальные события выбора слотов оружия (только визуал)
@@ -299,8 +309,8 @@ export class CombatManager {
     const oldTarget = this.playerWeaponTargets.get(slotKey);
     
     if (target) {
-      // Если цель не враждебна — делаем временно враждебной к игроку
-      this.markTargetHostileToPlayer(target as any);
+      // Если цель не враждебна — делаем временно враждебной к игроку через RelationOverrideManager
+      try { this.relationOverrides?.markObjectHostileToPlayer(target as any, { reason: 'aim', expireOnOutOfRadar: true }); } catch {}
       this.playerWeaponTargets.set(slotKey, target);
       // Новое назначение цели: начинаем с перезарядки
       const w = this.config.weapons.defs[slotKey];
@@ -362,6 +372,20 @@ export class CombatManager {
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
+  }
+
+  // === Relation Override API (для использования сценариями/системами) ===
+  public markObjectHostileToPlayerViaManager(obj: any, opts?: { reason?: string; expireOnOutOfRadar?: boolean; expiresInCycles?: number; expiresAtCycle?: number }) {
+    try { this.relationOverrides?.markObjectHostileToPlayer(obj, opts); } catch {}
+  }
+  public clearObjectHostilityToPlayerViaManager(obj: any) {
+    try { this.relationOverrides?.unmarkObjectHostilityToPlayer(obj); } catch {}
+  }
+  public setFactionRelationOverrideAgainstPlayer(faction: string, relation: 'ally'|'neutral'|'confrontation'|'cautious', durationCycles?: number) {
+    try { this.relationOverrides?.setFactionAgainstPlayer(faction, relation, { durationCycles }); } catch {}
+  }
+  public clearFactionRelationOverrideAgainstPlayer(faction: string) {
+    try { this.relationOverrides?.clearFactionAgainstPlayer(faction); } catch {}
   }
 
   public getPlayerWeaponTargets(): ReadonlyMap<string, Target> {

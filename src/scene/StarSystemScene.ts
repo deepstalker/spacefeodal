@@ -92,6 +92,8 @@ export default class StarSystemScene extends Phaser.Scene {
     this.combat.setPauseManager(this.pauseManager);
     (this.combat as any).npcStateManager?.setPauseManager(this.pauseManager);
     this.movement.setPauseManager(this.pauseManager);
+    // Передаем TimeManager в менеджер отношений
+    try { (this.combat as any).relationOverrides?.setTimeManager?.(this.timeManager); } catch {}
     
     // Связываем паузу с тайм-менеджером
     this.events.on('game-paused', () => {
@@ -101,9 +103,12 @@ export default class StarSystemScene extends Phaser.Scene {
       this.timeManager.resume();
     });
 
-    // Пополнение квот на старте каждого цикла
+    // Пополнение квот на старте каждого цикла и оповещение менеджеров
     try {
-      const onCycleStart = (_e: any) => { try { this.npcSim?.replenishOnCycleStart?.(); } catch {} };
+      const onCycleStart = (_e: any) => {
+        try { this.npcSim?.replenishOnCycleStart?.(); } catch {}
+        try { (this.combat as any)?.relationOverrides?.onCycleStart?.(); } catch {}
+      };
       this.events.on('time-cycle_start', onCycleStart);
     } catch {}
 
