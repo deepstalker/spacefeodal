@@ -12,6 +12,7 @@ export class TimeManager {
   private isPaused: boolean = false;
   private pausedProgress: number = 0;
   private pausedRemainingMs: number = 0;
+  private completingGuard: boolean = false;
   
   // Константы
   private readonly CYCLE_DURATION_MS = 3 * 60 * 1000; // 3 минуты в миллисекундах
@@ -100,6 +101,19 @@ export class TimeManager {
       return this.pausedProgress;
     }
     const elapsed = this.scene.time.now - this.cycleStartTime;
+    // Фолбэк: если прогресс достиг 100%, но колбэк завершения не сработал (фон/нефокус) — завершаем цикл вручную
+    if (elapsed >= this.CYCLE_DURATION_MS && !this.completingGuard) {
+      this.completingGuard = true;
+      try {
+        if (this.cycleTimer) { try { this.cycleTimer.remove(false); } catch {} }
+        this.cycleTimer = null;
+        this.onCycleComplete();
+      } finally {
+        this.completingGuard = false;
+      }
+      // после завершения цикл перезапущен — прогресс нового цикла равен 0
+      return 0;
+    }
     const progress = Math.min(elapsed / this.CYCLE_DURATION_MS, 1.0);
     return progress;
   }
@@ -115,6 +129,18 @@ export class TimeManager {
       return this.pausedRemainingMs;
     }
     const elapsed = this.scene.time.now - this.cycleStartTime;
+    // Такой же фолбэк на случай «залипания» на 100%
+    if (elapsed >= this.CYCLE_DURATION_MS && !this.completingGuard) {
+      this.completingGuard = true;
+      try {
+        if (this.cycleTimer) { try { this.cycleTimer.remove(false); } catch {} }
+        this.cycleTimer = null;
+        this.onCycleComplete();
+      } finally {
+        this.completingGuard = false;
+      }
+      return this.CYCLE_DURATION_MS;
+    }
     return Math.max(0, this.CYCLE_DURATION_MS - elapsed);
   }
   
