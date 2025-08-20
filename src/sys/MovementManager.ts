@@ -14,6 +14,8 @@ export interface MovementCommand {
 export class MovementManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
+  private pauseManager?: any;
+  private pauseSystemName: string = 'movement'; // По умолчанию для игрока // PauseManager reference
   private speed = 0;
   private target: Phaser.Math.Vector2 | null = null;
   private headingRad: number | null = null;
@@ -31,7 +33,17 @@ export class MovementManager {
     this.config = config;
     this.shipId = shipId;
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
-    
+  }
+
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
+  }
+
+  setPauseSystemName(systemName: string) {
+    this.pauseSystemName = systemName;
+  }
+
+  init() {
     // Добавляем глобальную переменную для отладки частоты обновления
     (window as any).setTargetUpdateRate = (intervalMs: number) => {
       this.config.gameplay.movement.TARGET_UPDATE_INTERVAL_MS = intervalMs;
@@ -85,6 +97,16 @@ export class MovementManager {
 
   getCurrentCommand(): MovementCommand | null {
     return this.command;
+  }
+
+  // Установка начальной скорости как доли от MAX_SPEED (для плавного "выплывания")
+  public setInitialSpeedFraction(fraction: number) {
+    const clamped = Phaser.Math.Clamp(fraction, 0, 1);
+    const selectedId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
+    const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
+    const mv = selected?.movement ?? this.config.gameplay.movement;
+    const max = Math.max(0, mv?.MAX_SPEED ?? 0);
+    this.speed = max * clamped;
   }
 
   // Для совместимости с существующим кодом - получение простого движения к цели
@@ -141,6 +163,14 @@ export class MovementManager {
   // getRenderPathPoints удалён как неиспользуемый (визуальный путь рисуется напрямую по текущей цели)
 
   private update(time: number, deltaMs: number) {
+    // Проверяем конфиг паузы
+    if (this.pauseManager?.isSystemPausable(this.pauseSystemName) && this.pauseManager?.getPaused()) {
+      if (this.pauseManager?.getDebugSetting('log_system_states')) {
+        console.log(`[MovementManager] ${this.pauseSystemName} paused, skipping update`);
+      }
+      return;
+    }
+    
     const dt = deltaMs / 1000;
     // Найдём активный объект (на прототипе — корабль один)
     const obj = this.scene.children.getAll().find(o => (o as any)['__moveRef'] === this) as any;

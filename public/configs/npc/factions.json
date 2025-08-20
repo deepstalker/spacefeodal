@@ -4,21 +4,32 @@
       "relations": {
         "player": "ally",
         "pirate": "confrontation",
-        "planet_traders": "neutral"
+        "planet_traders": "neutral",
+        "orbital_patrol": "neutral"
       }
     },
     "pirate": {
       "relations": {
-        "player": "confrontation",
+        "player": "cautious",
         "pirate": "ally",
-        "planet_traders": "confrontation"
+        "planet_traders": "confrontation",
+        "orbital_patrol": "cautious"
       }
     },
     "planet_traders": {
       "relations": {
         "player": "neutral",
         "pirate": "confrontation",
-        "planet_traders": "ally"
+        "planet_traders": "ally",
+        "orbital_patrol": "ally"
+      }
+    },
+    "orbital_patrol": {
+      "relations": {
+        "player": "neutral",
+        "pirate": "confrontation",
+        "planet_traders": "ally",
+        "orbital_patrol": "ally"
       }
     }
   }

@@ -13,6 +13,13 @@ export type SettingsConfig = {
     };
     combat?: {
       rightClickCancelSelectedWeapons?: boolean;
+      weaponRanges?: {
+        color?: string;        // e.g. '#4ade80'
+        fillAlpha?: number;    // 0..1
+        strokeColor?: string;  // e.g. '#4ade80'
+        strokeAlpha?: number;  // 0..1
+        strokeWidth?: number;  // px
+      };
     };
   };
   camera: { minZoom: number; maxZoom: number; edgePanMargin: number; edgePanSpeed: number };
@@ -113,7 +120,15 @@ export type AssetsConfig = {
   };
 };
 
-export type KeybindsConfig = { toggleFollow: string; zoomIn: string; zoomOut: string };
+export type KeybindsConfig = {
+  toggleFollow: string;
+  zoomIn: string;
+  zoomOut: string;
+  // Дополнительно (необязательно):
+  pause?: string;
+  systemMenu?: string;
+  attackSelected?: string;
+};
 export type ModulesConfig = { navigation: boolean; combat: boolean; llm: boolean };
 export type PersistenceConfig = { saveKey: string };
 export type ItemsConfig = { rarities: Record<string, { name: string; color: string }> };
@@ -139,7 +154,7 @@ export type WeaponsConfig = {
   defs: Record<string, {
     icon?: string;
     rarity?: string;
-    type?: 'single' | 'burst' | 'beam';
+    type?: 'single' | 'burst' | 'beam' | 'homing';
     accuracy?: number; // базовая точность оружия (0..1), модифицируется точностью корабля
     projectile?: any;
     hitEffect?: any;
@@ -147,7 +162,7 @@ export type WeaponsConfig = {
     fireRatePerSec?: number; // для single/burst — серия считается одной атакой
     damage: number;
     range: number;
-    muzzleOffset: { x: number; y: number };
+    muzzleOffset?: { x: number; y: number }; // устарело: смещение слотов теперь задается у корабля
     // burst-специфика
     burst?: { count?: number; delayMs?: number };
     // beam-специфика
@@ -162,8 +177,42 @@ export type WeaponsConfig = {
       innerAlpha?: number;
       outerAlpha?: number;
     };
+    // homing-специфика
+    homing?: {
+      lifetimeMs?: number; // фиксированное время жизни; если не задано — вычисляется как range/speed
+      turnSpeedDegPerSec?: number; // опционально: ограничение поворота (для будущего расширения)
+      // Насколько снаряд "выбрасывается" при старте серии в противоположную сторону (сверх 180°)
+      backfireDeg?: number; // 0..180
+      backfireRandomDeg?: number; // дополнительная случайная добавка ±X градусов
+      // Случайная коррекция траектории, чтобы не летели строго по одной траектории
+      jitterDeg?: number; // амплитуда периодического шума (в градусах)
+      jitterHz?: number; // частота шума (циклов в секунду)
+      biasDeg?: number; // постоянное случайное смещение на снаряд (в градусах)
+      // Снижение влияния точности для наводимых ракет (0..1), по умолчанию ~0.35
+      accuracyInfluenceMultiplier?: number;
+      // Экспонента для нелинейного сглаживания точности: effAcc = (weaponAcc*shipAcc)^exp
+      accuracyExponent?: number; // по умолчанию 0.6
+      // Максимальная угловая ошибка наведения (градусы), масштабируется (1-effAcc)
+      maxAngleErrorDeg?: number; // по умолчанию 8
+    };
   }>;
 };
+
+export type WeaponTypeSettings = {
+  lifetimeMs?: number;
+  turnSpeedDegPerSec?: number;
+  backfireDeg?: number;
+  backfireRandomDeg?: number;
+  jitterDeg?: number;
+  jitterHz?: number;
+  biasDeg?: number;
+  accuracyInfluenceMultiplier?: number;
+  accuracyExponent?: number;
+  maxAngleErrorDeg?: number;
+  adjustIntervalMs?: number;
+};
+
+export type WeaponTypesConfig = Record<string, WeaponTypeSettings>;
 
 // Enemies config removed — all NPC are defined in stardwellers
 
@@ -172,15 +221,23 @@ export type StardwellersConfig = {
 };
 
 export type AIProfilesConfig = {
-  profiles: Record<string, { behavior: string; sensors?: { react?: { onFaction?: Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> } }; combat?: { retreatHpPct?: number } }>;
+  profiles: Record<string, { 
+    behavior: string; 
+    sensors?: { react?: { 
+      onFaction?: Record<'ally'|'neutral'|'confrontation'|'cautious', 'ignore'|'attack'|'flee'|'seekEscort'|'retreat'>
+    } }; 
+    combat?: { retreatHpPct?: number };
+    retreat?: { recalcIntervalMs?: number; distance?: number };
+  }>;
 };
 
 export type FactionsConfig = {
-  factions: Record<string, { relations: Record<string, 'ally'|'neutral'|'confrontation'> }>;
+  factions: Record<string, { relations: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }>;
 };
 
 export type CombatAIProfilesConfig = {
   profiles: Record<string, { 
+    nonCombat?: boolean;
     retreatHpPct?: number;
     movementMode?: 'orbit' | 'pursue' | 'move_to';
     movementDistance?: number;
@@ -207,6 +264,7 @@ export class ConfigManager {
   persistence!: PersistenceConfig;
   ships!: ShipConfig;
   weapons!: WeaponsConfig;
+  weaponTypes!: WeaponTypesConfig;
   aiProfiles!: AIProfilesConfig;
   player!: PlayerConfig;
   stardwellers!: StardwellersConfig;
@@ -230,7 +288,7 @@ export class ConfigManager {
       // last resort: return empty object to avoid hard crash
       return {} as any;
     };
-    const [settings, gameplay, system, assets, items, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI] = await Promise.all([
+    const [settings, gameplay, system, assets, items, keybinds, modules, persistence, ships, weapons, player, aiProfiles, systemsIndex, systemProfiles, stardwellers, factions, combatAI, weaponTypes] = await Promise.all([
       tryFetch(['/configs/general/settings.json', '/configs/settings.json']),
       tryFetch(['/configs/general/gameplay.json', '/configs/gameplay.json']),
       tryFetch(['/configs/systems/system.json', '/configs/system.json']),
@@ -247,7 +305,8 @@ export class ConfigManager {
       tryFetch(['/configs/systems/system_profiles.json', '/configs/system_profiles.json']),
       tryFetch(['/configs/npc/stardwellers.json', '/configs/stardwellers.json']),
       tryFetch(['/configs/npc/factions.json', '/configs/factions.json']),
-      tryFetch(['/configs/npc/combat_ai_profiles.json', '/configs/combat_ai_profiles.json'])
+      tryFetch(['/configs/npc/combat_ai_profiles.json', '/configs/combat_ai_profiles.json']),
+      tryFetch(['/configs/ships/weapon_types.json', '/configs/weapon_types.json'])
     ]);
     this.settings = settings;
     this.gameplay = gameplay;
@@ -259,6 +318,7 @@ export class ConfigManager {
     this.persistence = persistence;
     this.ships = ships;
     this.weapons = weapons;
+    this.weaponTypes = weaponTypes;
     this.player = player;
     this.aiProfiles = aiProfiles;
     this.stardwellers = stardwellers;

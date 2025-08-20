@@ -3,6 +3,8 @@ import type { ConfigManager } from './ConfigManager';
 export class InputManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
+  // Источники ввода
+  private keyboardEnabled = true;
   private edgePanEnabled = false;
   private isDragging = false;
   private lastX = 0;
@@ -11,12 +13,14 @@ export class InputManager {
   private dragEnabled = true;
   private leftClickHandlers: Array<(x: number, y: number) => void> = [];
   private rightClickHandlers: Array<(x: number, y: number) => void> = [];
+  private registeredKeys: Phaser.Input.Keyboard.Key[] = [];
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
     this.config = config;
     this.initMouse();
     this.initWheel();
+    this.initKeyboard();
     // Edge pan отключён по умолчанию
     if (this.edgePanEnabled) this.initEdgePan();
     this.initDragPan();
@@ -35,6 +39,63 @@ export class InputManager {
     if (!enabled) {
       this.isDragging = false;
       this.dragDistance = 0;
+    }
+  }
+
+  /** Подписка на действие высокого уровня (единый шина событий) */
+  onAction(action: string, handler: (payload?: any) => void) {
+    this.scene.events.on('input:action', (a: string, payload?: any) => {
+      if (a === action) handler(payload);
+    });
+  }
+
+  /** Внешний вызов для эмуляции действия из других источников (UI, геймпад) */
+  emitAction(action: string, payload?: any) {
+    this.scene.events.emit('input:action', action, payload);
+  }
+
+  setKeyboardEnabled(enabled: boolean) {
+    this.keyboardEnabled = enabled;
+  }
+
+  private resolveKeyCode(binding: string | undefined): number | null {
+    if (!binding) return null;
+    const kc: any = (Phaser.Input.Keyboard as any).KeyCodes ?? (Phaser as any).Input.Keyboard.KeyCodes;
+    const name = binding.toUpperCase();
+    if (kc && kc[name] != null) return kc[name];
+    if (binding === '+') return kc?.PLUS ?? kc?.NUMPAD_ADD ?? kc?.EQUALS ?? null;
+    if (binding === '-') return kc?.MINUS ?? kc?.NUMPAD_SUBTRACT ?? kc?.DASH ?? kc?.SUBTRACT ?? null;
+    if (binding === ' ') return kc?.SPACE ?? kc?.SPACEBAR ?? null;
+    // Один символ A-Z/0-9
+    if (/^[A-Z0-9]$/.test(name) && kc && kc[name] != null) return kc[name];
+    return null;
+  }
+
+  private bindKey(action: string, keyCode: number) {
+    const key = this.scene.input.keyboard?.addKey(keyCode);
+    if (!key) return;
+    // Блокируем дефолтное поведение браузера для этой клавиши (например, ПРОБЕЛ = прокрутка)
+    try { this.scene.input.keyboard?.addCapture(keyCode); } catch {}
+    this.registeredKeys.push(key);
+    key.on('down', () => {
+      if (!this.keyboardEnabled) return;
+      this.emitAction(action);
+    });
+  }
+
+  private initKeyboard() {
+    const kb = this.config.keybinds ?? ({} as any);
+    const toBind: Array<[string, string | undefined]> = [
+      ['toggleFollow', kb.toggleFollow],
+      ['zoomIn', kb.zoomIn],
+      ['zoomOut', kb.zoomOut],
+      ['pause', (kb as any).pause],
+      ['systemMenu', (kb as any).systemMenu],
+      ['attackSelected', (kb as any).attackSelected]
+    ];
+    for (const [action, keyStr] of toBind) {
+      const code = this.resolveKeyCode(keyStr);
+      if (code != null) this.bindKey(action, code);
     }
   }
 

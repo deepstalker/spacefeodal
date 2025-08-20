@@ -1,8 +1,9 @@
 {
   "prefabs": {
-    "trader": { "shipId": "trader", "aiProfile": "planet_trader", "combatAI": "coward", "faction": "planet_traders", "weapons": [] },
-    "pirate": { "shipId": "fighter", "aiProfile": "patrol", "combatAI": "default_aggressive", "faction": "pirate", "weapons": ["laser","cannon"] },
-    "orbital_patrol": { "shipId": "ordo_patrol_gunship", "aiProfile": "patrol", "combatAI": "default_aggressive", "faction": "planet_traders", "weapons": ["flak","missile"] },
+    "trader": { "shipId": "trader", "aiProfile": "planet_trader", "combatAI": "peaceful", "faction": "planet_traders", "weapons": [] },
+    "pirate": { "shipId": "fighter", "aiProfile": "pirate_raider", "combatAI": "default_aggressive", "faction": "pirate", "weapons": ["flak","cannon"] },
+    "pirate_raider": { "shipId": "fighter", "aiProfile": "pirate_raider", "combatAI": "default_aggressive", "faction": "pirate", "weapons": ["flak","cannon"] },
+    "orbital_patrol": { "shipId": "ordo_patrol_gunship", "aiProfile": "patrol", "combatAI": "default_aggressive", "faction": "orbital_patrol", "weapons": ["cannon", "missile"] },
     "barrel": { "shipId": "fighter", "aiProfile": "static", "faction": "neutral", "weapons": [] }
   }
 }

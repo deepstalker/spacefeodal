@@ -8,9 +8,10 @@ export class VisibilityManager implements IVisibilityManager {
   }
 
   updateObjectVisibility(obj: Phaser.GameObjects.GameObject, distance: number, radarRange: number): void {
-    const fadeZone = { innerRadius: 0.85, outerRadius: 1.15 };
+    // Значение по умолчанию — резкий градиент: почти сразу 1.0 внутри радара, короткая полоса затухания
+    const fadeZone = { innerRadius: 0.98, outerRadius: 1.03 };
     const alpha = this.calculateAlpha(distance, radarRange, fadeZone);
-    
+
     if (alpha <= 0) {
       this.setObjectVisible(obj, false);
     } else {
@@ -27,13 +28,13 @@ export class VisibilityManager implements IVisibilityManager {
       // Полная видимость
       return 1.0;
     } else if (distance <= radarRange) {
-      // Переход от полной видимости к 50%
-      const factor = (distance - innerRadius) / (radarRange - innerRadius);
-      return 1.0 - (factor * 0.5);
+      // Очень короткий переход от полной видимости к ~0.85 у края радара
+      const factor = (distance - innerRadius) / Math.max(1, (radarRange - innerRadius));
+      return 1.0 - (factor * 0.15);
     } else if (distance <= outerRadius) {
-      // Переход от 50% к полному скрытию
-      const factor = (distance - radarRange) / (outerRadius - radarRange);
-      return 0.5 - (factor * 0.5);
+      // Быстрое затухание от 0.85 на границе радара до 0
+      const factor = (distance - radarRange) / Math.max(1, (outerRadius - radarRange));
+      return 0.85 - (factor * 0.85);
     } else {
       // Полное скрытие
       return 0.0;

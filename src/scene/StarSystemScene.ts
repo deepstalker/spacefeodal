@@ -7,9 +7,19 @@ import { PathfindingManager } from '@/sys/PathfindingManager';
 import { MovementManager } from '@/sys/MovementManager';
 import { CombatManager } from '@/sys/CombatManager';
 import { EnhancedFogOfWar } from '@/sys/fog-of-war/EnhancedFogOfWar';
+import { PauseManager } from '@/sys/PauseManager';
+import { TimeManager } from '@/sys/TimeManager';
 // Тип не импортируем, чтобы не тянуть модуль на этап линтинга; используем any
-import { StaticObjectType, DynamicObjectType } from '@/sys/fog-of-war/types';
 import { MovementPriority } from '@/sys/NPCStateManager';
+import { StarfieldRenderer } from '@/services/StarfieldRenderer';
+import { SystemInitializer } from '@/services/SystemInitializer';
+import { EncounterManager } from '@/services/EncounterManager';
+import { PlanetOrbitManager } from '@/services/PlanetOrbitManager';
+import { InputHandler } from '@/services/InputHandler';
+import { NPCBehaviorManager } from '@/services/NPCBehaviorManager';
+import { PathRenderService } from '@/services/PathRenderService';
+import { GameUpdateManager } from '@/services/GameUpdateManager';
+import { SystemLoaderService } from '@/services/SystemLoaderService';
 
 export default class StarSystemScene extends Phaser.Scene {
   private config!: ConfigManager;
@@ -20,7 +30,17 @@ export default class StarSystemScene extends Phaser.Scene {
   private movement!: MovementManager;
   private combat!: CombatManager;
   private fogOfWar!: EnhancedFogOfWar;
+  private pauseManager!: PauseManager;
+  private timeManager!: TimeManager;
   private npcs: any[] = [];
+  private starfieldRenderer!: StarfieldRenderer;
+  private systemInitializer!: SystemInitializer;
+  private encounterManager!: EncounterManager;
+  private planetOrbitMgr!: PlanetOrbitManager;
+  private inputHandler!: InputHandler;
+  private npcBehaviorMgr!: NPCBehaviorManager;
+  private pathRender!: PathRenderService;
+  private updateMgr!: GameUpdateManager;
   
   // Состояние для удержания правой кнопки мыши
   private rightMouseHoldStart = 0;
@@ -52,27 +72,8 @@ export default class StarSystemScene extends Phaser.Scene {
   async create() {
     this.config = new ConfigManager(this);
     await this.config.loadAll();
-
-    // Определяем текущую систему: статичная или процедурная (новые пути с фолбэком)
-    const systemsIndex = (this.cache.json.get('systems_index') as any) ?? await (async()=>{
-      try { return await (await fetch('/configs/systems/systems.json')).json(); } catch {}
-      return await (await fetch('/configs/systems.json')).json();
-    })();
-    const systemProfiles = (this.cache.json.get('system_profiles') as any) ?? await (async()=>{
-      try { return await (await fetch('/configs/systems/system_profiles.json')).json(); } catch {}
-      return await (await fetch('/configs/system_profiles.json')).json();
-    })();
-    const stored = (()=>{ try { return localStorage.getItem('sf_selectedSystem'); } catch { return null; } })();
-    const currentId = stored || systemsIndex.current;
-    const sysDef = systemsIndex.defs[currentId];
-    if (sysDef?.type === 'procedural') {
-      const { generateSystem } = await import('@/sys/SystemGenerator');
-      const profile = systemProfiles.profiles[sysDef.profile ?? 'default'];
-      this.config.system = generateSystem(profile);
-    } else if (sysDef?.type === 'static' && sysDef.configPath) {
-      // Загрузим указанный статики конфиг
-      this.config.system = await fetch(sysDef.configPath).then(r => r.json());
-    }
+    const systemLoader = new SystemLoaderService(this, this.config);
+    await systemLoader.loadCurrentSystem();
 
     this.save = new SaveManager(this, this.config);
     this.cameraMgr = new CameraManager(this, this.config, this.save);
@@ -81,6 +82,30 @@ export default class StarSystemScene extends Phaser.Scene {
     this.movement = new MovementManager(this, this.config);
     this.combat = new CombatManager(this, this.config);
     this.fogOfWar = new EnhancedFogOfWar(this, this.config);
+    
+    // Инициализируем системы паузы и времени
+    this.pauseManager = new PauseManager(this);
+    this.timeManager = new TimeManager(this);
+    this.timeManager.init();
+    
+    // Передаем PauseManager во все системы
+    this.combat.setPauseManager(this.pauseManager);
+    (this.combat as any).npcStateManager?.setPauseManager(this.pauseManager);
+    this.movement.setPauseManager(this.pauseManager);
+    
+    // Связываем паузу с тайм-менеджером
+    this.events.on('game-paused', () => {
+      this.timeManager.pause();
+    });
+    this.events.on('game-resumed', () => {
+      this.timeManager.resume();
+    });
+
+    // Пополнение квот на старте каждого цикла
+    try {
+      const onCycleStart = (_e: any) => { try { this.npcSim?.replenishOnCycleStart?.(); } catch {} };
+      this.events.on('time-cycle_start', onCycleStart);
+    } catch {}
 
     const system = this.config.system;
     const maxSize = 25000;
@@ -88,101 +113,24 @@ export default class StarSystemScene extends Phaser.Scene {
     const h = Math.min(system.size.height, maxSize);
     this.cameras.main.setBounds(0, 0, w, h);
 
-    // Use BackgroundTiler with new texture
-    const { BackgroundTiler } = await import('@/sys/BackgroundTiler');
-    // Back stars layer (farther): lower parallax
-    try { this.textures.get('bg_stars1').setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
-    const stars = new BackgroundTiler(this, 'bg_stars1', -30, 0.6, 1.0, Phaser.BlendModes.SCREEN);
-    stars.init(system.size.width, system.size.height);
-    // Nebula layer on top of stars: stronger parallax (only if texture exists)
-    let nebula: any = null;
-    if (this.textures.exists('bg_nebula_blue')) {
-      try { this.textures.get('bg_nebula_blue').setFilter(Phaser.Textures.FilterMode.LINEAR); } catch {}
-      nebula = new BackgroundTiler(this, 'bg_nebula_blue', -25, 0.8, 0.8, Phaser.BlendModes.SCREEN);
-      nebula.init(system.size.width, system.size.height);
-    }
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => { stars.update(); if (nebula) nebula.update(); });
-    // Optional extra starfield
-    this.starfield = this.add.graphics().setDepth(-15);
-    this.drawStarfield();
+    // Фон и дополнительный starfield-слой
+    this.starfieldRenderer = new StarfieldRenderer(this, this.config);
+    await this.starfieldRenderer.init();
 
-    // Parallax update and resize handling
-    this.events.on(Phaser.Scenes.Events.UPDATE, this.updateBackground, this);
-    this.scale.on('resize', (gameSize: any) => {
-      if (this.bgTile) {
-        this.bgTile.width = gameSize.width;
-        this.bgTile.height = gameSize.height;
-      }
-    });
-
-    // Star placeholder
-    const star = this.add.circle(system.star.x, system.star.y, 80, 0xffcc00).setDepth(0);
-    
     // Initialize fog of war system
     this.fogOfWar.init();
-    
-    // Register star as static object
-    this.fogOfWar.registerStaticObject(star, StaticObjectType.STAR);
+    // Звезда, планеты и POI
+    this.systemInitializer = new SystemInitializer(this, this.config, this.fogOfWar);
+    this.systemInitializer.initStarAndStatics();
+    this.systemInitializer.initPOI();
+    this.systemInitializer.initPlanets();
+    this.planets = this.systemInitializer.planets as any;
+    this.encounterMarkers = this.systemInitializer.encounterMarkers as any;
     // Stations manager
     const { SpaceStationManager } = await import('@/sys/SpaceStationManager');
     const stationMgr = new SpaceStationManager(this as any, this.config);
     stationMgr.init();
-    // Draw encounters (POI). Интерпретируем координаты как относительные к центру звезды
-    for (const e of system.poi as any[]) {
-      const ex = system.star.x + (e.x ?? 0);
-      const ey = system.star.y + (e.y ?? 0);
-      const q = this.add.circle(ex, ey, 24, 0x999999, 0.4).setDepth(0.5);
-      const t = this.add.text(ex, ey, '?', { color: '#ffffff', fontSize: '24px', fontStyle: 'bold' }).setOrigin(0.5).setDepth(0.6);
-      const typesArr = (this.config.systemProfiles as any)?.profiles?.default?.encounters?.types as Array<any> | undefined;
-      const type = typesArr?.find((k: any)=>k.name === e.name);
-      const activationRange = (type && typeof type.activation_range === 'number') ? type.activation_range : 400;
-      this.encounterMarkers.push({ id: e.id, name: e.name, x: ex, y: ey, typeId: type?.id, activationRange, marker: q, label: t });
-      
-      // Register POI as static object (initially hidden)
-      this.fogOfWar.registerStaticObject(q, e.discovered ? StaticObjectType.POI_VISIBLE : StaticObjectType.POI_HIDDEN);
-      this.fogOfWar.registerStaticObject(t, e.discovered ? StaticObjectType.POI_VISIBLE : StaticObjectType.POI_HIDDEN);
-    }
-
-    // Planets as sprites (will rotate)
-    for (let i = 0; i < system.planets.length; i++) {
-      const p = system.planets[i];
-      const key = `planet_${(i % 10).toString().padStart(2,'0')}`;
-      const c = this.add.image(0, 0, key).setDepth(0);
-      c.setDisplaySize(512, 512).setOrigin(0.5);
-      const initAng = Math.random() * 360;
-      const record = { obj: c, data: { ...p, angleDeg: initAng } } as any;
-      this.planets.push(record);
-      // Immediately position planet to its initial randomized angle and proxy into config for consumers
-      const rad = Phaser.Math.DegToRad(initAng);
-      const px0 = system.star.x + Math.cos(rad) * p.orbit.radius;
-      const py0 = system.star.y + Math.sin(rad) * p.orbit.radius;
-      c.x = px0; c.y = py0;
-      
-      // Register planet as static object
-      this.fogOfWar.registerStaticObject(c, StaticObjectType.PLANET);
-      
-      const label = this.add.text(px0, py0 - 180, p.id, {
-        fontFamily: 'HooskaiChamferedSquare',
-        fontSize: '36px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 6
-      }).setOrigin(0.5).setDepth(2);
-      record.label = label;
-      
-      const confPlanet = (system.planets as any[]).find(pl => pl.id === p.id) as any;
-      if (confPlanet) { confPlanet._x = px0; confPlanet._y = py0; }
-    }
     // Fog of War disabled for now
-
-    // Инициализация симуляции NPC (ленивый спавн по квотам)
-    try {
-      const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
-      this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
-      this.npcSim.init();
-    } catch {}
-
-    // NPC спавн теперь полностью управляется NPCLazySimulationManager по квотам
 
     // Ship sprite (256x128)
     const fallbackStart = { x: system.star.x + 300, y: system.star.y, headingDeg: 0, zoom: 1 };
@@ -217,12 +165,27 @@ export default class StarSystemScene extends Phaser.Scene {
     // Set initial player position for fog of war
     this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
 
+    // Энкаунтеры
+    this.encounterManager = new EncounterManager(this, this.config);
+    this.encounterManager.setPlayerShip(this.ship as any);
+    this.encounterManager.attach(this.encounterMarkers as any);
+
+    // Инициализация симуляции NPC (ленивый спавн по квотам) — после установки позиции игрока в FOW
+    try {
+      const { NPCLazySimulationManager } = await import('../sys/NPCLazySimulationManager');
+      this.npcSim = new NPCLazySimulationManager(this as any, this.config, this.fogOfWar);
+      this.npcSim.setPauseManager(this.pauseManager);
+      this.npcSim.init();
+    } catch {}
+    
+    // NPC спавн теперь полностью управляется NPCLazySimulationManager по квотам
+
     // Player HP
     this.playerHpMax = (selected as any)?.hull ?? 100;
     this.playerHp = this.playerHpMax;
 
-    this.routeGraphics = this.add.graphics({ lineStyle: { width: 2, color: 0x4dd2ff, alpha: 0.85 } }).setDepth(0.5);
-    this.aimLine = this.add.graphics({}).setDepth(0.6);
+    this.pathRender = new PathRenderService(this, this.movement, this.ship as any);
+    this.pathRender.init();
 
     // Optional: if we had a tilemap and collision indices, here we would build a navmesh
     // Example (commented until tilemap exists):
@@ -232,17 +195,49 @@ export default class StarSystemScene extends Phaser.Scene {
     // Врагов не спауним напрямую — они будут привязаны к энкаунтерам (POI)
 
     // Сообщаем другим сценам, что система готова (конфиги загружены, корабль создан)
-    this.events.emit('system-ready', { config: this.config, ship: this.ship });
+    this.events.emit('system-ready', { 
+      config: this.config, 
+      ship: this.ship, 
+      pauseManager: this.pauseManager, 
+      timeManager: this.timeManager 
+    });
 
-    // Настраиваем обработку мыши для радиального меню
-    this.setupMouseControls();
+    // Обработка ввода/ПКМ вынесена в сервис
+    this.inputHandler = new InputHandler(this, this.config, this.movement, this.ship as any, this.findNPCAt.bind(this));
+    this.inputHandler.init();
     this.combat.bindInput(this.inputMgr);
 
-    // Toggle follow camera (F)
-    const followKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-    followKey?.on('down', () => {
+    // Действия высокого уровня через InputManager
+    this.inputMgr.onAction('toggleFollow', () => {
       if (this.cameraMgr.isFollowing()) this.cameraMgr.disableFollow();
       else this.cameraMgr.enableFollow(this.ship);
+    });
+    this.inputMgr.onAction('pause', () => {
+      this.pauseManager.togglePause();
+    });
+    this.inputMgr.onAction('zoomIn', () => {
+      this.cameraMgr.zoomDelta(0.1);
+    });
+    this.inputMgr.onAction('zoomOut', () => {
+      this.cameraMgr.zoomDelta(-0.1);
+    });
+    // Space: осмысленная атака дружественной цели — пометить временным врагом и открыть огонь
+    this.inputMgr.onAction('attackSelected', () => {
+      const cm: any = this.combat as any;
+      const t = cm.getSelectedTarget?.();
+      if (!t || t === this.ship) return;
+      // централизованная пометка врагом
+      cm.markTargetHostileToPlayer?.(t);
+      // Назначение целей слотов делает HUD от этого же действия; здесь только страховка выделения
+      cm.forceSelectTarget?.(t);
+    });
+    
+    // Отладочная команда для проверки конфига паузы (Ctrl+Shift+D)
+    const debugKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    debugKey?.on('down', (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey) {
+        this.pauseManager.debugLogConfig();
+      }
     });
 
     this.events.on(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -256,17 +251,19 @@ export default class StarSystemScene extends Phaser.Scene {
       this.save.flush();
     });
 
-    this.events.on(Phaser.Scenes.Events.UPDATE, this.updateSystem, this);
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => this.drawAimLine());
-    this.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateEncounters());
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updateNPCs(dt));
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => this.updatePatrolNPCs(dt));
-    this.events.on(Phaser.Scenes.Events.UPDATE, (_t:number, dt: number) => {
-      // Update fog of war with current player position
-      if (this.ship && this.fogOfWar) {
-        this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
-      }
+    // Регистрируем обновления через GameUpdateManager
+    this.planetOrbitMgr = new PlanetOrbitManager(this, this.config, this.planets as any, this.orbitalSpeedScale);
+    this.npcBehaviorMgr = new NPCBehaviorManager(this, this.config, this.npcs, this.combat as any);
+    this.updateMgr = new GameUpdateManager(this, this.config, this.pauseManager);
+    this.updateMgr.registerPausedAware('planetOrbits', (dt) => this.planetOrbitMgr.update(dt));
+    this.updateMgr.registerPausedAware('combat', () => this.pathRender.updateAimLine());
+    this.updateMgr.registerPausedAware('encounters', () => this.encounterManager.update());
+    this.updateMgr.registerPausedAware('npcStateManager', (dt) => this.npcBehaviorMgr.updateTraders(dt));
+    this.updateMgr.registerPausedAware('npcMovementManager', (dt) => this.npcBehaviorMgr.updatePatrol(dt));
+    this.updateMgr.registerPausedAware('fogOfWar', () => {
+      if (this.ship && this.fogOfWar) this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
     });
+    this.updateMgr.init();
 
     // Test pirate spawns removed — use encounters or stations to introduce pirates
   }
@@ -286,6 +283,14 @@ export default class StarSystemScene extends Phaser.Scene {
     }
   }
 
+  public getPauseManager(): PauseManager {
+    return this.pauseManager;
+  }
+
+  public getTimeManager(): TimeManager {
+    return this.timeManager;
+  }
+
   private gameOver() {
     const ui = this.scene.get('UIScene') as any;
     if (ui?.showGameOver) {
@@ -293,28 +298,7 @@ export default class StarSystemScene extends Phaser.Scene {
     }
   }
 
-  private drawPath(points: Phaser.Math.Vector2[]) {
-    this.routeGraphics.clear();
-    if (points.length === 0) return;
-    this.routeGraphics.beginPath();
-    this.routeGraphics.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      this.routeGraphics.lineTo(points[i].x, points[i].y);
-    }
-    this.routeGraphics.strokePath();
-    // рисуем стрелку направления в конце
-    const n = points.length;
-    if (n >= 2) {
-      const a = points[n - 2];
-      const b = points[n - 1];
-      const ang = Math.atan2(b.y - a.y, b.x - a.x);
-      const ah = 14;
-      const left = new Phaser.Math.Vector2(b.x - Math.cos(ang) * ah + Math.cos(ang + Math.PI / 2) * (ah * 0.5), b.y - Math.sin(ang) * ah + Math.sin(ang + Math.PI / 2) * (ah * 0.5));
-      const right = new Phaser.Math.Vector2(b.x - Math.cos(ang) * ah + Math.cos(ang - Math.PI / 2) * (ah * 0.5), b.y - Math.sin(ang) * ah + Math.sin(ang - Math.PI / 2) * (ah * 0.5));
-      this.routeGraphics.fillStyle(0x4dd2ff, 0.9);
-      this.routeGraphics.fillTriangle(b.x, b.y, left.x, left.y, right.x, right.y);
-    }
-  }
+  private drawPath(_points: Phaser.Math.Vector2[]) {}
 
   private updateSystem(_time: number, delta: number) {
     // Update planets along circular orbits (безопасные проверки при переключении сцен/систем)
@@ -340,24 +324,7 @@ export default class StarSystemScene extends Phaser.Scene {
     }
   }
 
-  private drawAimLine() {
-    if (!this.aimLine) return;
-    this.aimLine.clear();
-    const target = this.movement.getTarget();
-    if (!target) return;
-    this.aimLine.lineStyle(2, 0xffffff, 0.2);
-    this.aimLine.beginPath();
-    this.aimLine.moveTo(this.ship.x, this.ship.y);
-    this.aimLine.lineTo(target.x, target.y);
-    this.aimLine.strokePath();
-    // target circle
-    this.aimLine.lineStyle(2, 0xffffff, 1);
-    this.aimLine.strokeCircle(target.x, target.y, 8);
-    this.aimLine.fillStyle(0xff6464, 1);
-    this.aimLine.fillCircle(target.x, target.y, 8);
-    this.aimLine.lineStyle(2, 0xffffff, 1);
-    this.aimLine.strokeCircle(target.x, target.y, 8);
-  }
+  private drawAimLine() {}
 
   private updateEncounters() {
     const ship = this.ship;
@@ -524,51 +491,24 @@ export default class StarSystemScene extends Phaser.Scene {
           (o as any).__state = 'docking';
           // Сбрасываем любые боевые назначения на этот объект
           try { (cmAny as any).clearAssignmentsForTarget?.(o); } catch {}
-          
-          const dur = 3000 + Math.random() * 1000;
+
+          // Анимация «посадки» и немедленный деспаун по завершении
+          const dur = 1200;
           const bsx = (o as any).__baseScaleX ?? o.scaleX ?? 1;
           const bsy = (o as any).__baseScaleY ?? o.scaleY ?? 1;
-          
-          this.tweens.add({ 
-            targets: o, 
-            x: planetPos.x, 
-            y: planetPos.y, 
-            scaleX: bsx * 0.2, 
-            scaleY: bsy * 0.2, 
-            alpha: 0, 
-            duration: dur, 
-            ease: 'Sine.easeInOut', 
+          this.tweens.add({
+            targets: o,
+            x: planetPos.x,
+            y: planetPos.y,
+            scaleX: bsx * 0.2,
+            scaleY: bsy * 0.2,
+            alpha: 0,
+            duration: dur,
+            ease: 'Sine.easeInOut',
             onComplete: () => {
               (o as any).__state = 'docked';
-              this.time.delayedCall(10000 + Math.random() * 50000, () => {
-                if (!o.active) return;
-                const otherPlanets = (sys.planets as Array<any>).filter((p: any) => p.id !== target.id);
-                if (otherPlanets.length > 0) {
-                  (o as any).__targetPlanet = otherPlanets[Math.floor(Math.random() * otherPlanets.length)];
-                } else {
-                  (o as any).__targetPlanet = target;
-                }
-                (o as any).__state = 'undocking';
-                const ang = Math.random() * Math.PI * 2;
-                const livePos = this.getPlanetWorldPosById(target.id);
-                const cx = livePos?.x ?? (sys.star.x + target.orbit.radius);
-                const cy = livePos?.y ?? sys.star.y;
-                o.x = cx;
-                o.y = cy;
-                this.tweens.add({ 
-                  targets: o, 
-                  x: cx + Math.cos(ang) * 200, 
-                  y: cy + Math.sin(ang) * 200, 
-                  scaleX: bsx, 
-                  scaleY: bsy, 
-                  alpha: 1, 
-                  duration: dur, 
-                  ease: 'Sine.easeInOut', 
-                  onComplete: () => {
-                    (o as any).__state = 'travel';
-                  }
-                });
-              });
+              // Удаляем NPC из системы (торговец «приземлился» и исчез)
+              try { (this.combat as any).despawnNPC?.(o, 'docked'); } catch {}
             }
           });
         }
@@ -601,19 +541,7 @@ export default class StarSystemScene extends Phaser.Scene {
 
   // navmesh удалён — работаем только с кинематическим планированием
 
-  private drawStarfield() {
-    const g = this.starfield!;
-    g.clear();
-    const sys = this.config.system;
-    const count = 600;
-    g.fillStyle(0xffffff, 0.3);
-    for (let i = 0; i < count; i++) {
-      const x = Math.random() * sys.size.width;
-      const y = Math.random() * sys.size.height;
-      const r = Math.random() * 1.5 + 0.2;
-      g.fillCircle(x, y, r);
-    }
-  }
+  private drawStarfield() {}
 
   private updateBackground() {
     if (!this.bgTile) return;
@@ -645,154 +573,11 @@ export default class StarSystemScene extends Phaser.Scene {
     return null;
   }
 
-  private setupMouseControls() {
-    // Обработка нажатия правой кнопки мыши
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.rightButtonDown()) {
-        this.isRightMouseDown = true;
-        this.rightMouseHoldStart = this.time.now;
-        this.rightMouseStartPos = { x: pointer.worldX, y: pointer.worldY };
-        // Захватываем цель в момент клика
-        this.rightClickTargetNPC = this.findNPCAt(pointer.worldX, pointer.worldY);
-      }
-    });
+  private setupMouseControls() {}
 
-    // Обработка отпускания правой кнопки мыши
-    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.rightButtonReleased()) {
+  private executeSimpleMoveTo(_worldX: number, _worldY: number) {}
 
-        
-        if (this.isRightMouseDown) {
-          this.isRightMouseDown = false;
-          
-          const holdTime = this.time.now - this.rightMouseHoldStart;
-
-          
-          if (this.getUIScene().isRadialMenuVisible()) {
-            // Меню открыто - выбираем пункт
-            const selectedItem = this.getUIScene().getRadialMenuSelection();
-            this.getUIScene().hideRadialMenu();
-            
-            if (selectedItem) {
-              // Передаем захваченную цель в команду
-              this.executeMovementCommand(selectedItem, pointer.worldX, pointer.worldY, this.rightClickTargetNPC);
-            }
-          } else if (holdTime < 200) {
-            // Быстрый клик - простое движение к точке
-            this.executeSimpleMoveTo(pointer.worldX, pointer.worldY);
-          }
-        } else {
-          // Fallback для случаев когда поinterdown не сработал
-          this.executeSimpleMoveTo(pointer.worldX, pointer.worldY);
-        }
-        
-        // Сбрасываем захваченную цель после использования
-        this.rightClickTargetNPC = null;
-      }
-    });
-
-    // Обработка движения мыши при удержании
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (this.isRightMouseDown && pointer.rightButtonDown()) {
-        const holdTime = this.time.now - this.rightMouseHoldStart;
-        
-        // Показываем меню, только если при клике был захвачен NPC
-        if (holdTime > 200 && this.rightClickTargetNPC && !this.getUIScene().isRadialMenuVisible()) {
-          // Показываем радиальное меню в экранных координатах
-          this.getUIScene().showRadialMenu(pointer.x, pointer.y);
-        }
-        
-        if (this.getUIScene().isRadialMenuVisible()) {
-          // Обновляем выбор в меню на основе движения мыши
-          this.getUIScene().updateRadialMenuSelection(pointer.y);
-          // Запоминаем последние мировые координаты указателя, пока меню открыто
-          this.lastPointerWorld = { x: pointer.worldX, y: pointer.worldY };
-        }
-      }
-    });
-  }
-
-  private executeSimpleMoveTo(worldX: number, worldY: number) {
-    // Проверяем, нет ли NPC в точке клика
-    const targetNPC = this.findNPCAt(worldX, worldY);
-    
-    if (targetNPC) {
-      // Клик по NPC - включаем режим преследования
-      this.movement.pursueTarget(targetNPC, this.ship as any);
-      
-      // Скрываем маркер клика для преследования - цель и так видна
-      if (this.clickMarker) {
-        this.clickMarker.setVisible(false);
-      }
-    } else {
-      // Обычный клик по пустому месту - простое движение
-      if (!this.clickMarker) {
-        this.clickMarker = this.add.circle(worldX, worldY, 10, 0x00ff88).setDepth(0.55).setAlpha(0.7);
-      } else {
-        this.clickMarker.setPosition(worldX, worldY).setVisible(true);
-        this.clickMarker.setFillStyle(0x00ff88);
-        this.clickMarker.setRadius(10);
-      }
-      
-      // Простое движение к точке
-      this.movement.moveTo(new Phaser.Math.Vector2(worldX, worldY), this.ship as any);
-    }
-    
-    this.drawAimLine();
-  }
-
-  private executeMovementCommand(item: any, worldX: number, worldY: number, capturedTarget: any | null) {
-    // Приоритет цели: захваченный NPC > поиск по координатам.
-    const targetNPC = capturedTarget || this.findNPCAt(worldX, worldY);
-    
-    if (process.env.NODE_ENV === 'development') {
-      // console.log(`[Scene] executeMovementCommand: mode=${item.mode}, distance=${item.distance}, targetNPC=${!!targetNPC}, captured=${!!capturedTarget}`);
-    }
-    
-    if (targetNPC) {
-      // Клик по NPC - скрываем маркер, объект и так виден
-      if (this.clickMarker) {
-        this.clickMarker.setVisible(false);
-      }
-    } else {
-      // Показать маркер клика для статических точек
-      if (!this.clickMarker) {
-        this.clickMarker = this.add.circle(worldX, worldY, 10, 0x00ff88).setDepth(0.55).setAlpha(0.7);
-      } else {
-        this.clickMarker.setPosition(worldX, worldY).setVisible(true);
-        this.clickMarker.setFillStyle(0x00ff88);
-        this.clickMarker.setRadius(10);
-      }
-    }
-
-    const target = new Phaser.Math.Vector2(worldX, worldY);
-    
-    switch (item.mode) {
-      case 'follow':
-        if (targetNPC) {
-          // Следование за объектом (динамическая цель)
-          this.movement.followObject(targetNPC, item.distance, this.ship as any);
-        } else {
-          this.movement.followTarget(target, item.distance, this.ship as any);
-        }
-        break;
-      case 'orbit':
-        if (targetNPC) {
-          // Орбита вокруг объекта (динамическая цель)
-          this.movement.orbitObject(targetNPC, item.distance, this.ship as any);
-        } else {
-          this.movement.orbitTarget(target, item.distance, this.ship as any);
-        }
-        break;
-      default:
-        this.movement.moveTo(target, this.ship as any);
-        break;
-    }
-    
-    this.drawAimLine();
-    // Сбрасываем запомненные координаты после выбора
-    this.lastPointerWorld = undefined;
-  }
+  private executeMovementCommand(_item: any, _worldX: number, _worldY: number, _capturedTarget: any | null) {}
 }
 
 

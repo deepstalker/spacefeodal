@@ -13,16 +13,35 @@ export class NPCMovementManager {
   private scene: Phaser.Scene;
   private config: ConfigManager;
   private npcStates: Map<any, NPCMovementState> = new Map();
+  private pauseManager?: any;
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
     this.config = config;
   }
 
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
+    
+    // Передаем pauseManager во все уже созданные MovementManager
+    for (const state of this.npcStates.values()) {
+      state.movementManager.setPauseManager(pauseManager);
+      state.movementManager.setPauseSystemName('npcMovementManager');
+    }
+  }
+
   // Регистрируем NPC для управления движением
   registerNPC(npc: any, shipId: string, combatAIProfile?: string) {
     // Создаем отдельный MovementManager для каждого NPC
     const movementManager = new MovementManager(this.scene, this.config, shipId);
+    
+    // Передаем pauseManager если он доступен
+    if (this.pauseManager) {
+      movementManager.setPauseManager(this.pauseManager);
+    }
+    
+    // Устанавливаем имя системы паузы для NPC
+    movementManager.setPauseSystemName('npcMovementManager');
     
     // Получаем настройки движения из профиля ИИ
     const profile = combatAIProfile ? this.config.combatAI?.profiles?.[combatAIProfile] : null;
@@ -43,6 +62,13 @@ export class NPCMovementManager {
   // Убираем NPC из управления
   unregisterNPC(npc: any) {
     this.npcStates.delete(npc);
+  }
+
+  // Установить стартовую скорость как долю от MAX_SPEED (для "выплывания" при спавне)
+  setInitialSpeedFraction(npc: any, fraction: number) {
+    const state = this.npcStates.get(npc);
+    if (!state) return;
+    state.movementManager.setInitialSpeedFraction(fraction);
   }
 
   // Устанавливаем цель для NPC с учетом его режима движения

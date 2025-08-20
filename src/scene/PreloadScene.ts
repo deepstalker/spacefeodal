@@ -76,8 +76,8 @@ export default class PreloadScene extends Phaser.Scene {
     // New ship variants
     this.load.image('ship_ordo_patrol_gunship', '/assets/ships/ordo_patrol_gunship.png');
     // Ship variants — реальные файлы
-    this.load.image('ship_explorer', '/assets/ships/alpha/explorer_ship.jpg');
-    this.load.image('ship_trader', '/assets/ships/alpha/trader_ship.jpg');
+    this.load.image('ship_explorer', '/assets/ships/alpha/explorer_ship.png');
+    this.load.image('ship_trader', '/assets/ships/alpha/trader_ship.png');
     // Background tiles
     // убран устаревший "bg_nebula1" (файл удалён)
     this.load.image('bg_nebula_blue', '/assets/Nebula_Blue.png');

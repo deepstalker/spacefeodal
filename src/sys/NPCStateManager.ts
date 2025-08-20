@@ -91,6 +91,7 @@ interface NPCStateContext {
 
 export class NPCStateManager {
   private scene: Phaser.Scene;
+  private pauseManager?: any; // PauseManager reference
   private config: ConfigManager;
   private contexts: Map<any, NPCStateContext> = new Map();
   
@@ -106,6 +107,10 @@ export class NPCStateManager {
     
     // Обновляем состояния каждый кадр
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
+  }
+
+  setPauseManager(pauseManager: any) {
+    this.pauseManager = pauseManager;
   }
 
   // Регистрация нового NPC (вызывается при спавне)
@@ -169,14 +174,15 @@ export class NPCStateManager {
     
     this.contexts.set(obj, context);
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[NPCState] Registered NPC ${objId}`, {
-        aiProfile,
-        combatAI,
-        faction,
-        totalContexts: this.contexts.size
-      });
-    }
+    // Debug logging disabled
+    // if (process.env.NODE_ENV === 'development') {
+    //   console.log(`[NPCState] Registered NPC ${objId}`, {
+    //     aiProfile,
+    //     combatAI,
+    //     faction,
+    //     totalContexts: this.contexts.size
+    //   });
+    // }
     
     // Автоматический переход в начальное состояние через кадр
     this.scene.time.delayedCall(1, () => {
@@ -569,20 +575,21 @@ export class NPCStateManager {
       const canSwitchByScore = bestScore > requiredScore;
       const hasCurrentTarget = !!stabilization.currentTarget;
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[StableTarget] ${objId} considering switch: ${currentTargetId} → ${bestTargetId}`, {
-          candidateScores,
-          currentScore: currentScore.toFixed(2),
-          bestScore: bestScore.toFixed(2),
-          requiredScore: requiredScore.toFixed(2),
-          timeSinceSwitch: timeSinceSwitch + 'ms',
-          stabilityPeriod: stabilization.stabilityPeriod + 'ms',
-          canSwitchByTime,
-          canSwitchByScore,
-          hasCurrentTarget,
-          requiredAdvantage: (stabilization.requiredAdvantage * 100).toFixed(0) + '%'
-        });
-      }
+      // Debug logging disabled
+      // if (process.env.NODE_ENV === 'development') {
+      //   console.log(`[StableTarget] ${objId} considering switch: ${currentTargetId} → ${bestTargetId}`, {
+      //     candidateScores,
+      //     currentScore: currentScore.toFixed(2),
+      //     bestScore: bestScore.toFixed(2),
+      //     requiredScore: requiredScore.toFixed(2),
+      //     timeSinceSwitch: timeSinceSwitch + 'ms',
+      //     stabilityPeriod: stabilization.stabilityPeriod + 'ms',
+      //     canSwitchByTime,
+      //     canSwitchByScore,
+      //     hasCurrentTarget,
+      //     requiredAdvantage: (stabilization.requiredAdvantage * 100).toFixed(0) + '%'
+      //   });
+      // }
       
       // Меняем цель если:
       // 1. У нас нет текущей цели ИЛИ
@@ -593,44 +600,48 @@ export class NPCStateManager {
         stabilization.targetScore = bestScore;
         stabilization.targetSwitchTime = now;
         
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[StableTarget] ${objId} SWITCHED to ${bestTargetId}`, {
-            reason: !hasCurrentTarget ? 'no_current_target' : 'better_target',
-            newScore: bestTarget ? bestScore.toFixed(2) : 'null'
-          });
-        }
+        // Debug logging disabled
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log(`[StableTarget] ${objId} SWITCHED to ${bestTargetId}`, {
+        //     reason: !hasCurrentTarget ? 'no_current_target' : 'better_target',
+        //     newScore: bestTarget ? bestScore.toFixed(2) : 'null'
+        //   });
+        // }
         
         // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при переключении
-        if (!bestTarget && process.env.NODE_ENV === 'development') {
-          console.error(`[StableTarget] ${objId} SWITCHING TO NULL!`, {
-            candidateScores,
-            bestScore,
-            hasCurrentTarget,
-            canSwitchByTime,
-            canSwitchByScore,
-            reason: 'switched_to_null_target'
-          });
-        }
+        // Debug logging disabled
+        // if (!bestTarget && process.env.NODE_ENV === 'development') {
+        //   console.error(`[StableTarget] ${objId} SWITCHING TO NULL!`, {
+        //     candidateScores,
+        //     bestScore,
+        //     hasCurrentTarget,
+        //     canSwitchByTime,
+        //     canSwitchByScore,
+        //     reason: 'switched_to_null_target'
+        //   });
+        // }
         
         return bestTarget;
       } else {
         // Остаемся с текущей целью
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[StableTarget] ${objId} KEEPING ${currentTargetId}`, {
-            reason: !canSwitchByTime ? 'stabilization_period' : 'insufficient_score_advantage'
-          });
-        }
+        // Debug logging disabled
+        // if (process.env.NODE_ENV === 'development') {
+        //   console.log(`[StableTarget] ${objId} KEEPING ${currentTargetId}`, {
+        //     reason: !canSwitchByTime ? 'stabilization_period' : 'insufficient_score_advantage'
+        //   });
+        // }
         
         // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при сохранении цели
-        if (!stabilization.currentTarget && process.env.NODE_ENV === 'development') {
-          console.error(`[StableTarget] ${objId} KEEPING NULL TARGET!`, {
-            candidateScores,
-            bestScore,
-            bestTargetId,
-            hasCurrentTarget,
-            reason: 'keeping_null_target'
-          });
-        }
+        // Debug logging disabled
+        // if (!stabilization.currentTarget && process.env.NODE_ENV === 'development') {
+        //   console.error(`[StableTarget] ${objId} KEEPING NULL TARGET!`, {
+        //     candidateScores,
+        //     bestScore,
+        //     bestTargetId,
+        //     hasCurrentTarget,
+        //     reason: 'keeping_null_target'
+        //   });
+        // }
         
         return stabilization.currentTarget;
       }
@@ -638,22 +649,24 @@ export class NPCStateManager {
       // Цель не изменилась - обновляем счет
       stabilization.targetScore = bestScore;
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[StableTarget] ${objId} UNCHANGED ${bestTargetId}`, {
-          score: bestTarget ? bestScore.toFixed(2) : 'null',
-          candidateCount: candidates.length
-        });
-      }
+      // Debug logging disabled
+      // if (process.env.NODE_ENV === 'development') {
+      //   console.log(`[StableTarget] ${objId} UNCHANGED ${bestTargetId}`, {
+      //     score: bestTarget ? bestScore.toFixed(2) : 'null',
+      //     candidateCount: candidates.length
+      //   });
+      // }
       
       // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем
-      if (!bestTarget && process.env.NODE_ENV === 'development') {
-        console.warn(`[StableTarget] ${objId} RETURNING NULL!`, {
-          candidateScores,
-          bestScore,
-          hasCurrentTarget: !!stabilization.currentTarget,
-          reason: 'no_valid_target_found'
-        });
-      }
+      // Debug logging disabled
+      // if (!bestTarget && process.env.NODE_ENV === 'development') {
+      //   console.warn(`[StableTarget] ${objId} RETURNING NULL!`, {
+      //     candidateScores,
+      //     bestScore,
+      //     hasCurrentTarget: !!stabilization.currentTarget,
+      //     reason: 'no_valid_target_found'
+      //   });
+      // }
       
       return bestTarget;
     }
@@ -680,6 +693,11 @@ export class NPCStateManager {
 
   // Основной цикл обновления
   private update(_time: number, deltaMs: number): void {
+    // Проверяем конфиг паузы
+    if (this.pauseManager?.isSystemPausable('npcStateManager') && this.pauseManager?.getPaused()) {
+      return;
+    }
+    
     const toDelete: any[] = [];
     
     for (const [obj, context] of this.contexts.entries()) {
@@ -751,18 +769,8 @@ export class NPCStateManager {
         break;
         
       case NPCState.COMBAT_SEEKING:
-        // Переход в атаку если есть цель, или возврат к мирному поведению
-        if (context.aggression.level < 0.1) {
-          // Агрессия остыла - возвращаемся к базовому поведению
-          const baseProfile = context.aiProfile || context.legacy.__behavior;
-          if (baseProfile === 'patrol') {
-            this.transitionTo(context, NPCState.PATROLLING);
-          } else if (baseProfile === 'planet_trader' || baseProfile === 'orbital_trade') {
-            this.transitionTo(context, NPCState.TRADING);
-          } else {
-            this.transitionTo(context, NPCState.IDLE);
-          }
-        }
+        // Централизованный поиск цели и переход в атаку/бегство
+        this.handleCombatSeeking(context);
         break;
         
       case NPCState.COMBAT_ATTACKING:
@@ -770,6 +778,15 @@ export class NPCStateManager {
         if (!context.targetStabilization.currentTarget || 
             !context.targetStabilization.currentTarget.active) {
           this.transitionTo(context, NPCState.COMBAT_SEEKING);
+        } else {
+          // Если цель вышла за радиус интереса — переходим к поиску новой
+          const combat = (this.scene as any).combat as any;
+          const radar = combat?.getRadarRangeForPublic?.(context.obj) ?? 800;
+          const tgt = context.targetStabilization.currentTarget;
+          const d = Phaser.Math.Distance.Between(context.obj.x, context.obj.y, tgt.x, tgt.y);
+          if (d > radar) {
+            this.transitionTo(context, NPCState.COMBAT_SEEKING);
+          }
         }
         break;
         
@@ -779,6 +796,76 @@ export class NPCStateManager {
           this.transitionTo(context, NPCState.COMBAT_SEEKING);
         }
         break;
+    }
+  }
+
+  // Единая логика поиска/выбора боевой цели и решений (атака/бегство/мирное)
+  private handleCombatSeeking(context: NPCStateContext): void {
+    const combat = (this.scene as any).combat as any;
+    const my = context.obj;
+    const myFaction = context.faction;
+    const radar = combat?.getRadarRangeForPublic?.(my) ?? 800;
+    const all = combat?.getAllNPCs?.() ?? [];
+    const selfRec = all.find((r: any) => r.obj === my);
+    const myOverrides = selfRec?.overrides?.factions;
+    // Профиль ИИ для реакций на фракции
+    const profile = context.aiProfile ? this.config.aiProfiles?.profiles?.[context.aiProfile] : undefined as any;
+    const behavior = profile?.behavior as string | undefined;
+    const reactions = profile?.sensors?.react?.onFaction as Record<'ally'|'neutral'|'confrontation', 'ignore'|'attack'|'flee'|'seekEscort'> | undefined;
+    const candidates = all
+      .filter((r: any) => r && r.obj !== my && r.obj?.active)
+      .filter((r: any) => {
+        const d = Phaser.Math.Distance.Between(my.x, my.y, r.obj.x, r.obj.y);
+        if (d > radar) return false;
+        // враги по отношениям с учетом overrides с обеих сторон (временная вражда)
+        const relAB = combat.getRelationPublic(myFaction, r.faction, myOverrides);
+        const relBA = combat.getRelationPublic(r.faction, myFaction, r.overrides?.factions);
+        return relAB === 'confrontation' || relBA === 'confrontation';
+      })
+      .map((r: any) => r.obj);
+    // Добавляем игрока как потенциальную цель если близко
+    const player = combat?.getPlayerShip?.();
+    if (player && player.active) {
+      const dp = Phaser.Math.Distance.Between(my.x, my.y, player.x, player.y);
+      if (dp <= radar) {
+        const relToPlayer = combat.getRelationPublic(myFaction, 'player', myOverrides);
+        const reactionToRel = reactions?.[relToPlayer] ?? 'ignore';
+        const wantsAttackPlayer = (behavior === 'aggressive') || (reactionToRel === 'attack');
+        if (wantsAttackPlayer && !candidates.includes(player)) {
+          candidates.push(player);
+        }
+      }
+    }
+    // Выбор стабильной цели
+    let best = this.selectStableTarget(context, candidates);
+    // Если ещё нет цели, но игрок рядом и поведение агрессивное — выберем игрока
+    if (!best && player && player.active) {
+      const dp = Phaser.Math.Distance.Between(my.x, my.y, player.x, player.y);
+      const relToPlayer = combat.getRelationPublic(myFaction, 'player', myOverrides);
+      const reactionToRel = reactions?.[relToPlayer] ?? 'ignore';
+      const wantsAttackPlayer = (behavior === 'aggressive') || (reactionToRel === 'attack');
+      if (dp <= radar && wantsAttackPlayer) { best = player; }
+    }
+    if (best && best.active) {
+      context.targetStabilization.currentTarget = best;
+      // Решение: бежать или атаковать (порог по агрессии/здоровью может быть из combatAI профиля)
+      const retreatPct =  context.combatAI ? (this.config.combatAI?.profiles?.[context.combatAI]?.retreatHpPct ?? 0) : 0;
+      const isNonCombat = !!(context.combatAI && this.config.combatAI?.profiles?.[context.combatAI!]?.nonCombat);
+      const shouldFlee = isNonCombat; // мирные всегда избегают боя
+      if (shouldFlee) {
+        this.transitionTo(context, NPCState.COMBAT_FLEEING);
+      } else {
+        this.transitionTo(context, NPCState.COMBAT_ATTACKING);
+        // Добавим движение к цели с приоритетом боя и применим его немедленно через CombatManager
+        this.addMovementCommand(my, 'pursue', { x: best.x, y: best.y, targetObject: best }, undefined, MovementPriority.COMBAT, 'npc_fsm_combat');
+        (this.scene as any).combat?.applyMovementFromFSM?.(my, 'pursue', { x: best.x, y: best.y, targetObject: best });
+      }
+    } else {
+      // Нет цели в радиусе — немедленный возврат к базовому поведению
+      const base = context.aiProfile || context.legacy.__behavior;
+      if (base === 'patrol') this.transitionTo(context, NPCState.PATROLLING);
+      else if (base === 'planet_trader' || base === 'orbital_trade') this.transitionTo(context, NPCState.TRADING);
+      else this.transitionTo(context, NPCState.IDLE);
     }
   }
 

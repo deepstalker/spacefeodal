@@ -1,10 +1,15 @@
 import Phaser from 'phaser';
 import { MinimapManager } from '@/sys/MinimapManager';
 import type { ConfigManager } from '@/sys/ConfigManager';
+import type { PauseManager } from '@/sys/PauseManager';
+import type { TimeManager } from '@/sys/TimeManager';
 
 export class HUDManager {
   private scene: Phaser.Scene;
   private configRef?: ConfigManager;
+  private pauseManager?: PauseManager;
+  private timeManager?: TimeManager;
+  private combatManager?: any; // Ссылка на CombatManager
   
   // HUD elements
   private speedText?: Phaser.GameObjects.Text;
@@ -26,6 +31,13 @@ export class HUDManager {
   private minimapHit?: Phaser.GameObjects.Zone;
   private isMinimapDragging: boolean = false;
   private minimapBounds?: { x: number; y: number; w: number; h: number };
+  
+  // Pause and Time UI elements
+  private pauseIndicator?: Phaser.GameObjects.Text;
+  private pauseBlinkTween?: Phaser.Tweens.Tween;
+  private cycleCounterText?: Phaser.GameObjects.Text;
+  private cycleProgressBar?: Phaser.GameObjects.Rectangle;
+  private cycleProgressBarBg?: Phaser.GameObjects.Rectangle;
   // Combat UI state
   private slotRecords: Array<{
     slotIndex: number;
@@ -46,13 +58,22 @@ export class HUDManager {
   private cooldownBarsBySlot: Map<string, { bg: Phaser.GameObjects.Rectangle; outline: Phaser.GameObjects.Rectangle; fill: Phaser.GameObjects.Rectangle; width: number; height: number }>= new Map();
   private outOfRangeTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private assignedBlinkTweens: Map<string, Phaser.Tweens.Tween[]> = new Map();
+  private beamDurationActive: Set<string> = new Set();
+  // Speed display state
+  private lastSpeedU: number = 0;
+  private pausedSpeedU: number | null = null;
+  private isPaused: boolean = false;
+  private lastChargeProgressBySlot: Map<string, number> = new Map();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
   }
 
-  init(config: ConfigManager, ship: Phaser.GameObjects.GameObject) {
+  init(config: ConfigManager, ship: Phaser.GameObjects.GameObject, pauseManager?: PauseManager, timeManager?: TimeManager) {
     this.configRef = config;
+    this.pauseManager = pauseManager;
+    this.timeManager = timeManager;
+    
     // сброс локального UI-состояния
     this.selectedSlots.clear();
     this.cursorOrder = [];
@@ -62,24 +83,45 @@ export class HUDManager {
     this.createWeaponBar();
     this.createMinimap(ship);
     this.createSystemTitle();
+    this.createPauseUI();
+    this.createTimeUI();
+    
+
 
     const starScene = this.scene.scene.get('StarSystemScene') as any;
+    this.combatManager = starScene.combat; // Сохраняем ссылку на CombatManager
+    
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
     starScene.events.on('player-weapon-fired', (slotKey: string) => this.flashAssignedIcon(slotKey));
     starScene.events.on('player-weapon-target-cleared', (_target: any, slots: string[]) => slots.forEach(s => this.removeAssignedIcon(s)));
-    // Beam HUD: показывать duration как 100% и затем refresh как обычную перезарядку
+    // Beam HUD: показывать duration как 100% и затем refresh обрабатывается в updateWeaponChargeBars
     starScene.events.on('beam-start', (slotKey: string, durationMs: number) => this.showBeamDuration(slotKey, durationMs));
-    starScene.events.on('beam-refresh', (slotKey: string, refreshMs: number) => this.showBeamRefresh(slotKey, refreshMs));
-    // Зарядка в зоне действия (до первого выстрела/активации)
-    starScene.events.on('weapon-charge-start', (slotKey: string, ms: number) => this.showChargeBar(slotKey, ms));
-    starScene.events.on('weapon-charge-cancel', (slotKey: string) => this.hideChargeBar(slotKey));
+    // Снять флаг duration при старте refresh
+    starScene.events.on('beam-refresh', (slotKey: string) => { this.beamDurationActive.delete(slotKey); });
     // Out of range — отдельный текст
     starScene.events.on('weapon-out-of-range', (slotKey: string, show: boolean) => this.toggleOutOfRange(slotKey, show));
+
+    // Подписываемся на событие снятия паузы для принудительного обновления прогресс-баров
+    this.scene.events.on('game-resumed', () => {
+      // Немедленно обновляем прогресс-бары после снятия паузы
+      this.updateWeaponChargeBars();
+      // Возврат отображения скорости к фактической
+      this.pausedSpeedU = null;
+    });
+    this.scene.events.on('game-paused', () => { this.isPaused = true; });
+    this.scene.events.on('game-resumed', () => { 
+      this.isPaused = false;
+      // Без очистки и скрытия: оставляем бары в актуальном состоянии, чтобы избежать скачков
+    });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateFollowMode());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.realignCursorIcons());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.syncSlotsVisual());
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateTimeUI());
+    
+    // Прогресс-бары оружия обновляются ВСЕГДА, даже во время паузы
+    this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateWeaponChargeBars());
 
     // Клавиши
     const kb = this.scene.input.keyboard;
@@ -105,6 +147,33 @@ export class HUDManager {
       if (allSelected) this.clearAllSelections();
       else this.selectAllWeapons();
     });
+
+    // Действие атаки по выбранной цели: назначаем все выбранные слоты на текущую цель
+    try {
+      const stars = this.scene.scene.get('StarSystemScene') as any;
+      const inputMgr = stars?.inputMgr;
+      inputMgr?.onAction('attackSelected', () => {
+        const target = stars?.combat?.getSelectedTarget?.();
+        if (!target || this.selectedSlots.size === 0) return;
+        const playerSlots: string[] = (this.configRef!.player?.weapons ?? []).filter((w: string)=>!!w);
+        const bySlotIndex = Array.from(this.selectedSlots.values()).sort((a,b)=>a-b);
+        bySlotIndex.forEach((idx) => {
+          const slotKey = playerSlots[idx];
+          if (!slotKey) return;
+          const currentTarget = stars.combat.getPlayerWeaponTargets().get(slotKey);
+          if (currentTarget && currentTarget !== target) {
+            this.removeAssignedIcon(slotKey);
+          }
+          stars.combat.setPlayerWeaponTarget(slotKey, target);
+          stars.combat.forceSelectTarget(target);
+          this.createAssignedIcon(slotKey, target);
+          this.removeCursorIcon(idx);
+          const rec = this.slotRecords[idx];
+          if (rec) this.deselectSlot(rec as any);
+        });
+        this.selectedSlots.clear();
+      });
+    } catch {}
 
     // Клики
     this.scene.input.on('pointerup', (p: Phaser.Input.Pointer) => {
@@ -195,9 +264,9 @@ export class HUDManager {
     }).layout().setScrollFactor(0).setDepth(1500)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => {
+        // Дублируем клик на кнопку в действие высокого уровня
         const stars = this.scene.scene.get('StarSystemScene') as any;
-        if (stars?.cameraMgr?.isFollowing?.()) stars.cameraMgr.disableFollow();
-        else stars?.cameraMgr?.enableFollow?.(ship);
+        stars?.inputMgr?.emitAction?.('toggleFollow');
       });
     // Move follow toggle to right-bottom corner
     this.followToggle.setPosition(sw - pad - 150, hudY - 160);
@@ -444,15 +513,28 @@ export class HUDManager {
     if (ship && this.speedText) {
       const mv = this.getMovementConfig();
       const max = mv?.MAX_SPEED ?? 1;
-      const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
-      const dx = ship.x - prev.x;
-      const dy = ship.y - prev.y;
-      const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
-      const v = Math.hypot(dx, dy) / dt; // px per second
-      (ship as any).__prevPos = { x: ship.x, y: ship.y };
-      const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
+      let displayU: number;
+      if (this.pauseManager?.getPaused()) {
+        // Во время паузы показываем зафиксированную скорость
+        if (this.pausedSpeedU == null) {
+          // Если по какой-то причине не зафиксирована — используем последнюю вычисленную
+          displayU = this.lastSpeedU;
+        } else {
+          displayU = this.pausedSpeedU;
+        }
+      } else {
+        const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
+        const dx = ship.x - prev.x;
+        const dy = ship.y - prev.y;
+        const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
+        const v = Math.hypot(dx, dy) / dt; // px per second
+        (ship as any).__prevPos = { x: ship.x, y: ship.y };
+        const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
+        this.lastSpeedU = u;
+        displayU = u;
+      }
       const txt = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
-      if (txt) txt.setText(`${u}`);
+      if (txt) txt.setText(`${displayU}`);
     }
 
     // HULL percentage
@@ -541,6 +623,12 @@ export class HUDManager {
     // иконка на курсоре
     this.addCursorIcon(rec);
     this.realignCursorIcons();
+
+    // Сообщаем сцене о выборе слота оружия (для чисто визуальных эффектов)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      star?.events?.emit('weapon-slot-selected', rec.slotKey, true);
+    } catch {}
   }
 
   private deselectSlot(rec: { slotIndex: number; slotKey: string; baseX: number; baseY: number; size: number; bg: any; outline: any; under?: any; icon?: any; }) {
@@ -581,6 +669,12 @@ export class HUDManager {
     }
     this.removeCursorIcon(rec.slotIndex);
     this.realignCursorIcons();
+
+    // Сообщаем сцене о снятии выбора слота оружия (для чисто визуальных эффектов)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      star?.events?.emit('weapon-slot-selected', rec.slotKey, false);
+    } catch {}
   }
 
   private addCursorIcon(rec: { slotIndex: number; slotKey: string; size: number; }) {
@@ -624,6 +718,13 @@ export class HUDManager {
     }
     this.selectedSlots.clear();
     this.cursorOrder = [];
+
+    // Дополнительно информируем сцену, что все выборы сняты (для страховки)
+    try {
+      const star = this.scene.scene.get('StarSystemScene') as any;
+      const slots = (this.configRef!.player?.weapons ?? []).filter((k: string)=>!!k);
+      for (const slotKey of slots) star?.events?.emit('weapon-slot-selected', slotKey, false);
+    } catch {}
   }
 
   private handleLeftClickForWeapons(p: Phaser.Input.Pointer) {
@@ -818,8 +919,8 @@ export class HUDManager {
     if (!flash) return;
     (flash as any).setAlpha(1);
     this.scene.tweens.add({ targets: flash, alpha: 0, duration: 120 });
-    // Показать и анимировать прогресс-бар перезарядки в HUD
-    this.showAndAnimateCooldownBarInHUD(slotKey);
+    // Показать прогресс-бар перезарядки в HUD (без анимации твина)
+    this.showCooldownBarInHUD(slotKey);
     // мигать КРАСНЫМ контуром слота, и оставить красным
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     const recSlot = slotIndex >= 0 ? this.slotRecords[slotIndex] : undefined;
@@ -832,71 +933,89 @@ export class HUDManager {
     }
   }
 
-  private showAndAnimateCooldownBarInHUD(slotKey: string) {
+  private showCooldownBarInHUD(slotKey: string) {
     // Определяем позицию слота в HUD
     const slotIndex = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
     if (slotIndex < 0) return;
     const recSlot = this.slotRecords[slotIndex];
     if (!recSlot) return;
-    const defs: any = this.configRef!.weapons.defs;
-    const w = defs[slotKey];
-    if (!w) return;
-    const fireRate = Math.max(0.001, w.fireRatePerSec);
-    const cooldownMs = 1000 / fireRate;
-    const barWidth = recSlot.size; // в длину иконки слота
-    const barHeight = 20;
-    const outlineColor = 0xA28F6E;
-    const fillColor = 0xBC5A36; // новый цвет
-    const bgColor = 0x2c2a2d;
-    // создаём, если нет
-    let bar = this.cooldownBarsBySlot.get(slotKey);
-    if (!bar) {
-      const bg = this.scene.add.rectangle(0, 0, barWidth, barHeight, bgColor, 1).setDepth(1502).setOrigin(0, 0).setScrollFactor(0);
-      const outline = this.scene.add.rectangle(0, 0, barWidth, barHeight, 0x000000, 0).setDepth(1503).setOrigin(0, 0).setScrollFactor(0).setStrokeStyle(2, outlineColor, 1);
-      const fill = this.scene.add.rectangle(0, 0, 0, barHeight - 4, fillColor, 1).setDepth(1503).setOrigin(0, 0).setScrollFactor(0);
-      bar = { bg, outline, fill, width: barWidth, height: barHeight };
-      this.cooldownBarsBySlot.set(slotKey, bar);
-    }
-    // позиционирование: под иконкой слота в центре экрана
-    const x = recSlot.baseX;
-    const y = (recSlot as any).bg.y + recSlot.size + 6; // под слотом (учитываем возможно приподнятый слот)
-    bar.bg.setPosition(x, y);
-    bar.outline.setPosition(x, y);
-    bar.fill.setPosition(x + 2, y + 2);
-    // показать и сбросить ширину
+    
+    // Убедимся, что бар существует и видим
+    const bar = this.ensureHudBar(slotKey, recSlot);
     bar.bg.setVisible(true);
     bar.outline.setVisible(true);
     bar.fill.setVisible(true);
-    bar.fill.width = 0;
-    try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({
-      targets: bar.fill,
-      width: (bar.width - 4),
-      duration: cooldownMs,
-      ease: 'Linear',
-      onComplete: () => {
-        bar.bg.setVisible(false);
-        bar.outline.setVisible(false);
-        bar.fill.setVisible(false);
-      }
-    });
+    // Ширина будет обновлена в updateWeaponChargeBars в следующем кадре
   }
 
-  private showChargeBar(slotKey: string, ms: number) {
-    const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
-    if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
-    const bar = this.ensureHudBar(slotKey, recSlot);
-    bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    bar.fill.width = 0; try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({ targets: bar.fill, width: (bar.width - 4), duration: Math.max(0, ms), ease: 'Linear' });
-    // прячем out-of-range на время зарядки
-    this.toggleOutOfRange(slotKey, false);
+  private updateWeaponChargeBars() {
+    // Если игра на паузе, не обновляем прогресс-бары
+    // Визуальные бары должны обновляться всегда (даже на паузе), поэтому не выходим
+    
+    if (!this.combatManager || !this.configRef?.player?.weapons) return;
+    
+    const playerWeapons = this.configRef.player.weapons;
+    
+    for (let i = 0; i < playerWeapons.length; i++) {
+      const slotKey = playerWeapons[i];
+      if (!slotKey) continue;
+      
+      const recSlot = this.slotRecords[i];
+      if (!recSlot) continue;
+      
+      // Если активен луч (duration) — держим 100% без скачков
+      if (this.beamDurationActive.has(slotKey)) {
+        const bar = this.ensureHudBar(slotKey, recSlot);
+        bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
+        bar.fill.width = (bar.width - 4);
+        // Не продолжаем — прогрессом управляет duration/refresh
+        continue;
+      }
+      
+      const isCharging = this.combatManager.isWeaponCharging(slotKey);
+      
+      if (isCharging) {
+        // Определяем тип оружия для правильного прогресса
+        const w = this.configRef.weapons.defs[slotKey];
+        const isBeam = (w?.type ?? 'single') === 'beam';
+        
+        const progress = isBeam 
+          ? this.combatManager.getBeamRefreshProgress(slotKey)
+          : this.combatManager.getWeaponChargeProgress(slotKey);
+        
+        // Показываем прогресс-бар
+        const bar = this.ensureHudBar(slotKey, recSlot);
+        bar.bg.setVisible(true);
+        bar.outline.setVisible(true);
+        bar.fill.setVisible(true);
+        
+        // Обновляем ширину напрямую на основе прогресса таймера с клампом монотонности
+        const prev = this.lastChargeProgressBySlot.get(slotKey);
+        const next = Phaser.Math.Clamp(progress, 0, 1);
+        const stable = (this.pauseManager?.getPaused?.() ? Math.max(prev ?? 0, next) : next);
+        bar.fill.width = stable * (bar.width - 4);
+        this.lastChargeProgressBySlot.set(slotKey, stable);
+        
+        // Скрываем out-of-range во время зарядки
+        this.toggleOutOfRange(slotKey, false);
+      } else {
+        // На паузе скрываем бары, чтобы избежать зависания
+        // Не на паузе: скрываем прогресс-бар, если оружие не заряжается
+        const bar = this.cooldownBarsBySlot.get(slotKey);
+        if (bar) {
+          // Во время паузы не скрываем и не обнуляем — закрепляем текущую ширину
+          if (!this.pauseManager?.getPaused?.()) {
+            bar.bg.setVisible(false);
+            bar.outline.setVisible(false);
+            bar.fill.setVisible(false);
+            // Удаляем из кэша прогресса при скрытии бара
+            this.lastChargeProgressBySlot.delete(slotKey);
+          }
+        }
+      }
+    }
   }
-  private hideChargeBar(slotKey: string) {
-    const bar = this.cooldownBarsBySlot.get(slotKey); if (!bar) return;
-    try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    bar.bg.setVisible(false); bar.outline.setVisible(false); bar.fill.setVisible(false);
-  }
+
 
   private toggleOutOfRange(slotKey: string, show: boolean) {
     const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
@@ -908,6 +1027,11 @@ export class HUDManager {
     }
     const x = recSlot.baseX; const y = (recSlot as any).bg.y + recSlot.size + 6 + 10; // по центру полосы
     txt.setPosition(x, y).setVisible(show);
+    // Если просят показать, но у слота нет назначенной цели — скрываем (нет смысла показывать)
+    if (show) {
+      const slotAssigned = Array.from(this.assignedIconsBySlot.keys()).includes(slotKey);
+      if (!slotAssigned) txt.setVisible(false);
+    }
   }
 
   private showBeamDuration(slotKey: string, durationMs: number) {
@@ -915,20 +1039,28 @@ export class HUDManager {
     if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
     const bar = this.ensureHudBar(slotKey, recSlot);
     bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    // 100% заполнение на время длительности луча
+    // 100% заполнение на время длительности луча (без таймеров, дергаем флаг)
     bar.fill.width = Math.max(0, bar.width - 4);
     try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.time.delayedCall(Math.max(0, durationMs), () => { /* после duration ожидаем refresh-событие */ });
+    this.beamDurationActive.add(slotKey);
   }
 
-  private showBeamRefresh(slotKey: string, refreshMs: number) {
-    const idx = (this.configRef!.player?.weapons ?? []).findIndex(k => k === slotKey);
-    if (idx < 0) return; const recSlot = this.slotRecords[idx]; if (!recSlot) return;
-    const bar = this.ensureHudBar(slotKey, recSlot);
-    bar.bg.setVisible(true); bar.outline.setVisible(true); bar.fill.setVisible(true);
-    bar.fill.width = 0; try { (this.scene.tweens as any).killTweensOf(bar.fill); } catch {}
-    this.scene.tweens.add({ targets: bar.fill, width: (bar.width - 4), duration: Math.max(0, refreshMs), ease: 'Linear', onComplete: () => { bar.bg.setVisible(false); bar.outline.setVisible(false); bar.fill.setVisible(false); } });
+  /**
+   * Скрыть все прогресс-бары перезарядки оружия
+   */
+  private hideAllCooldownBars() {
+    for (const [slotKey, bar] of this.cooldownBarsBySlot.entries()) {
+      // Скрываем все элементы бара
+      bar.bg.setVisible(false);
+      bar.outline.setVisible(false);
+      bar.fill.setVisible(false);
+      
+      // Удаляем из кэша прогресса
+      this.lastChargeProgressBySlot.delete(slotKey);
+    }
   }
+
+
 
   private ensureHudBar(slotKey: string, recSlot: any) {
     let bar = this.cooldownBarsBySlot.get(slotKey);
@@ -938,6 +1070,7 @@ export class HUDManager {
       const bg = this.scene.add.rectangle(0, 0, barWidth, barHeight, bgColor, 1).setDepth(1502).setOrigin(0, 0).setScrollFactor(0);
       const outline = this.scene.add.rectangle(0, 0, barWidth, barHeight, 0x000000, 0).setDepth(1503).setOrigin(0, 0).setScrollFactor(0).setStrokeStyle(2, outlineColor, 1);
       const fill = this.scene.add.rectangle(0, 0, 0, barHeight - 4, fillColor, 1).setDepth(1503).setOrigin(0, 0).setScrollFactor(0);
+      
       bar = { bg, outline, fill, width: barWidth, height: barHeight };
       this.cooldownBarsBySlot.set(slotKey, bar);
     }
@@ -967,7 +1100,7 @@ export class HUDManager {
     const minimapW = 512; // увеличиваем с 480 до 640
     const minimapH = 384; // увеличиваем с 360 до 480
     const minimapX = this.scene.scale.width - minimapW - 40; // отступ от правого края
-    const minimapY = 40; // отступ от верхнего края
+    const minimapY = 80; // отступ от верхнего края
     this.minimapBounds = { x: minimapX, y: minimapY, w: minimapW, h: minimapH };
     
     // Инициализируем миникарту с новыми размерами
@@ -1025,6 +1158,154 @@ export class HUDManager {
   }
 
   // Game Over overlay with rexUI button
+  private createPauseUI() {
+    // Индикатор паузы в центре экрана
+    const sw = this.scene.scale.width;
+    const sh = this.scene.scale.height;
+    
+    this.pauseIndicator = this.scene.add.text(sw / 2, sh / 2 - 100, 'ПАУЗА', {
+      color: '#ffffff',
+      fontSize: '72px',
+      fontFamily: 'HooskaiChamferedSquare',
+      stroke: '#000000',
+      strokeThickness: 8
+    }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(5000).setVisible(false);
+    
+    try { 
+      (this.pauseIndicator as any).setResolution?.(this.uiTextResolution); 
+    } catch {}
+    
+    // Подписываемся на события паузы
+    this.scene.events.on('game-paused', () => this.showPauseIndicator());
+    this.scene.events.on('game-resumed', () => this.hidePauseIndicator());
+    // Зафиксировать скорость при входе в паузу (для отображения)
+    this.scene.events.on('game-paused', () => {
+      const currentText = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
+      if (currentText) {
+        const val = parseInt(currentText.text || '0', 10);
+        if (!Number.isNaN(val)) this.pausedSpeedU = val;
+      }
+    });
+    
+    // Обновляем позицию при ресайзе
+    this.scene.scale.on('resize', (gameSize: any) => {
+      if (this.pauseIndicator) {
+        this.pauseIndicator.setPosition(gameSize.width / 2, gameSize.height / 2 - 100);
+      }
+    });
+  }
+
+  private createTimeUI() {
+    if (!this.minimapBounds) {
+      // Создаем с дефолтными позициями, если миникарта еще не готова
+      const sw = this.scene.scale.width;
+      const sh = this.scene.scale.height;
+      const mapX = sw - 512 - 40; // дефолтная позиция миникарты
+      const mapY = 40;
+      const mapW = 512;
+      this.minimapBounds = { x: mapX, y: mapY, w: mapW, h: 384 };
+    }
+    
+    const mapX = this.minimapBounds.x;
+    const mapY = this.minimapBounds.y;
+    const mapW = this.minimapBounds.w;
+    
+    // Счетчик циклов рядом с миникартой (гарантированно в пределах экрана)
+    const cycleX = mapX + mapW / 2;
+    const cycleY = Math.max(24, mapY - 26);
+    
+    this.cycleCounterText = this.scene.add.text(cycleX, cycleY, 'Цикл: 0010', {
+      color: '#ffffff',
+      fontSize: '28px',
+      fontFamily: 'HooskaiChamferedSquare',
+      align: 'center',
+      lineSpacing: 8
+    }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(1501);
+    
+    try { 
+      (this.cycleCounterText as any).setResolution?.(this.uiTextResolution); 
+    } catch {}
+    
+    // Прогресс-бар под счетчиком циклов
+    const barY = cycleY + 12;
+    const barW = mapW - 40; // Чуть уже миникарты
+    const barH = 4;
+    const barX = mapX + 20; // Центрируем
+    
+    this.cycleProgressBarBg = this.scene.add.rectangle(barX, barY, barW, barH, 0x2c2a2d, 1)
+      .setOrigin(0, 0.5).setScrollFactor(0).setDepth(1500);
+    this.cycleProgressBarBg.setStrokeStyle(1, 0xA28F6E, 1);
+    
+    this.cycleProgressBar = this.scene.add.rectangle(barX + 1, barY, 0, barH - 2, 0x22c55e, 1)
+      .setOrigin(0, 0.5).setScrollFactor(0).setDepth(1501);
+    
+    // Обновляем позицию при ресайзе
+    this.scene.scale.on('resize', (gameSize: any) => {
+      if (this.cycleCounterText && this.minimapBounds) {
+        const newMapX = gameSize.width - this.minimapBounds.w - 40;
+        const newCycleX = newMapX + this.minimapBounds.w / 2;
+        this.cycleCounterText.setPosition(newCycleX, cycleY);
+        
+        if (this.cycleProgressBarBg) {
+          this.cycleProgressBarBg.setPosition(newMapX + 20, barY);
+        }
+        if (this.cycleProgressBar) {
+          this.cycleProgressBar.setPosition(newMapX + 21, barY);
+        }
+      }
+    });
+  }
+
+  private showPauseIndicator() {
+    if (!this.pauseIndicator) return;
+    
+    this.pauseIndicator.setVisible(true);
+    
+    // Создаем мигающий эффект
+    if (this.pauseBlinkTween) {
+      this.pauseBlinkTween.destroy();
+    }
+    
+    this.pauseBlinkTween = this.scene.tweens.add({
+      targets: this.pauseIndicator,
+      alpha: 0.3,
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+    
+    // Помечаем как UI tween, чтобы он НЕ останавливался при паузе
+    (this.pauseBlinkTween as any).__isUITween = true;
+  }
+
+  private hidePauseIndicator() {
+    if (!this.pauseIndicator) return;
+    
+    this.pauseIndicator.setVisible(false);
+    
+    if (this.pauseBlinkTween) {
+      this.pauseBlinkTween.destroy();
+      this.pauseBlinkTween = undefined;
+    }
+    
+    // Восстанавливаем альфу
+    this.pauseIndicator.setAlpha(1);
+  }
+
+  private updateTimeUI() {
+    if (!this.timeManager || !this.cycleCounterText || !this.cycleProgressBar) return;
+    
+    // Обновляем текст счетчика циклов
+    const cycleFormatted = this.timeManager.getCurrentCycleFormatted();
+    this.cycleCounterText.setText(`Цикл: ${cycleFormatted}`);
+    
+    // Обновляем прогресс-бар
+    const progress = this.timeManager.getCycleProgress();
+    const maxWidth = (this.minimapBounds?.w ?? 512) - 42; // -42 для отступов и рамки
+    this.cycleProgressBar.width = Math.max(0, progress * maxWidth);
+  }
+
   // Публичный метод для полного обновления HUD при смене системы
   public updateForNewSystem(config: ConfigManager, ship: Phaser.GameObjects.GameObject) {
     this.configRef = config;
@@ -1048,9 +1329,14 @@ export class HUDManager {
     // уничтожить HUD элементы
     this.speedText?.destroy(); this.followToggle?.destroy(); this.shipNameText?.destroy(); this.shipIcon?.destroy();
     this.weaponSlotsContainer?.destroy(); this.weaponPanel?.destroy(); this.hullFill?.destroy(); this.followLabel?.destroy(); this.gameOverGroup?.destroy(); this.minimapHit?.destroy();
+    
+    // уничтожить элементы паузы и времени
+    this.pauseIndicator?.destroy(); this.cycleCounterText?.destroy(); this.cycleProgressBar?.destroy(); this.cycleProgressBarBg?.destroy();
+    if (this.pauseBlinkTween) { this.pauseBlinkTween.destroy(); this.pauseBlinkTween = undefined; }
 
     // очистить ссылки
     this.speedText = undefined; this.followToggle = undefined; this.shipNameText = undefined; this.shipIcon = undefined; this.weaponSlotsContainer = undefined; this.weaponPanel = undefined; this.hullFill = undefined; this.followLabel = undefined; this.gameOverGroup = undefined; this.minimapHit = undefined;
+    this.pauseIndicator = undefined; this.cycleCounterText = undefined; this.cycleProgressBar = undefined; this.cycleProgressBarBg = undefined;
 
     // уничтожить текстовые ref
     const hpText = (this.scene as any).__hudHullValue as Phaser.GameObjects.Text | undefined; hpText?.destroy(); (this.scene as any).__hudHullValue = undefined;
@@ -1069,6 +1355,17 @@ export class HUDManager {
     // очистить выборы
     this.selectedSlots.clear();
     this.cursorOrder = [];
+    
+    // очистить кэш прогресса перезарядки
+    this.lastChargeProgressBySlot.clear();
+    
+    // уничтожить все прогресс-бары перезарядки
+    for (const [slotKey, bar] of this.cooldownBarsBySlot.entries()) {
+      try { bar.bg.destroy(); } catch {}
+      try { bar.fill.destroy(); } catch {}
+      try { bar.outline.destroy(); } catch {}
+    }
+    this.cooldownBarsBySlot.clear();
   }
 
   public showGameOver() {
@@ -1127,4 +1424,6 @@ export class HUDManager {
       else rec.outline.setStrokeStyle(0, 0x00ff66, 1);
     }
   }
+  
+
 }

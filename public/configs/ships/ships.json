@@ -6,13 +6,13 @@
       "hull": 10000,
       "sprite": {
         "key": "ship_explorer",
-        "displaySize": { "width": 128, "height": 256 },
+        "displaySize": { "width": 128, "height": 384 },
         "origin": { "x": 0.5, "y": 0.5 },
         "noseOffsetDeg": 90
       },
       "combat": {
-        "weaponSlots": 3,
-        "accuracy": 0.999,
+        "weaponSlots": 6,
+        "accuracy": 0.8,
         "slots": [
           { "offset": { "x": -20, "y": -30 } },
           { "offset": { "x": 0, "y": -40 } },
@@ -23,7 +23,7 @@
       "movement": {
         "MAX_SPEED": 2,
         "ACCELERATION": 0.015,
-        "DECELERATION": 0.075,
+        "DECELERATION": 0.015,
         "TURN_SPEED": 0.03,
         "SLOWING_RADIUS": 300,
         "TURN_PENALTY_MULTIPLIER": 1.8,
@@ -33,28 +33,28 @@
     },
     "ordo_patrol_gunship": {
       "displayName": "Patrol Gunship",
-      "hull": 6000,
+      "hull": 7000,
       "sprite": {
         "key": "ship_ordo_patrol_gunship",
-        "displaySize": { "width": 64, "height": 128 },
+        "displaySize": { "width": 64, "height": 192 },
         "origin": { "x": 0.5, "y": 0.5 },
         "noseOffsetDeg": -90
       },
       "combat": {
         "weaponSlots": 3,
-        "accuracy": 0.999,
+        "accuracy": 0.85,
         "slots": [
           { "offset": { "x": -20, "y": -30 } },
           { "offset": { "x": 0, "y": -40 } },
           { "offset": { "x": 20, "y": -30 } }
         ]
       },
-      "sensors": { "radar_range": 1500 },
+      "sensors": { "radar_range": 1250 },
       "movement": {
-        "MAX_SPEED": 1.2,
-        "ACCELERATION": 0.015,
+        "MAX_SPEED": 1.5,
+        "ACCELERATION": 0.025,
         "DECELERATION": 0.075,
-        "TURN_SPEED": 0.04,
+        "TURN_SPEED": 0.03,
         "SLOWING_RADIUS": 300,
         "TURN_PENALTY_MULTIPLIER": 1.8,
         "TURN_DECELERATION_FACTOR": 0.05,
@@ -63,7 +63,7 @@
     },
     "trader": {
       "displayName": "Trader",
-      "hull": 6000,
+      "hull": 10000,
       "sprite": {
         "key": "ship_trader",
         "displaySize": { "width": 96, "height": 192 },
@@ -79,10 +79,10 @@
           { "offset": { "x": 24, "y": -28 } }
         ]
       },
-      "sensors": { "radar_range": 1400 },
+      "sensors": { "radar_range": 1000 },
       "movement": {
         "MAX_SPEED": 1.5,
-        "ACCELERATION": 0.05,
+        "ACCELERATION": 0.075,
         "DECELERATION": 0.085,
         "TURN_SPEED": 0.02,
         "SLOWING_RADIUS": 300,
@@ -102,19 +102,19 @@
       },
       "combat": {
         "weaponSlots": 3,
-        "accuracy": 0.5,
+        "accuracy": 0.75,
         "slots": [
           { "offset": { "x": -18, "y": -32 } },
           { "offset": { "x": 0, "y": -44 } },
           { "offset": { "x": 18, "y": -32 } }
         ]
       },
-      "sensors": { "radar_range": 1000 },
+      "sensors": { "radar_range": 2200 },
       "movement": {
-        "MAX_SPEED": 1.2,
-        "ACCELERATION": 0.01,
-        "DECELERATION": 0.02,
-        "TURN_SPEED": 0.03,
+        "MAX_SPEED": 1.8,
+        "ACCELERATION": 0.09,
+        "DECELERATION": 0.05,
+        "TURN_SPEED": 0.04,
         "SLOWING_RADIUS": 300,
         "TURN_PENALTY_MULTIPLIER": 1.8,
         "TURN_DECELERATION_FACTOR": 0.05,
