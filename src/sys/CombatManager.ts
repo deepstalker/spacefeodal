@@ -45,7 +45,7 @@ export class CombatManager {
     faction?: string;
     combatAI?: string;
     aiProfileKey?: string;
-    intent?: { type: 'attack' | 'flee'; target: any } | null;
+    intent?: { type: 'attack' | 'flee' | 'retreat'; target: any } | null;
     overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> };
     damageLog?: {
       firstAttacker?: any;
@@ -670,7 +670,7 @@ export class CombatManager {
       const ctx = this.npcStateManager.getContext(t.obj);
       const st = ctx?.state;
       const legacyAttack = t.intent?.type === 'attack' && t.intent.target?.active;
-      const legacyFlee = t.intent?.type === 'flee' && t.intent.target?.active;
+      const legacyFlee = t.intent?.type === 'flee' && t.intent.target?.active; // retreat не считается боевым
       // Мирные профили (nonCombat) никогда не стреляют
       const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
       const isNonCombat = !!combatProfile?.nonCombat;
@@ -768,7 +768,7 @@ export class CombatManager {
       })();
       
       let targetObj = (t.intent && t.intent.type === 'attack') ? t.intent.target : null;
-      const fleeObj = (t.intent && t.intent.type === 'flee') ? t.intent.target : null;
+      const evadeObj = (t.intent && (t.intent.type === 'flee' || t.intent.type === 'retreat')) ? t.intent.target : null;
       
       // КРИТИЧНО: Проверяем валидность цели перед использованием
       if (targetObj && (!targetObj.active || targetObj.destroyed)) {
@@ -788,7 +788,7 @@ export class CombatManager {
         }
       }
       
-      if (fleeObj && (!fleeObj.active || fleeObj.destroyed)) {
+      if (evadeObj && (!evadeObj.active || evadeObj.destroyed)) {
         if (process.env.NODE_ENV === 'development') {
           console.log(`[AI] ${t.shipId} #${(obj as any).__uniqueId} clearing invalid flee target`);
         }
@@ -796,14 +796,14 @@ export class CombatManager {
       }
       
       let target: { x: number; y: number };
-      if (fleeObj) {
+      if (evadeObj) {
         // Flee/Retreat sensor-driven: flee держит изначальную точку, retreat корректирует направление
         const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
         const recalcInterval = this.config.aiProfiles?.profiles?.[t.aiProfileKey!]?.retreat?.recalcIntervalMs ?? 3500;
         const mode = (t as any).__fleeMode as ('flee'|'retreat'|undefined);
         const needRecalc = mode === 'retreat' ? (!(t as any).__fleeDir || !(t as any).__fleeDirTime || (nowMs - (t as any).__fleeDirTime > recalcInterval)) : !(t as any).__fleeDir;
         if (needRecalc) {
-          let source = fleeObj;
+          let source = evadeObj;
           if (t.damageLog?.totalDamageBySource?.size) {
             let b: any = null; let v = -1;
             for (const [src, sum] of t.damageLog.totalDamageBySource.entries()) {
@@ -1792,7 +1792,7 @@ export class CombatManager {
       const profileKey = t.aiProfileKey;
       const profile = profileKey ? this.config.aiProfiles.profiles[profileKey] : undefined;
       const reactions = profile?.sensors?.react?.onFaction;
-      let decided: { type: 'attack'|'flee'; target: any } | null = null;
+      let decided: { type: 'attack'|'flee'|'retreat'; target: any } | null = null;
       // prefer non-pirate targets first to avoid mutual pirate-pirate selection
       const sorted = sensed.sort((a,b) => (a.faction === 'pirate' ? 1 : 0) - (b.faction === 'pirate' ? 1 : 0));
       for (const s of sorted) {
@@ -1816,7 +1816,7 @@ export class CombatManager {
         if ((s.obj as any)?.__state === 'docked' || (s.obj as any)?.__state === 'docking') continue;
         if (act === 'attack') { (t as any).__fleeMode = undefined; decided = { type: 'attack', target: s.obj }; break; }
         if (act === 'flee')   { (t as any).__fleeMode = 'flee'; decided = { type: 'flee', target: s.obj }; break; }
-        if (act === 'retreat'){ (t as any).__fleeMode = 'retreat'; decided = { type: 'flee', target: s.obj }; break; }
+        if (act === 'retreat'){ (t as any).__fleeMode = 'retreat'; decided = { type: 'retreat', target: s.obj }; break; }
       }
       // If current intent target is invalid (docked/docking/inactive) — clear it
       const curIntent: any = (t as any).intent;
@@ -2202,7 +2202,7 @@ export class CombatManager {
     for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
     // Добавляем NPC, которые целятся в игрока
     for (const t of this.targets) {
-      if (t.intent?.target === this.ship) {
+      if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
         assigned.add(t.obj);
       }
     }
@@ -2223,7 +2223,7 @@ export class CombatManager {
     for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
     // Добавляем NPC, которые целятся в игрока, для отображения HP-бара
     for (const t of this.targets) {
-      if (t.intent?.target === this.ship) {
+      if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
         assigned.add(t.obj);
       }
     }
