@@ -656,7 +656,7 @@ export class CombatManager {
             }
             this.playerChargeUntil[slotKey] = now + cooldownMs;
             const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, { x: 0, y: 0 });
-            const w2 = { ...w, muzzleOffset };
+            const w2 = { ...w, muzzleOffset, __slotIndex: i };
             const isBurst = ((w2?.burst?.count ?? 1) > 1) || ((w2.type ?? 'single') === 'burst');
             if (isBurst) this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
             else this.fireWeapon(slotKey, w2, target as any, this.ship);
@@ -1093,9 +1093,9 @@ export class CombatManager {
   }
 
   private fireWeapon(_slot: string, w: any, target: any, shooter: any) {
-    const slotIndex = 0; // слот уже разрешен на уровне вызова, здесь защищаемся
+    // Используем уже рассчитанное смещение дула, если оно передано вызвавшей стороной
     const fallbackOffset = { x: 0, y: 0 };
-    const mo = this.resolveMuzzleOffset(shooter, slotIndex, fallbackOffset);
+    const mo = (w && w.muzzleOffset) ? w.muzzleOffset : this.resolveMuzzleOffset(shooter, (w && typeof w.__slotIndex === 'number') ? w.__slotIndex : 0, fallbackOffset);
     const muzzle = this.getMuzzleWorldPositionFor(shooter, mo);
     const aim = this.getAimedTargetPoint(shooter, target, w);
     const angle = Math.atan2(aim.y - muzzle.y, aim.x - muzzle.x);
@@ -1117,7 +1117,8 @@ export class CombatManager {
       this.fogOfWar.registerDynamicObject(proj, DynamicObjectType.PROJECTILE);
     }
 
-    const speed = w.projectileSpeed;
+    // projectileSpeed в px/s; позиция обновляется в UPDATE через dt/1000 — единицы согласованы
+    const speed = Math.max(1, w.projectileSpeed || 1);
     
     // Рассчитываем время жизни снаряда: для homing приоритет фиксированному; иначе дистанция/скорость
     const lifetimeMs = Math.max(1,
@@ -1335,8 +1336,8 @@ export class CombatManager {
     }
 
     // Прямая баллистика (single/burst)
-    const vx = Math.cos(angle) * speed;
-    const vy = Math.sin(angle) * speed;
+    const vx = Math.cos(angle) * speed; // px/s
+    const vy = Math.sin(angle) * speed; // px/s
 
     const onUpdate = (_t: number, dt: number) => {
       // Проверяем паузу боевых систем
@@ -1396,7 +1397,7 @@ export class CombatManager {
         if (!shooter?.active || !target?.active) return;
         const muzzleOffset = this.resolveMuzzleOffset(shooter, 0, { x: 0, y: 0 });
         // Для homing серии отмечаем обратный старт при создании снаряда
-        const w2 = { ...w, muzzleOffset, __burstShot: (w.type === 'homing') ? true : undefined };
+        const w2 = { ...w, muzzleOffset, __slotIndex: 0, __burstShot: (w.type === 'homing') ? true : undefined };
         this.fireWeapon(slot, w2, target, shooter);
         try { this.pauseManager?.unregisterTimer?.(burstId); } catch {}
       });
@@ -1406,8 +1407,9 @@ export class CombatManager {
   }
 
   private getMuzzleWorldPositionFor(shooter: any, offset: { x: number; y: number }) {
-    // offset is relative to shooter local space where +Y is down in Phaser, shooter rotated
-    const rot = shooter.rotation;
+    // offset относительно локальной системы корабля, учитываем визуальный носовой сдвиг
+    const nose = (shooter as any).__noseOffsetRad || 0;
+    const rot = shooter.rotation - nose;
     const cos = Math.cos(rot);
     const sin = Math.sin(rot);
     const lx = offset.x;
@@ -1933,18 +1935,15 @@ export class CombatManager {
     // Проверяем есть ли у цели движение (NPC и player имеют __moveRef)
     const moveRef = (target as any).__moveRef;
     if (moveRef && typeof moveRef.speed === 'number' && typeof moveRef.headingRad === 'number') {
-      // Получаем скорость напрямую из MovementManager
-      // MovementManager.speed в пикселях/кадр, нужно конвертировать в пикселях/сек
-      const speedPerFrame = moveRef.speed;
-      const speedPerSecond = speedPerFrame * 60; // предполагаем 60 FPS
+      // Получаем скорость напрямую из MovementManager (px/s)
+      const speedPerSecond = moveRef.speed;
       const heading = moveRef.headingRad;
-      
       vx = Math.cos(heading) * speedPerSecond;
       vy = Math.sin(heading) * speedPerSecond;
     }
     
 
-    const projectileSpeed = w.projectileSpeed;
+    const projectileSpeed = Math.max(1, w.projectileSpeed || 1);
     const sx = shooter.x;
     const sy = shooter.y;
     const tx = target.x;
@@ -1999,22 +1998,19 @@ export class CombatManager {
     const perfectLeadX = tx + vx * tHit;
     const perfectLeadY = ty + vy * tHit;
     
-    // При 100% точности стреляем точно в упрежденную позицию
-    // При меньшей точности добавляем случайную ошибку
-    const accuracyError = 1 - accuracy; // Величина ошибки (0 = идеально, 1 = максимальная ошибка)
-    
-    // Фиксированная максимальная ошибка + небольшая зависимость от расстояния
-    // При нулевой точности максимальная ошибка = 100 пикселей + 2% от расстояния
-    const maxErrorRadius = 100 + distance * 0.02;
-    
-    // Генерируем случайную ошибку в круге
-    const errorRadius = maxErrorRadius * accuracyError * Math.random();
-    const errorAngle = Math.random() * Math.PI * 2;
-    const errorX = Math.cos(errorAngle) * errorRadius;
-    const errorY = Math.sin(errorAngle) * errorRadius;
-    
-    const aimX = perfectLeadX + errorX;
-    const aimY = perfectLeadY + errorY;
+    // При 100% точности — точная упреждённая точка. Иначе — угловая ошибка (стабильнее на любых дистанциях)
+    // ВАЖНО: для неподвижной цели (или почти) ошибка НЕ добавляется — точность 100%
+    const targetStationary = targetSpeed < 0.5;
+    const accuracyError = targetStationary ? 0 : (1 - accuracy); // 0..1
+    const baseAngle = Math.atan2(perfectLeadY - sy, perfectLeadX - sx);
+    const dLead = Math.hypot(perfectLeadX - sx, perfectLeadY - sy); // расстояние до точки упреждения
+    // Максимальная угловая ошибка (в градусах) масштабируется от общей точности
+    const maxErrDeg = (this.config.weaponTypes?.single as any)?.maxAngleErrorDeg ?? 8;
+    const maxErrRad = (maxErrDeg * accuracyError) * Math.PI / 180;
+    const delta = (Math.random() * 2 - 1) * maxErrRad;
+    const errAngle = baseAngle + delta;
+    const aimX = sx + Math.cos(errAngle) * dLead;
+    const aimY = sy + Math.sin(errAngle) * dLead;
     
 
 

@@ -104,13 +104,6 @@ export class InputManager {
     const isRight = (p: any) => (p?.event?.button === 2) || (p?.buttons === 2) || p?.rightButtonDown?.() || p?.rightButtonReleased?.();
     const isLeft = (p: any) => (p?.event?.button === 0) || p?.leftButtonDown?.() || p?.leftButtonReleased?.();
 
-    // Also catch on pointerdown for right-click in some browsers
-    this.scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (isRight(p)) {
-        this.rightClickHandlers.forEach(h => h(p.worldX, p.worldY));
-      }
-    });
-
     this.scene.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       // Left click as tap (not a drag)
       if (isLeft(p)) {

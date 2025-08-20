@@ -50,7 +50,7 @@ export class TimeManager {
     );
     
     this.emitEvent('cycle_start', {
-      type: 'cycle_complete',
+      type: 'cycle_start',
       cycle: this.currentCycle,
       progress: 0
     });

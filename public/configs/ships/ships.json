@@ -21,14 +21,14 @@
       },
       "sensors": { "radar_range": 3500 },
       "movement": {
-        "MAX_SPEED": 2,
-        "ACCELERATION": 0.015,
-        "DECELERATION": 0.015,
-        "TURN_SPEED": 0.03,
-        "SLOWING_RADIUS": 300,
-        "TURN_PENALTY_MULTIPLIER": 1.8,
-        "TURN_DECELERATION_FACTOR": 0.05,
-        "ACCELERATION_PENALTY_AT_MAX": 0.999
+        "MAX_SPEED": 300,
+        "ACCELERATION": 50,
+        "DECELERATION": 100,
+        "TURN_SPEED": 2.8,
+        "SLOWING_RADIUS": 500,
+        "TURN_PENALTY_MULTIPLIER": 2.2,
+        "TURN_DECELERATION_FACTOR": 0.07,
+        "ACCELERATION_PENALTY_AT_MAX": 0.99
       }
     },
     "ordo_patrol_gunship": {
@@ -51,14 +51,14 @@
       },
       "sensors": { "radar_range": 1250 },
       "movement": {
-        "MAX_SPEED": 1.5,
-        "ACCELERATION": 0.025,
-        "DECELERATION": 0.075,
-        "TURN_SPEED": 0.03,
-        "SLOWING_RADIUS": 300,
-        "TURN_PENALTY_MULTIPLIER": 1.8,
-        "TURN_DECELERATION_FACTOR": 0.05,
-        "ACCELERATION_PENALTY_AT_MAX": 0.999
+        "MAX_SPEED": 180,
+        "ACCELERATION": 60,
+        "DECELERATION": 120,
+        "TURN_SPEED": 2.2,
+        "SLOWING_RADIUS": 250,
+        "TURN_PENALTY_MULTIPLIER": 2.2,
+        "TURN_DECELERATION_FACTOR": 0.07,
+        "ACCELERATION_PENALTY_AT_MAX": 0.99
       }
     },
     "trader": {
@@ -81,14 +81,14 @@
       },
       "sensors": { "radar_range": 1000 },
       "movement": {
-        "MAX_SPEED": 1.5,
-        "ACCELERATION": 0.075,
-        "DECELERATION": 0.085,
-        "TURN_SPEED": 0.02,
-        "SLOWING_RADIUS": 300,
-        "TURN_PENALTY_MULTIPLIER": 1.8,
-        "TURN_DECELERATION_FACTOR": 0.05,
-        "ACCELERATION_PENALTY_AT_MAX": 0.995
+        "MAX_SPEED": 150,
+        "ACCELERATION": 50,
+        "DECELERATION": 100,
+        "TURN_SPEED": 2,
+        "SLOWING_RADIUS": 200,
+        "TURN_PENALTY_MULTIPLIER": 2.8,
+        "TURN_DECELERATION_FACTOR": 0.09,
+        "ACCELERATION_PENALTY_AT_MAX": 0.99
       }
     },
     "fighter": {
@@ -111,14 +111,14 @@
       },
       "sensors": { "radar_range": 2200 },
       "movement": {
-        "MAX_SPEED": 1.8,
-        "ACCELERATION": 0.09,
-        "DECELERATION": 0.05,
-        "TURN_SPEED": 0.04,
+        "MAX_SPEED": 200,
+        "ACCELERATION": 75,
+        "DECELERATION": 125,
+        "TURN_SPEED": 2.5,
         "SLOWING_RADIUS": 300,
-        "TURN_PENALTY_MULTIPLIER": 1.8,
-        "TURN_DECELERATION_FACTOR": 0.05,
-        "ACCELERATION_PENALTY_AT_MAX": 0.999
+        "TURN_PENALTY_MULTIPLIER": 1.9,
+        "TURN_DECELERATION_FACTOR": 0.08,
+        "ACCELERATION_PENALTY_AT_MAX": 0.99
       }
     }
   }

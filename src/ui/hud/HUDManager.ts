@@ -217,7 +217,7 @@ export class HUDManager {
       fontFamily: 'Request',
       padding: { top: 8, bottom: 4, left: 2, right: 2 }
     }).setOrigin(0, 0.8).setScrollFactor(0).setDepth(1502);
-    const speedSuffix = this.scene.add.text((pad + 16) + 4, hudY - 52, 'U/S', {
+    const speedSuffix = this.scene.add.text((pad + 16) + 4, hudY - 52, 'px/s', {
       color: '#F5F0E9',
       fontSize: '20px',
       fontFamily: 'Request',
@@ -523,15 +523,26 @@ export class HUDManager {
           displayU = this.pausedSpeedU;
         }
       } else {
-        const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
-        const dx = ship.x - prev.x;
-        const dy = ship.y - prev.y;
-        const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
-        const v = Math.hypot(dx, dy) / dt; // px per second
-        (ship as any).__prevPos = { x: ship.x, y: ship.y };
-        const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
-        this.lastSpeedU = u;
-        displayU = u;
+        // Берём «истинную» скорость из MovementManager, а не из разницы позиций кадр-в-кадр
+        try {
+          const stars = this.scene.scene.get('StarSystemScene') as any;
+          const mvMgr: any = stars?.movement;
+          const v = mvMgr?.getCurrentSpeedUnitsPerSec?.() ?? 0;
+          const u = Math.round(v);
+          this.lastSpeedU = u;
+          displayU = u;
+        } catch {
+          // Фолбэк на позиционную оценку
+          const prev = (ship as any).__prevPos || { x: ship.x, y: ship.y };
+          const dx = ship.x - prev.x;
+          const dy = ship.y - prev.y;
+          const dt = Math.max(1 / 60, this.scene.game.loop.delta / 1000);
+          const v = Math.hypot(dx, dy) / dt;
+          (ship as any).__prevPos = { x: ship.x, y: ship.y };
+          const u = Math.round(((max > 0 ? (v / max) : 0) * max) * 10);
+          this.lastSpeedU = u;
+          displayU = u;
+        }
       }
       const txt = (this.scene as any).__hudSpeedValue as Phaser.GameObjects.Text | undefined;
       if (txt) txt.setText(`${displayU}`);

@@ -42,7 +42,7 @@
     },
     "cannon": {
       "type": "burst",
-      "accuracy": 0.75,
+      "accuracy": 0.55,
       "icon": "weapon_cannon",
       "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 5, "color": "#fde047" },
@@ -55,7 +55,7 @@
     },
     "missile": {
       "type": "homing",
-      "accuracy": 0.75,
+      "accuracy": 0.55,
       "icon": "weapon_missile",
       "rarity": "epic",
       "projectile": { "shape": "circle", "radius": 7, "color": "#f87171" },
@@ -70,7 +70,7 @@
     ,
     "railgun": {
       "type": "single",
-      "accuracy": 0.9,
+      "accuracy": 0.7,
       "icon": "weapon_railgun",
       "rarity": "legendary",
       "projectile": { "shape": "rect", "width": 10, "height": 2, "color": "#a3e635" },
@@ -82,7 +82,7 @@
     },
     "plasma": {
       "type": "single",
-      "accuracy": 0.6,
+      "accuracy": 0.4,
       "icon": "weapon_plasma",
       "rarity": "rare",
       "projectile": { "shape": "circle", "radius": 3, "color": "#22d3ee" },
@@ -94,7 +94,7 @@
     },
     "flak": {
       "type": "burst",
-      "accuracy": 0.75,
+      "accuracy": 0.55,
       "icon": "weapon_flak",
       "rarity": "common",
       "projectile": { "shape": "circle", "radius": 4, "color": "#94a3b8" },

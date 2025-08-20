@@ -27,12 +27,28 @@ export class SystemLoaderService {
     const currentId = stored || (systemsIndex as any).current;
     const sysDef = (systemsIndex as any).defs[currentId];
 
-    if (sysDef?.type === 'procedural') {
-      const { generateSystem } = await import('@/sys/SystemGenerator');
-      const profile = (systemProfiles as any).profiles[sysDef.profile ?? 'default'];
-      this.config.system = generateSystem(profile);
-    } else if (sysDef?.type === 'static' && sysDef.configPath) {
-      this.config.system = await fetch(sysDef.configPath).then(r => r.json());
+    try {
+      if (sysDef?.type === 'procedural') {
+        const { generateSystem } = await import('@/sys/SystemGenerator');
+        const profile = (systemProfiles as any).profiles[sysDef.profile ?? 'default'];
+        this.config.system = generateSystem(profile);
+      } else if (sysDef?.type === 'static' && sysDef.configPath) {
+        const resp = await fetch(sysDef.configPath);
+        if (!resp.ok) throw new Error(`Failed to load system: ${sysDef.configPath}`);
+        this.config.system = await resp.json();
+      }
+    } catch (e) {
+      // Fallback: минимальная валидная система, чтобы не упасть
+      const w = 20000, h = 20000;
+      this.config.system = {
+        name: 'fallback',
+        size: { width: w, height: h },
+        star: { x: Math.floor(w/2), y: Math.floor(h/2) },
+        planets: [],
+        poi: [],
+        dynamicObjects: []
+      } as any;
+      console.error('[SystemLoaderService] Using fallback system due to error:', e);
     }
   }
 }

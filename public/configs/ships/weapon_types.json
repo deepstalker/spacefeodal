@@ -1,16 +1,22 @@
 {
+  "single": {
+    "maxAngleErrorDeg": 6
+  },
+  "burst": {
+    "maxAngleErrorDeg": 10
+  },
   "homing": {
     "lifetimeMs": 5000,
-    "turnSpeedDegPerSec": 100,
-    "backfireDeg": 180,
-    "backfireRandomDeg": 60,
-    "jitterDeg": 6,
-    "jitterHz": 1.2,
-    "biasDeg": 20,
-    "accuracyInfluenceMultiplier": 0.99,
+    "turnSpeedDegPerSec": 120,
+    "backfireDeg": 0,
+    "backfireRandomDeg": 0,
+    "jitterDeg": 1,
+    "jitterHz": 1.0,
+    "biasDeg": 0,
+    "accuracyInfluenceMultiplier": 0.5,
     "accuracyExponent": 0.6,
-    "maxAngleErrorDeg": 120,
-    "adjustIntervalMs": 300
+    "maxAngleErrorDeg": 8,
+    "adjustIntervalMs": 150
   }
 }
 

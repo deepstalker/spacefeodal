@@ -38,8 +38,8 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
     // Создаем кольцо радара для визуализации
     this.createRadarRing();
 
-    // Подключаемся к циклу обновления
-    this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
+    // Обновление теперь через централизованный менеджер обновлений сцены
+    // Вызовите update() из GameUpdateManager с ключом 'fogOfWar'
   }
 
   update(deltaTime: number): void {
@@ -258,7 +258,7 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
   }
 
   destroy(): void {
-    this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
+    // Отписка от централизованного обновления выполняется на стороне регистратора
     
     if (this.radarRing) {
       this.radarRing.destroy();

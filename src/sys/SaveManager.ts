@@ -12,7 +12,7 @@ export class SaveManager {
     this.config = config;
   }
 
-  private get key(): string { return this.config.persistence.saveKey; }
+  private get key(): string { return this.config?.persistence?.saveKey || 'sf101_save'; }
 
   getLastPlayerState(): PlayerState | undefined {
     try {

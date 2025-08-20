@@ -1,6 +1,15 @@
 {
   "movement": {
-    "TARGET_UPDATE_INTERVAL_MS": 100
+    "TARGET_UPDATE_INTERVAL_MS": 100,
+    "GLOBAL_SPEED_MULTIPLIER": 1.0,
+    "GLOBAL_ACCEL_MULTIPLIER": 1.0,
+    "GLOBAL_TURN_MULTIPLIER": 1.0,
+    "units": {
+      "distance": "px",
+      "speed": "px_per_sec",
+      "acceleration": "px_per_sec2",
+      "turn": "rad_per_sec"
+    }
   },
   "fogOfWar": {
     "enabled": true,

@@ -99,6 +99,43 @@ export class MovementManager {
     return this.command;
   }
 
+  private normalizeMovement(mv: any) {
+    if (!mv) return mv;
+    const fps = 60;
+    // Эвристика: старые значения заданы «на кадр», если скорости выглядят очень маленькими
+    const looksPerFrame = (typeof mv.MAX_SPEED === 'number' && mv.MAX_SPEED > 0 && mv.MAX_SPEED <= 5)
+      || (typeof mv.ACCELERATION === 'number' && mv.ACCELERATION > 0 && mv.ACCELERATION <= 0.2);
+    if (!looksPerFrame) return mv;
+    return {
+      ...mv,
+      MAX_SPEED: (mv.MAX_SPEED ?? 0) * fps,                 // units/s
+      ACCELERATION: (mv.ACCELERATION ?? 0) * fps * fps,     // units/s^2 (перевод из units/frame^2)
+      DECELERATION: (mv.DECELERATION ?? 0) * fps * fps,     // units/s^2
+      TURN_SPEED: (mv.TURN_SPEED ?? 0) * fps,
+      // Остальные коэффициенты — без изменений (бессРазмерные)
+    };
+  }
+
+  // Текущая скорость объекта в игровых единицах в секунду
+  public getCurrentSpeedUnitsPerSec(): number {
+    return Math.max(0, this.speed);
+  }
+
+  private applyGlobalMultipliers(mv: any) {
+    if (!mv) return mv;
+    const gm = (this.config.gameplay as any)?.movement || {};
+    const speedMul = typeof gm.GLOBAL_SPEED_MULTIPLIER === 'number' ? gm.GLOBAL_SPEED_MULTIPLIER : 1;
+    const accelMul = typeof gm.GLOBAL_ACCEL_MULTIPLIER === 'number' ? gm.GLOBAL_ACCEL_MULTIPLIER : speedMul;
+    const turnMul = typeof gm.GLOBAL_TURN_MULTIPLIER === 'number' ? gm.GLOBAL_TURN_MULTIPLIER : 1;
+    return {
+      ...mv,
+      MAX_SPEED: (mv.MAX_SPEED ?? 0) * speedMul,
+      ACCELERATION: (mv.ACCELERATION ?? 0) * accelMul,
+      DECELERATION: (mv.DECELERATION ?? 0) * accelMul,
+      TURN_SPEED: (mv.TURN_SPEED ?? 0) * turnMul
+    };
+  }
+
   // Установка начальной скорости как доли от MAX_SPEED (для плавного "выплывания")
   public setInitialSpeedFraction(fraction: number) {
     const clamped = Phaser.Math.Clamp(fraction, 0, 1);
@@ -172,14 +209,19 @@ export class MovementManager {
     }
     
     const dt = deltaMs / 1000;
-    // Найдём активный объект (на прототипе — корабль один)
-    const obj = this.scene.children.getAll().find(o => (o as any)['__moveRef'] === this) as any;
-    if (!obj) return;
+    // Используем сохранённую ссылку на управляемый объект; фолбэк — поиск один раз
+    let obj = this.controlledObject as any;
+    if (!obj || !obj.active) {
+      obj = this.scene.children.getAll().find(o => (o as any)['__moveRef'] === this) as any;
+      if (!obj) return;
+      this.controlledObject = obj;
+    }
 
     // Параметры движения и визуальный сдвиг носа берём из выбранного корабля игрока
     const selectedId = this.shipId ?? this.config.player?.shipId ?? this.config.ships?.current;
     const selected = selectedId ? this.config.ships.defs[selectedId] : undefined;
-    const mv = selected?.movement ?? this.config.gameplay.movement;
+    const mvRaw = selected?.movement ?? this.config.gameplay.movement;
+    const mv = this.applyGlobalMultipliers(this.normalizeMovement(mvRaw)); // единые единицы + глобальные множители
     
     // ОТЛАДКА: проверяем откуда берутся характеристики движения
     if (process.env.NODE_ENV === 'development' && Math.random() < 0.001) { // 0.1% логов
@@ -196,14 +238,14 @@ export class MovementManager {
     if (this.headingRad == null) this.headingRad = obj.rotation - noseOffsetRad;
     
     if (!this.command || !this.target) {
-      // Плавная остановка по текущему вектору: замедляемся и продолжаем двигаться до полной остановки
-      this.speed = Math.max(0, this.speed - mv.DECELERATION);
+      // Плавная остановка по текущему вектору: замедляемся и продолжаем двигаться до полной остановки (dt-нормализация)
+      this.speed = Math.max(0, this.speed - mv.DECELERATION * dt);
       // Применяем текущий курс и позицию даже без активной команды
       this.headingRad = ((this.headingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
       obj.rotation = this.headingRad + noseOffsetRad;
       if (this.speed > 0) {
-        obj.x += Math.cos(this.headingRad) * this.speed;
-        obj.y += Math.sin(this.headingRad) * this.speed;
+        obj.x += Math.cos(this.headingRad) * this.speed * dt;
+        obj.y += Math.sin(this.headingRad) * this.speed * dt;
       }
       return;
     }
@@ -220,12 +262,12 @@ export class MovementManager {
 
     // Если updateDynamicTarget обнулил команду (цель умерла) — начинаем плавное торможение по вектору
     if (!this.command) {
-      this.speed = Math.max(0, this.speed - mv.DECELERATION);
+      this.speed = Math.max(0, this.speed - mv.DECELERATION * dt);
       this.headingRad = ((this.headingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
       obj.rotation = this.headingRad + noseOffsetRad;
       if (this.speed > 0) {
-        obj.x += Math.cos(this.headingRad) * this.speed;
-        obj.y += Math.sin(this.headingRad) * this.speed;
+        obj.x += Math.cos(this.headingRad) * this.speed * dt;
+        obj.y += Math.sin(this.headingRad) * this.speed * dt;
       }
       return;
     }
@@ -237,8 +279,8 @@ export class MovementManager {
     this.headingRad = ((this.headingRad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     obj.rotation = this.headingRad + noseOffsetRad;
     if (this.speed > 0) {
-      obj.x += Math.cos(this.headingRad) * this.speed;
-      obj.y += Math.sin(this.headingRad) * this.speed;
+      obj.x += Math.cos(this.headingRad) * this.speed * dt;
+      obj.y += Math.sin(this.headingRad) * this.speed * dt;
     }
   }
 
@@ -319,8 +361,9 @@ export class MovementManager {
     const speedRatio = Phaser.Math.Clamp(this.speed / Math.max(1e-6, mv.MAX_SPEED), 0, 1);
     const accelPenalty = accelPenaltyAtMax * speedRatio; // 0..accelPenaltyAtMax
     const effectiveAcceleration = mv.ACCELERATION * (1 - accelPenalty);
-    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + effectiveAcceleration, desiredSpeed);
-    else this.speed = Math.max(this.speed - mv.DECELERATION, desiredSpeed);
+    const dt = deltaMs / 1000;
+    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + effectiveAcceleration * dt, desiredSpeed);
+    else this.speed = Math.max(this.speed - mv.DECELERATION * dt, desiredSpeed);
 
     // Поворот к цели (возвращаем к исходной логике)
     const targetAngle = Math.atan2(dy, dx);
@@ -337,9 +380,10 @@ export class MovementManager {
 
     const isAligned = Math.abs(angleDiff) < 0.02;
     if (!isAligned && effectiveTurnSpeed > 0) {
-      const turnAmount = Math.min(Math.abs(angleDiff), effectiveTurnSpeed);
+      const dt = deltaMs / 1000;
+      const turnAmount = Math.min(Math.abs(angleDiff), effectiveTurnSpeed * dt);
       this.headingRad! += Math.sign(angleDiff) * turnAmount;
-      this.speed = Math.max(this.speed - (mv.DECELERATION * mv.TURN_DECELERATION_FACTOR), 0);
+      this.speed = Math.max(this.speed - (mv.DECELERATION * mv.TURN_DECELERATION_FACTOR) * dt, 0);
     }
   }
 
@@ -356,16 +400,17 @@ export class MovementManager {
       const targetSpeed = this.targetVelocity.length();
       
       // Плавно меняем скорость до скорости цели
+      const dt = deltaMs / 1000;
       if (this.speed < targetSpeed) {
-        this.speed = Math.min(this.speed + mv.ACCELERATION, targetSpeed);
+        this.speed = Math.min(this.speed + mv.ACCELERATION * dt, targetSpeed);
       } else {
-        this.speed = Math.max(this.speed - mv.DECELERATION, targetSpeed);
+        this.speed = Math.max(this.speed - mv.DECELERATION * dt, targetSpeed);
       }
       
       // Если цель движется, поворачиваем в ее направлении.
       if (targetSpeed > 1) {
         const targetAngle = this.targetVelocity.angle();
-        this.turnTowardsOriginal(targetAngle, mv);
+        this.turnTowardsOriginal(targetAngle, mv, deltaMs);
       }
       return;
     }
@@ -373,10 +418,11 @@ export class MovementManager {
     // Желаемая скорость зависит от величины ошибки (как далеко мы от нужной дистанции).
     const desiredSpeed = mv.MAX_SPEED * Phaser.Math.Clamp(Math.abs(distanceError) / (mv.SLOWING_RADIUS || 200), 0, 1);
 
+    const dt2 = deltaMs / 1000;
     if (this.speed < desiredSpeed) {
-        this.speed = Math.min(this.speed + mv.ACCELERATION, desiredSpeed);
+        this.speed = Math.min(this.speed + mv.ACCELERATION * dt2, desiredSpeed);
     } else {
-        this.speed = Math.max(this.speed - mv.DECELERATION, desiredSpeed);
+        this.speed = Math.max(this.speed - mv.DECELERATION * dt2, desiredSpeed);
     }
     
     let targetAngle = Math.atan2(dy, dx);
@@ -386,7 +432,7 @@ export class MovementManager {
       targetAngle += Math.PI; // Разворот на 180 градусов.
     }
     
-    this.turnTowardsOriginal(targetAngle, mv);
+    this.turnTowardsOriginal(targetAngle, mv, deltaMs);
   }
 
   private executeOrbitMode(obj: any, deltaMs: number, mv: any, orbitDistance: number) {
@@ -395,7 +441,7 @@ export class MovementManager {
     const vectorFromCenter = new Phaser.Math.Vector2(obj.x - center.x, obj.y - center.y);
     if (vectorFromCenter.lengthSq() < 1) {
         // Находимся в центре, не можем определить направление. Просто ждем.
-        this.speed = Math.max(0, this.speed - mv.DECELERATION);
+        this.speed = Math.max(0, this.speed - mv.DECELERATION * (deltaMs/1000));
         return;
     }
     const currentDistance = vectorFromCenter.length();
@@ -417,13 +463,14 @@ export class MovementManager {
     const targetAngle = desiredVelocity.angle();
     const desiredSpeed = Phaser.Math.Clamp(desiredVelocity.length(), 0, mv.MAX_SPEED);
 
+    const dt = deltaMs / 1000;
     if (this.speed < desiredSpeed) {
-        this.speed = Math.min(this.speed + mv.ACCELERATION, desiredSpeed);
+        this.speed = Math.min(this.speed + mv.ACCELERATION * dt, desiredSpeed);
     } else {
-        this.speed = Math.max(this.speed - mv.DECELERATION, desiredSpeed);
+        this.speed = Math.max(this.speed - mv.DECELERATION * dt, desiredSpeed);
     }
 
-    this.turnTowardsOriginal(targetAngle, mv);
+    this.turnTowardsOriginal(targetAngle, mv, deltaMs);
   }
 
   private executePursueMode(obj: any, deltaMs: number, mv: any, stopDistance: number) {
@@ -433,7 +480,7 @@ export class MovementManager {
     
     // Остановиться при достижении нужной дистанции
     if (distance <= stopDistance) {
-      this.speed = Math.max(0, this.speed - mv.DECELERATION * 2);
+      this.speed = Math.max(0, this.speed - mv.DECELERATION * 2 * (deltaMs/1000));
       return;
     }
 
@@ -441,20 +488,21 @@ export class MovementManager {
     const slowingRadius = Math.max(stopDistance + 50, mv.SLOWING_RADIUS);
     const desiredSpeed = distance < slowingRadius ? mv.MAX_SPEED * ((distance - stopDistance) / (slowingRadius - stopDistance)) : mv.MAX_SPEED;
     
-    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + mv.ACCELERATION, desiredSpeed);
-    else this.speed = Math.max(this.speed - mv.DECELERATION, Math.max(0, desiredSpeed));
+    const dt = deltaMs / 1000;
+    if (this.speed < desiredSpeed) this.speed = Math.min(this.speed + mv.ACCELERATION * dt, desiredSpeed);
+    else this.speed = Math.max(this.speed - mv.DECELERATION * dt, Math.max(0, desiredSpeed));
 
     // Поворот к цели
     const targetAngle = Math.atan2(dy, dx);
-    this.turnTowardsOriginal(targetAngle, mv);
+    this.turnTowardsOriginal(targetAngle, mv, deltaMs);
   }
 
-  private turnTowardsOriginal(targetAngle: number, mv: any) {
+  private turnTowardsOriginal(targetAngle: number, mv: any, deltaMs: number) {
     let angleDiff = targetAngle - this.headingRad!;
     while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
     while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
 
-    let effectiveTurnSpeed = mv.TURN_SPEED;
+    let effectiveTurnSpeed = mv.TURN_SPEED; // рад/сек
     if (this.speed > 0.1) {
       const speedRatio = this.speed / mv.MAX_SPEED;
       const turnPenaltyFactor = 1 / (1 + speedRatio * mv.TURN_PENALTY_MULTIPLIER);
@@ -463,9 +511,10 @@ export class MovementManager {
 
     const isAligned = Math.abs(angleDiff) < 0.02;
     if (!isAligned && effectiveTurnSpeed > 0) {
-      const turnAmount = Math.min(Math.abs(angleDiff), effectiveTurnSpeed);
+      const dt = deltaMs / 1000;
+      const turnAmount = Math.min(Math.abs(angleDiff), effectiveTurnSpeed * dt);
       this.headingRad! += Math.sign(angleDiff) * turnAmount;
-      this.speed = Math.max(this.speed - (mv.DECELERATION * mv.TURN_DECELERATION_FACTOR), 0);
+      this.speed = Math.max(this.speed - (mv.DECELERATION * mv.TURN_DECELERATION_FACTOR) * dt, 0);
     }
   }
 }

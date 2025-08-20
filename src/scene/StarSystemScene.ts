@@ -166,6 +166,8 @@ export default class StarSystemScene extends Phaser.Scene {
     this.combat.attachShip(this.ship);
     this.combat.setFogOfWar(this.fogOfWar);
     this.cameraMgr.setZoom((this.config.player?.start?.zoom ?? start.zoom) ?? 1);
+    // Сделаем стартовое «выплывание» побыстрее для игрока
+    try { this.movement.setInitialSpeedFraction(0.35); } catch {}
     
     // Set initial player position for fog of war
     this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
@@ -265,8 +267,11 @@ export default class StarSystemScene extends Phaser.Scene {
     this.updateMgr.registerPausedAware('encounters', () => this.encounterManager.update());
     this.updateMgr.registerPausedAware('npcStateManager', (dt) => this.npcBehaviorMgr.updateTraders(dt));
     this.updateMgr.registerPausedAware('npcMovementManager', (dt) => this.npcBehaviorMgr.updatePatrol(dt));
-    this.updateMgr.registerPausedAware('fogOfWar', () => {
-      if (this.ship && this.fogOfWar) this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+    this.updateMgr.registerPausedAware('fogOfWar', (dt) => {
+      if (this.ship && this.fogOfWar) {
+        this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+        try { this.fogOfWar.update(dt); } catch {}
+      }
     });
     this.updateMgr.init();
 
