@@ -10,6 +10,7 @@ export class HUDManager {
   private pauseManager?: PauseManager;
   private timeManager?: TimeManager;
   private combatManager?: any; // Ссылка на CombatManager
+  private weaponManager?: any; // Ссылка на WeaponManager
   
   // HUD elements
   private speedText?: Phaser.GameObjects.Text;
@@ -90,6 +91,7 @@ export class HUDManager {
 
     const starScene = this.scene.scene.get('StarSystemScene') as any;
     this.combatManager = starScene.combat; // Сохраняем ссылку на CombatManager
+    this.weaponManager = starScene.combat.getWeaponManager(); // Сохраняем ссылку на WeaponManager
     
     starScene.events.on('player-damaged', (hp: number) => this.onPlayerDamaged(hp));
     starScene.events.on('player-weapon-fired', (slotKey: string) => this.flashAssignedIcon(slotKey));
@@ -990,7 +992,7 @@ export class HUDManager {
         continue;
       }
       
-      const isCharging = this.combatManager.isWeaponCharging(slotKey);
+      const isCharging = this.weaponManager.isWeaponCharging(slotKey);
       
       if (isCharging) {
         // Определяем тип оружия для правильного прогресса
@@ -998,8 +1000,8 @@ export class HUDManager {
         const isBeam = (w?.type ?? 'single') === 'beam';
         
         const progress = isBeam 
-          ? this.combatManager.getBeamRefreshProgress(slotKey)
-          : this.combatManager.getWeaponChargeProgress(slotKey);
+          ? this.weaponManager.getBeamRefreshProgress(slotKey)
+          : this.weaponManager.getWeaponChargeProgress(slotKey);
         
         // Показываем прогресс-бар
         const bar = this.ensureHudBar(slotKey, recSlot);

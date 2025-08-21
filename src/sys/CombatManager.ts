@@ -5,6 +5,7 @@ import { DynamicObjectType } from './fog-of-war/types';
 import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
 import { RelationOverrideManager } from './RelationOverrideManager';
 import { IndicatorManager } from './IndicatorManager';
+import { WeaponManager } from './combat/WeaponManager';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -16,25 +17,14 @@ export class CombatManager {
   private npcMovement: NPCMovementManager;
   private fogOfWar?: EnhancedFogOfWar;
   private npcStateManager: NPCStateManager;
+  private weaponManager: WeaponManager;
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
   private radarCircle?: Phaser.GameObjects.Arc; // Кольцо радиуса радара NPC
   private selectionBaseRadius = 70;
   private selectionPulsePhase = 0;
-  private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
-  private lastPirateLogMs: WeakMap<any, number> = new WeakMap();
-  private weaponSlots: string[] = ['laser', 'cannon', 'missile'];
-  // Назначения целей для оружия игрока: slotKey -> target
-  private playerWeaponTargets: Map<string, Target> = new Map();
-  // Активные лучи для beam-оружий: shooter -> (slotKey -> beamState)
-  private activeBeams: WeakMap<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new WeakMap();
-  // Beam refresh-тайминги (готовность к следующей активации)
-  private beamCooldowns: WeakMap<any, Record<string, number>> = new WeakMap();
-  // Подготовка к выстрелу (player): когда закончится зарядка до выстрела
-  private playerChargeUntil: Record<string, number> = {};
-  // Подготовка к лучу (beam) до активации
-  private beamPrepUntil: WeakMap<any, Record<string, number>> = new WeakMap();
+  
   private targets: Array<{
     obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
     hp: number; hpMax: number;
@@ -55,8 +45,24 @@ export class CombatManager {
     };
   }>=[];
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
-  // Кольца радиусов оружия игрока: slotKey -> graphics circle
+  private playerWeaponTargets: Map<string, Target> = new Map();
   private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
+  // ВАЖНО: тайминги и состояния перезарядки/подготовки оружия
+  // Хранит время последнего выстрела по слотам для каждого стрелка (NPC/игрок)
+  private lastFireTimesByShooter: Map<any, Record<string, number>> = new Map();
+  // Кулдауны лучевого оружия по стрелкам и слотам
+  private beamCooldowns: Map<any, Record<string, number>> = new Map();
+  // Время окончания подготовки лучевого оружия по стрелкам и слотам
+  private beamPrepUntil: Map<any, Record<string, number>> = new Map();
+  // Зарядка (не-лучевое) для игрока по слотам
+  private playerChargeUntil: Record<string, number> = {};
+  // Активные слоты оружия текущего стрелка (для NPC autoFire)
+  private weaponSlots: string[] = [];
+  // Троттлинг логов для смены целей (dev)
+  private lastPirateLogMs: Map<any, number> = new Map();
+  // Активные лучи по стрелку и слоту
+  private activeBeams: Map<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new Map();
+  
   private relationOverrides!: RelationOverrideManager;
   private indicatorMgr?: IndicatorManager;
 
@@ -65,6 +71,7 @@ export class CombatManager {
     this.config = config;
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
+    this.weaponManager = new WeaponManager(scene, config, this);
     // Менеджер индикаторов может быть установлен позже из StarSystemScene
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
     // Централизованный менеджер временных переопределений отношений
@@ -89,6 +96,24 @@ export class CombatManager {
   public setIndicatorManager(indicators: IndicatorManager) {
     this.indicatorMgr = indicators;
   }
+
+  public getWeaponManager(): WeaponManager {
+    return this.weaponManager;
+  }
+
+  // ПУБЛИЧНЫЕ ОБЁРТКИ ДЛЯ ДРУГИХ СИСТЕМ
+  public getTargetEntries(): ReadonlyArray<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }; intent?: any; combatAI?: string; weaponSlots?: string[]; shipId?: string }>{
+    return this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides, intent: (t as any).intent, combatAI: (t as any).combatAI, weaponSlots: (t as any).weaponSlots, shipId: (t as any).shipId }));
+  }
+  public findTargetEntry(obj: any): { obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }; intent?: any; combatAI?: string; weaponSlots?: string[]; shipId?: string } | undefined {
+    const t = this.targets.find(tt => tt.obj === obj);
+    return t ? { obj: t.obj, faction: t.faction, overrides: t.overrides, intent: (t as any).intent, combatAI: (t as any).combatAI, weaponSlots: (t as any).weaponSlots, shipId: (t as any).shipId } : undefined;
+  }
+  public getNpcStateManager(): NPCStateManager { return this.npcStateManager; }
+  public getEffectiveRadiusPublic(obj: any): number { return this.getEffectiveRadius(obj); }
+  public applyDamagePublic(target: any, damage: number, attacker?: any) { this.applyDamage(target, damage, attacker); }
+  public isTargetCombatAssignedPublic(target: any): boolean { return this.isTargetCombatAssigned(target); }
+  public isTargetCombatSelectedPublic(target: any): boolean { return this.isTargetCombatSelected(target); }
 
   public clearIntentFor(obj: any) {
     const entry = this.targets.find(t => t.obj === obj);
@@ -128,72 +153,9 @@ export class CombatManager {
     }
   }
   
-  private onWeaponChargeCompletedDuringPause(slotKey: string) {
-    // Не нужно - HUD теперь только отображает состояние, не управляет им
-  }
-
-  /**
-   * Получить текущий прогресс зарядки оружия (0-1)
-   */
-  public getWeaponChargeProgress(slotKey: string): number {
-    const chargeUntil = this.playerChargeUntil[slotKey];
-    if (!chargeUntil) return 1; // Не заряжается = готово
-    
-    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-    if (now >= chargeUntil) return 1; // Зарядка завершена
-    
-    // Находим когда началась зарядка
-    const w = this.config.weapons.defs[slotKey];
-    if (!w) return 1;
-    
-    const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-    const chargeStartTime = chargeUntil - cooldownMs;
-    const elapsed = now - chargeStartTime;
-    
-    return Math.max(0, Math.min(1, elapsed / cooldownMs));
-  }
-
-  /**
-   * Проверить, заряжается ли оружие
-   */
-  public isWeaponCharging(slotKey: string): boolean {
-    const chargeUntil = this.playerChargeUntil[slotKey];
-    if (chargeUntil) {
-      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      if (now < chargeUntil) return true;
-    }
-    
-    // Проверяем beam refresh
-    const beamCooldowns = this.beamCooldowns.get(this.ship);
-    if (beamCooldowns && beamCooldowns[slotKey]) {
-      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      return now < beamCooldowns[slotKey];
-    }
-    
-    return false;
-  }
   
-  /**
-   * Получить прогресс beam refresh (0-1)
-   */
-  public getBeamRefreshProgress(slotKey: string): number {
-    const beamCooldowns = this.beamCooldowns.get(this.ship);
-    if (!beamCooldowns || !beamCooldowns[slotKey]) return 1;
-    
-    const refreshUntil = beamCooldowns[slotKey];
-    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-    if (now >= refreshUntil) return 1;
-    
-    // Находим длительность refresh
-    const w = this.config.weapons.defs[slotKey];
-    if (!w) return 1;
-    
-    const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-    const refreshStartTime = refreshUntil - refreshMs;
-    const elapsed = now - refreshStartTime;
-    
-    return Math.max(0, Math.min(1, elapsed / refreshMs));
-  }
+
+  
 
   getTargetObjects(): Phaser.GameObjects.GameObject[] {
     return this.targets.map(t => t.obj as Phaser.GameObjects.GameObject);
@@ -326,40 +288,7 @@ export class CombatManager {
     this.selectTarget(target);
   }
 
-  public setPlayerWeaponTarget(slotKey: string, target: Target | null) {
-    const oldTarget = this.playerWeaponTargets.get(slotKey);
-    
-    if (target) {
-      // Если цель не враждебна — делаем временно враждебной к игроку через RelationOverrideManager
-      try { this.relationOverrides?.markObjectHostileToPlayer(target as any, { reason: 'aim', expireOnOutOfRadar: true }); } catch {}
-      this.playerWeaponTargets.set(slotKey, target);
-      // Новое назначение цели: начинаем с перезарядки
-      const w = this.config.weapons.defs[slotKey];
-      if (w) {
-        if ((w.type ?? 'single') === 'beam') {
-          const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-          const shooterTimes = this.beamCooldowns.get(this.ship) ?? {}; this.beamCooldowns.set(this.ship, shooterTimes);
-          const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-          shooterTimes[slotKey] = now + refreshMs;
-          this.stopBeamIfAny(this.ship, slotKey);
-        } else {
-          const times = this.getShooterTimes(this.ship);
-          const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-          const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-          times[slotKey] = now + cooldownMs;
-        }
-      }
-
-    } else {
-      this.playerWeaponTargets.delete(slotKey);
-      // Скрываем out-of-range текст при снятии цели
-      try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-    }
-    
-    this.refreshSelectionCircleColor();
-    this.refreshCombatRings();
-    this.refreshCombatUIAssigned();
-  }
+  
 
   /**
    * Сделать цель временно враждебной к игроку через overrides
@@ -393,6 +322,34 @@ export class CombatManager {
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
+  }
+
+  /**
+   * Назначить цель для конкретного слота оружия игрока (совместимость с HUD).
+   */
+  public setPlayerWeaponTarget(slotKey: string, target: any) {
+    if (!slotKey) return;
+    try {
+      if (!target) {
+        // Снятие цели
+        const had = this.playerWeaponTargets.delete(slotKey);
+        // Остановить beam (если был) и сбросить подсказки
+        this.stopBeamIfAny(this.ship, slotKey);
+        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+        if (had) {
+          try { this.scene.events.emit('player-weapon-target-cleared', null, [slotKey]); } catch {}
+        }
+      } else {
+        this.playerWeaponTargets.set(slotKey, target);
+        // ВАЖНО: немедленно перевести цель в состояние конфронтации к игроку через overrides,
+        // чтобы снаряды не проходили сквозь и AI начал реагировать
+        this.markTargetHostileToPlayer(target);
+      }
+      // Обновляем визуальные элементы
+      this.refreshCombatRings();
+      this.refreshCombatUIAssigned();
+      this.refreshSelectionCircleColor();
+    } catch {}
   }
 
   // === Relation Override API (для использования сценариями/системами) ===
@@ -474,15 +431,15 @@ export class CombatManager {
     const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
     
     // pulse selection
-    if (this.selectedTarget && this.selectionCircle) {
+    if (this.selectedTarget && this.selectedTarget.active && this.selectionCircle) {
       this.selectionPulsePhase += deltaMs * 0.01;
       const r = this.selectionBaseRadius + Math.sin(this.selectionPulsePhase) * 3;
       this.selectionCircle.setRadius(r);
-      this.selectionCircle.setPosition((this.selectedTarget as any).x, (this.selectedTarget as any).y);
+      this.selectionCircle.setPosition(this.selectedTarget.x, this.selectedTarget.y);
       
       // Обновляем позицию радара NPC
       if (this.radarCircle && this.radarCircle.visible) {
-        this.radarCircle.setPosition((this.selectedTarget as any).x, (this.selectedTarget as any).y);
+        this.radarCircle.setPosition(this.selectedTarget.x, this.selectedTarget.y);
       }
     }
 
@@ -524,21 +481,30 @@ export class CombatManager {
       this.refreshCombatUIAssigned();
       this.refreshSelectionCircleColor();
     }
-    if (this.selectedTarget) {
-      const distToSelected = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, this.selectedTarget.x, this.selectedTarget.y);
-      if (distToSelected > playerRadarRange) {
-        // Если за пределами радара и нет наведённых слотов на цель — снимаем временную конфронтацию и сбрасываем выбор
-        const t = this.targets.find(tt => tt.obj === this.selectedTarget);
-        const anyOnThis = this.isTargetCombatSelected(this.selectedTarget);
-        if (t && !anyOnThis) {
-          (t as any).overrides = (t as any).overrides ?? {};
-          (t as any).overrides.factions = (t as any).overrides.factions ?? {};
-          if ((t as any).overrides.factions['player'] === 'confrontation') {
-            delete (t as any).overrides.factions['player'];
+    let anyOverrideCleared = false;
+    for (const t of this.targets) {
+      const ov = (t as any).overrides?.factions;
+      if (ov && ov['player'] === 'confrontation') {
+        const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
+        const npcRadar = this.getRadarRangeFor(t.obj);
+        if (d > npcRadar) {
+          delete ov['player'];
+          anyOverrideCleared = true;
+          // Если цель перестала быть враждебной и больше не является боевой (не назначена и не атакует игрока) — снимаем выбранную цель и индикаторы
+          const stillCombat = this.isTargetCombatAssigned(t.obj);
+          if (!stillCombat) {
+            if (this.selectedTarget === t.obj) {
+              this.clearSelection();
+            }
+            try { this.indicatorMgr?.hideNPCBadge(t.obj); } catch {}
           }
         }
-        this.clearSelection();
       }
+    }
+    if (anyOverrideCleared) {
+      this.refreshCombatRings();
+      this.refreshCombatUIAssigned();
+      this.refreshSelectionCircleColor();
     }
 
     // Проверка действительности назначенных целей и сброс недействительных
