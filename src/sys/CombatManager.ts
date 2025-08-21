@@ -72,6 +72,11 @@ export class CombatManager {
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
     this.weaponManager = new WeaponManager(scene, config, this);
+    // Страховка от потери полей при ре-инициализациях/горячей перезагрузке
+    this.lastFireTimesByShooter = this.lastFireTimesByShooter ?? new Map();
+    this.beamCooldowns = this.beamCooldowns ?? new Map();
+    this.beamPrepUntil = this.beamPrepUntil ?? new Map();
+    this.activeBeams = this.activeBeams ?? new Map();
     // Менеджер индикаторов может быть установлен позже из StarSystemScene
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
     // Централизованный менеджер временных переопределений отношений
@@ -1457,6 +1462,10 @@ export class CombatManager {
   }
 
   private getShooterTimes(shooter: any): Record<string, number> {
+    // Страховка: карта может быть сброшена окружением/горячей перезагрузкой
+    if (!this.lastFireTimesByShooter) {
+      (this as any).lastFireTimesByShooter = new Map();
+    }
     let times = this.lastFireTimesByShooter.get(shooter);
     if (!times) { times = {}; this.lastFireTimesByShooter.set(shooter, times); }
     return times;
