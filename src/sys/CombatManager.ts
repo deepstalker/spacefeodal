@@ -4,6 +4,7 @@ import type { EnhancedFogOfWar } from './fog-of-war/EnhancedFogOfWar';
 import { DynamicObjectType } from './fog-of-war/types';
 import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
 import { RelationOverrideManager } from './RelationOverrideManager';
+import { IndicatorManager } from './IndicatorManager';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -57,12 +58,14 @@ export class CombatManager {
   // Кольца радиусов оружия игрока: slotKey -> graphics circle
   private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
   private relationOverrides!: RelationOverrideManager;
+  private indicatorMgr?: IndicatorManager;
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
     this.config = config;
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
+    // Менеджер индикаторов может быть установлен позже из StarSystemScene
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
     // Централизованный менеджер временных переопределений отношений
     this.relationOverrides = new RelationOverrideManager(scene, {
@@ -81,6 +84,10 @@ export class CombatManager {
     });
     
 
+  }
+
+  public setIndicatorManager(indicators: IndicatorManager) {
+    this.indicatorMgr = indicators;
   }
 
   public clearIntentFor(obj: any) {
@@ -112,7 +119,7 @@ export class CombatManager {
     this.npcMovement.setPauseManager(pauseManager);
   }
 
-  private onGameResumed(data: { pauseDuration: number; totalPausedTime: number }) {
+  private onGameResumed(data: { pausedTimeMs: number }) {
     // Не нужно корректировать таймеры вручную, так как PauseManager.getAdjustedTime() уже делает это
     // Пауза и снятие паузы корректно обрабатываются через getAdjustedTime()
     
@@ -216,9 +223,10 @@ export class CombatManager {
     obj.setAlpha(1);
     obj.setVisible(true);
     (obj as any).__noseOffsetRad = Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0);
-    const barW = 128;
+    const barW = 192;
     const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
     const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
+    (bg as any).__baseWidth = barW;
     const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
     bg.setVisible(false); fill.setVisible(false);
     const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
@@ -412,11 +420,11 @@ export class CombatManager {
   }
 
   private selectTarget(target: Target) {
+    if (this.selectedTarget === target) return;
     this.selectedTarget = target;
     const base = this.getEffectiveRadius(target as any) + 5;
     this.selectionBaseRadius = base;
     if (!this.selectionCircle) {
-      // начально — нейтральный цвет; позже может смениться на красный, если есть цель для оружия
       this.selectionCircle = this.scene.add.circle(target.x, target.y, base, 0x9e9382, 0.15).setDepth(0.45);
       this.selectionCircle.setStrokeStyle(2, 0x9e9382, 1);
     } else {
@@ -427,7 +435,7 @@ export class CombatManager {
     }
     
     // Отображаем радиус радара для NPC (не для игрока)
-    if (target !== this.ship) {
+    if (target !== this.ship as any) {
       const radarRange = this.getRadarRangeFor(target);
       if (radarRange > 0) {
         if (!this.radarCircle) {
@@ -443,71 +451,22 @@ export class CombatManager {
         this.radarCircle?.setVisible(false);
       }
     } else {
-      // Скрываем радар для игрока
       this.radarCircle?.setVisible(false);
     }
-    // toggle HP bars visibility
-    for (const t of this.targets) {
-      const vis = t.obj === target;
-      t.hpBarBg.setVisible(vis);
-      t.hpBarFill.setVisible(vis);
-      this.updateHpBar(t);
-      // Имя цели над HP баром
-      if (vis) {
-        if (!t.nameLabel) {
-          const baseName = this.resolveDisplayName(t) || 'Unknown';
-          const uniqueName = `${baseName} #${(t.obj as any).__uniqueId || ''}`;
-          t.nameLabel = this.scene.add.text(0, 0, uniqueName, { color: '#ffffff', fontSize: '20px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
-        }
-        // Цвет имени по отношению к игроку: neutral -> 0x9E9382, enemy -> 0xA93226
-        const relAB = this.getRelation('player', t.faction, undefined);
-        const relBA = this.getRelation(t.faction, 'player', t.overrides?.factions);
-        const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
-        const color = isEnemyNow ? '#A93226' : '#9E9382';
-        const baseName = this.resolveDisplayName(t) || 'Unknown';
-        const uniqueName = `${baseName} #${(t.obj as any).__uniqueId || ''}`;
-        
-        // Добавляем отладочную информацию о цели (только цель/статус)
-        let debugInfo = '';
-        if (process.env.NODE_ENV === 'development') {
-          const currentTarget = t.intent?.target;
-          const stateContext = this.npcStateManager.getContext(t.obj);
-          const stableTarget = stateContext?.targetStabilization?.currentTarget;
-          
-          // КРИТИЧНАЯ ПРОВЕРКА: убеждаемся что контекст принадлежит правильному объекту
-          if (stateContext && stateContext.obj !== t.obj) {
-            debugInfo = `\n❌ CONTEXT MISMATCH! (${(stateContext.obj as any).__uniqueId})`;
-            console.error(`[Display] Context mismatch for ${(t.obj as any).__uniqueId}: got context for ${(stateContext.obj as any).__uniqueId}`);
-          } else if (currentTarget || stableTarget) {
-            const targetToShow = stableTarget || currentTarget;
-            const targetName = targetToShow === this.ship ? 'PLAYER' : 
-                              `#${(targetToShow as any).__uniqueId || 'UNK'}`;
-            const intentType = t.intent?.type || 'none';
-            
-            // Показываем только цель и статус, убираем агрессию и источники урона
-            debugInfo = `\n→ ${targetName} (${intentType})`;
-          } else {
-            debugInfo = `\n→ NO TARGET`;
-          }
-        }
-        
-        t.nameLabel.setText(uniqueName + debugInfo);
-        t.nameLabel.setColor(color);
-        t.nameLabel.setVisible(true);
-        this.updateHpBar(t); // позиция имени обновится внутри
-      } else {
-        t.nameLabel?.setVisible(false);
-      }
-    }
-    this.refreshSelectionCircleColor();
   }
 
   private clearSelection() {
     this.selectedTarget = null;
-    this.selectionCircle?.setVisible(false);
-    this.radarCircle?.setVisible(false); // Скрываем радар
-    // hide all HP bars
-    for (const t of this.targets) { t.hpBarBg.setVisible(false); t.hpBarFill.setVisible(false); t.nameLabel?.setVisible(false); }
+    if (this.selectionCircle) {
+      this.selectionCircle.setVisible(false);
+    }
+    this.radarCircle?.setVisible(false);
+    for (const t of this.targets) { 
+      t.hpBarBg.setVisible(false); 
+      t.hpBarFill.setVisible(false); 
+      t.nameLabel?.setVisible(false);
+      try { this.indicatorMgr?.hideNPCBadge(t.obj); } catch {}
+    }
   }
 
   private update(_time: number, deltaMs: number) {
@@ -529,6 +488,8 @@ export class CombatManager {
 
     // auto logic
     if (!this.ship) return;
+    // Очистка подвисших индикаторов для уже уничтоженных/неактивных NPC
+    try { this.indicatorMgr?.cleanupInvalidNPCBadges(); } catch {}
     
     // ВАЖНО: Порядок имеет значение!
     // 1. Sensors logic - но только если не на паузе
@@ -701,6 +662,39 @@ export class CombatManager {
     }
     // ensure HP bars for all combat targets remain visible
     this.refreshCombatUIAssigned();
+
+    // Централизованное обновление плашек-индикаторов
+    for (const t of this.targets) {
+      if (t.obj === this.selectedTarget) {
+        const name = (t.obj as any).shipName ?? (t.shipId ?? `NPC #${(t.obj as any).__uniqueId}`);
+        const color = this.getRelationColor(this.getRelation('player', t.faction));
+        const cx = t.obj.x;
+        // Передаем координаты корабля - IndicatorManager сам позиционирует плашку выше HP бара
+        const cy = t.obj.y;
+
+        const ctx = this.npcStateManager.getContext(t.obj);
+        let status = '';
+        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
+          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee';
+          else {
+            const tgt = ctx.targetStabilization.currentTarget;
+            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
+            status = tgt ? `Attack ${tgtName}` : 'Attack';
+          }
+        } else {
+          if ((t.obj as any).__targetPatrol) status = 'Patrol';
+          else if ((t.obj as any).__targetPlanet) {
+            const planet: any = (t.obj as any).__targetPlanet;
+            const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
+            status = `Moving to "${pname}"`;
+          } else status = 'Patrol';
+        }
+
+        this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
+      } else {
+        this.indicatorMgr?.hideNPCBadge(t.obj);
+      }
+    }
 
     // Обновляем позиции кругов радиуса оружия игрока (закреплены на корабле)
     if (this.ship && this.playerWeaponRangeCircles.size > 0) {
@@ -1647,6 +1641,7 @@ export class CombatManager {
         try { t.hpBarBg.destroy(); } catch {}
         try { t.hpBarFill.destroy(); } catch {}
         try { t.nameLabel?.destroy(); } catch {}
+        try { this.indicatorMgr?.destroyNPCBadge(target); } catch {}
         // удалить боевое кольцо если было
         const ring = this.combatRings.get(target);
         if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
@@ -1689,14 +1684,54 @@ export class CombatManager {
 
   private updateHpBar(t: { obj: any; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; nameLabel?: Phaser.GameObjects.Text }) {
     const pct = Phaser.Math.Clamp(t.hp / Math.max(1, t.hpMax), 0, 1);
-    const barW = 128;
+    const baseW = ((t.hpBarBg as any).__baseWidth as number) || (t.hpBarBg?.width as number) || 192;
+    const extra = 64;
+    const maxByShip = Math.max(32, (t.obj as any).displayWidth + extra);
+    const barW = Math.min(baseW, maxByShip);
+    t.hpBarBg.width = barW;
     t.hpBarFill.width = barW * pct;
     const above = (this.getEffectiveRadius(t.obj as any) + 16);
-    t.hpBarBg.setPosition(t.obj.x - barW/2, t.obj.y - above);
-    t.hpBarFill.setPosition(t.obj.x - barW/2, t.obj.y - above);
-    if (t.nameLabel) {
-      t.nameLabel.setPosition(t.obj.x, t.hpBarBg.y - 4);
-    }
+    const by = t.obj.y + above;
+    const barX = t.obj.x;
+    const barY = by;
+    t.hpBarBg.setPosition(barX, barY);
+    t.hpBarFill.setPosition(barX - (barW - barW * pct) * 0.5, barY);
+
+    try {
+      const isDamaged = t.hp < t.hpMax;
+      const isSelected = this.selectedTarget === t.obj;
+      t.hpBarBg.setVisible(isDamaged || isSelected);
+      t.hpBarFill.setVisible(isDamaged || isSelected);
+
+      const name = this.resolveDisplayName(t as any) || 'Unknown';
+      const color = this.getRelationColor(this.getRelation('player', (t as any).faction));
+      
+      const ctx = this.npcStateManager.getContext(t.obj);
+      let status = '';
+      if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
+        if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee'; else {
+          const tgt = ctx.targetStabilization.currentTarget;
+          const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
+          status = tgt ? `Attack ${tgtName}` : 'Attack';
+        }
+      } else {
+        if ((t.obj as any).__targetPatrol) status = 'Patrol';
+        else if ((t.obj as any).__targetPlanet) {
+          const planet: any = (t.obj as any).__targetPlanet;
+          const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
+          status = `Moving to "${pname}"`;
+        } else status = 'Patrol';
+      }
+      const cx = t.obj.x;
+      // Передаем координаты корабля - IndicatorManager сам позиционирует плашку выше HP бара
+      const cy = t.obj.y;
+
+      this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
+      // The line below is the one we wanted to comment out initially
+      // try { (this.indicatorMgr as any).setBadgeWidth?.(t.obj, barW); } catch {}
+      this.indicatorMgr?.updateNPCBadgeTransform(t.obj, cx, cy);
+
+    } catch {}
   }
 
   private getEffectiveRadius(obj: any): number {
@@ -1724,6 +1759,11 @@ export class CombatManager {
     if (overrides && overrides[otherFaction]) return overrides[otherFaction];
     const rel = this.config.factions?.factions?.[ofFaction]?.relations?.[otherFaction];
     return (rel ?? 'neutral') as any;
+  }
+
+  private getRelationColor(relation: 'ally'|'neutral'|'confrontation'|'cautious'): string {
+    // Возвращаем красный цвет для враждебных отношений, серый для остальных
+    return relation === 'confrontation' ? '#A93226' : '#9E9382';
   }
 
   private updateSensors(deltaMs: number) {
@@ -2228,58 +2268,32 @@ export class CombatManager {
       if (isAssigned) {
         rec.hpBarBg.setVisible(true);
         rec.hpBarFill.setVisible(true);
-        if (!rec.nameLabel) {
-          const name = this.resolveDisplayName(rec) || 'Unknown';
-          const baseName = this.resolveDisplayName(rec) || 'Unknown';
-          const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
-          rec.nameLabel = this.scene.add.text(0, 0, uniqueName, { color: '#ffffff', fontSize: '16px', fontFamily: 'HooskaiChamferedSquare' }).setOrigin(0.5, 1).setDepth(0.7);
-        }
+        // Плашка для NPC, которые целятся в игрока — показываем всегда
         const relAB = this.getRelation('player', rec.faction, undefined);
         const relBA = this.getRelation(rec.faction, 'player', rec.overrides?.factions);
         const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
         const color = isEnemyNow ? '#A93226' : '#9E9382';
-        rec.nameLabel.setColor(color);
         const baseName = this.resolveDisplayName(rec) || 'Unknown';
-        const uniqueName = `${baseName} #${(rec.obj as any).__uniqueId || ''}`;
-        
-        // Добавляем отладочную информацию о цели (для боевых целей)
-        let debugInfo = '';
-        if (process.env.NODE_ENV === 'development') {
-          const currentTarget = rec.intent?.target;
-          const stateContext = this.npcStateManager.getContext(rec.obj);
-          const stableTarget = stateContext?.targetStabilization?.currentTarget;
-          
-          // КРИТИЧНАЯ ПРОВЕРКА: убеждаемся что контекст принадлежит правильному объекту
-          if (stateContext && stateContext.obj !== rec.obj) {
-            debugInfo = `\n❌ CONTEXT MISMATCH! (${(stateContext.obj as any).__uniqueId})`;
-            console.error(`[Combat Display] Context mismatch for ${(rec.obj as any).__uniqueId}: got context for ${(stateContext.obj as any).__uniqueId}`);
-          } else if (currentTarget || stableTarget) {
-            const targetToShow = stableTarget || currentTarget;
-            const targetName = targetToShow === this.ship ? 'PLAYER' : 
-                              `#${(targetToShow as any).__uniqueId || 'UNK'}`;
-            const intentType = rec.intent?.type || 'none';
-            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
-            
-            // Дополнительная проверка источников урона для боевых целей
-            if (stateContext && stateContext.aggression.sources.size > 0) {
-              const sourcesCount = stateContext.aggression.sources.size;
-              const sourcesInfo = Array.from(stateContext.aggression.sources.entries()).map(([source, data]) => {
-                const sourceId = source === this.ship ? 'PLAYER' : `#${(source as any).__uniqueId || 'UNK'}`;
-                return `${sourceId}:${data.damage}`;
-              }).join(',');
-              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]\nSources: ${sourcesInfo}`;
-            } else {
-              debugInfo = `\n→ ${targetName} (${intentType}) [${aggrLevel}]`;
-            }
-          } else {
-            const aggrLevel = stateContext ? (stateContext.aggression.level * 100).toFixed(0) + '%' : '?';
-            debugInfo = `\n→ NO TARGET [${aggrLevel}]`;
+        const uniqueName = `${baseName}`;
+        // статус
+        const ctx = this.npcStateManager.getContext(rec.obj);
+        let status = '';
+        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
+          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee';
+          else {
+            const tgt = ctx.targetStabilization.currentTarget;
+            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
+            status = tgt ? `Attack ${tgtName}` : 'Attack';
           }
+        } else {
+          if ((rec.obj as any).__targetPatrol) status = 'Patrol';
+          else if ((rec.obj as any).__targetPlanet) {
+            const planet: any = (rec.obj as any).__targetPlanet;
+            const name = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
+            status = `Moving to "${name}"`;
+          } else status = 'Patrol';
         }
-        
-        rec.nameLabel.setText(uniqueName + debugInfo);
-        rec.nameLabel.setVisible(true);
-        this.updateHpBar(rec as any);
+        // Позиционирование плашки синхронизировано в updateHpBar
       } else {
         // Hide UI if not assigned and not the player's selected info target
         if (rec.obj !== this.selectedTarget) {
@@ -2417,6 +2431,7 @@ export class CombatManager {
         try { rec.hpBarBg.destroy(); } catch {}
         try { rec.hpBarFill.destroy(); } catch {}
         try { rec.nameLabel?.destroy(); } catch {}
+        try { this.indicatorMgr?.destroyNPCBadge(rec.obj); } catch {}
         removed.push(rec.obj);
       }
     }

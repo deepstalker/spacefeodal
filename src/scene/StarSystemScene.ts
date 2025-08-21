@@ -20,6 +20,7 @@ import { NPCBehaviorManager } from '@/services/NPCBehaviorManager';
 import { PathRenderService } from '@/services/PathRenderService';
 import { GameUpdateManager } from '@/services/GameUpdateManager';
 import { SystemLoaderService } from '@/services/SystemLoaderService';
+import { IndicatorManager } from '@/sys/IndicatorManager';
 
 export default class StarSystemScene extends Phaser.Scene {
   private config!: ConfigManager;
@@ -41,6 +42,7 @@ export default class StarSystemScene extends Phaser.Scene {
   private npcBehaviorMgr!: NPCBehaviorManager;
   private pathRender!: PathRenderService;
   private updateMgr!: GameUpdateManager;
+  private indicators!: IndicatorManager;
   
   // Состояние для удержания правой кнопки мыши
   private rightMouseHoldStart = 0;
@@ -82,6 +84,9 @@ export default class StarSystemScene extends Phaser.Scene {
     this.movement = new MovementManager(this, this.config);
     this.combat = new CombatManager(this, this.config);
     this.fogOfWar = new EnhancedFogOfWar(this, this.config);
+    this.indicators = new IndicatorManager(this, this.config);
+    // Сообщаем менеджеру боя о менеджере индикаторов
+    try { this.combat.setIndicatorManager(this.indicators); } catch {}
     
     // Инициализируем системы паузы и времени
     this.pauseManager = new PauseManager(this);
@@ -131,6 +136,11 @@ export default class StarSystemScene extends Phaser.Scene {
     this.systemInitializer.initPlanets();
     this.planets = this.systemInitializer.planets as any;
     this.encounterMarkers = this.systemInitializer.encounterMarkers as any;
+    // Подключаем постоянные плашки для планет
+    for (const p of this.planets) {
+      try { this.indicators.attachPlanet(p.obj, p.data?.name ?? p.data?.id ?? 'Planet'); } catch {}
+      try { p.label?.setVisible(false); } catch {}
+    }
     // Stations manager
     const { SpaceStationManager } = await import('@/sys/SpaceStationManager');
     const stationMgr = new SpaceStationManager(this as any, this.config);
@@ -263,6 +273,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.npcBehaviorMgr = new NPCBehaviorManager(this, this.config, this.npcs, this.combat as any);
     this.updateMgr = new GameUpdateManager(this, this.config, this.pauseManager);
     this.updateMgr.registerPausedAware('planetOrbits', (dt) => this.planetOrbitMgr.update(dt));
+    this.updateMgr.registerPausedAware('indicatorsPlanets', () => this.indicators.updateAllPlanetBadges(this.planets as any));
     this.updateMgr.registerPausedAware('combat', () => this.pathRender.updateAimLine());
     this.updateMgr.registerPausedAware('encounters', () => this.encounterManager.update());
     this.updateMgr.registerPausedAware('npcStateManager', (dt) => this.npcBehaviorMgr.updateTraders(dt));

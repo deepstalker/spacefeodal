@@ -690,17 +690,17 @@ export class HUDManager {
 
   private addCursorIcon(rec: { slotIndex: number; slotKey: string; size: number; }) {
     if (this.cursorIcons.has(rec.slotIndex)) return;
-    const size = 48;
+    const sizeBase = 48;
     const defs = this.configRef!.weapons.defs as any;
     const items = this.configRef!.items?.rarities as any;
     const rarityKey = defs[rec.slotKey]?.rarity as string | undefined;
     const rarityColorHex = rarityKey && items?.[rarityKey]?.color ? Number(items[rarityKey].color.replace('#','0x')) : 0x000000;
     const iconKey = defs[rec.slotKey]?.icon ?? rec.slotKey;
-    const bg = this.scene.add.rectangle(0, 0, size, size, 0x2c2a2d, 1).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
+    const bg = this.scene.add.rectangle(0, 0, sizeBase, sizeBase, 0x2c2a2d, 1).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
     bg.setStrokeStyle(2, 0x00ff66, 1);
-    const under = this.scene.add.rectangle(0, 0, size - 6, size - 6, rarityColorHex, 0.8).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
+    const under = this.scene.add.rectangle(0, 0, sizeBase - 6, sizeBase - 6, rarityColorHex, 0.8).setOrigin(0.5).setScrollFactor(0).setDepth(4002);
     const img = this.scene.add.image(0, 0, iconKey).setOrigin(0.5).setScrollFactor(0).setDepth(4003);
-    try { const tx = this.scene.textures.get(iconKey); const scale = Math.min((size - 12) / tx.source[0].width, (size - 12) / tx.source[0].height); img.setScale(scale); } catch {}
+    try { const tx = this.scene.textures.get(iconKey); const scale = Math.min((sizeBase - 12) / tx.source[0].width, (sizeBase - 12) / tx.source[0].height); img.setScale(scale); } catch {}
     const cont = this.scene.add.container(0, 0, [under, bg, img]).setDepth(4002).setAlpha(0.95);
     this.cursorIcons.set(rec.slotIndex, cont);
 
@@ -845,16 +845,23 @@ export class HUDManager {
     const updater = () => {
       const hp = star.combat?.getHpBarInfoFor?.(target);
       if (!hp) return;
+      // Противомасштабирование иконок как у HP-бара/плашек
+      const z = star.cameras?.main?.zoom ?? 1;
+      const inv = z > 0 ? (1 / z) : 1;
+      const uiMin = 0.75, uiMax = 2.0;
+      const scale = Phaser.Math.Clamp(inv, uiMin, uiMax);
+      cont.setScale(scale);
       // позиция над именем: над HP баром на высоту иконки + небольшой отступ
       const sx = hp.x;
       const sy = hp.y; // world coords
       const slotsAssigned = Array.from(this.assignedIconsBySlot.entries()).filter(([,v]) => v.target === target).map(([k]) => k);
       const idx = slotsAssigned.indexOf(slotKey);
-      const spacing = size + 8;
+      const sizeScaled = size * scale;
+      const spacing = sizeScaled + 8;
       const totalW = slotsAssigned.length * spacing - 8;
-      const startX = sx + (hp.width - totalW) / 2 + size/2;
+      const startX = sx + (hp.width - totalW) / 2 + sizeScaled/2;
       const cx = startX + idx * spacing;
-      const cy = sy - (size + 16);
+      const cy = sy - (sizeScaled + 16);
       cont.x = cx;
       cont.y = cy;
     };

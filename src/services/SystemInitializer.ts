@@ -59,14 +59,18 @@ export class SystemInitializer {
       img.x = px0; img.y = py0;
       this.fog.registerStaticObject(img, StaticObjectType.PLANET);
 
-      const label = this.scene.add.text(px0, py0 - 180, p.id, {
-        fontFamily: 'HooskaiChamferedSquare',
-        fontSize: '36px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 6
-      }).setOrigin(0.5).setDepth(2);
-      (record as any).label = label;
+      // Старую текстовую метку скрываем — теперь её заменяет IndicatorManager в StarSystemScene
+      try {
+        const label = this.scene.add.text(px0, py0 - 180, p.id, {
+          fontFamily: 'HooskaiChamferedSquare',
+          fontSize: '36px',
+          color: '#ffffff',
+          stroke: '#000000',
+          strokeThickness: 6
+        }).setOrigin(0.5).setDepth(2);
+        label.setVisible(false);
+        (record as any).label = label;
+      } catch {}
 
       const confPlanet = (system.planets as any[]).find(pl => pl.id === p.id) as any;
       if (confPlanet) { confPlanet._x = px0; confPlanet._y = py0; }
