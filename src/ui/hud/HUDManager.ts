@@ -3,6 +3,7 @@ import { MinimapManager } from '@/sys/MinimapManager';
 import type { ConfigManager } from '@/sys/ConfigManager';
 import type { PauseManager } from '@/sys/PauseManager';
 import type { TimeManager } from '@/sys/TimeManager';
+import { EventBus, EVENTS } from '@/sys/combat/weapons/services/EventBus';
 
 export class HUDManager {
   private scene: Phaser.Scene;
@@ -102,6 +103,14 @@ export class HUDManager {
     starScene.events.on('beam-refresh', (slotKey: string) => { this.beamDurationActive.delete(slotKey); });
     // Out of range — отдельный текст
     starScene.events.on('weapon-out-of-range', (slotKey: string, show: boolean) => this.toggleOutOfRange(slotKey, show));
+
+    // Новые типизированные события через централизованный EventBus (дублируем для совместимости)
+    const bus = new EventBus(starScene);
+    bus.on(EVENTS.PlayerWeaponFired, ({ slotKey }) => this.flashAssignedIcon(slotKey));
+    bus.on(EVENTS.PlayerWeaponTargetCleared, ({ slots }) => slots.forEach(s => this.removeAssignedIcon(s)));
+    bus.on(EVENTS.BeamStart, ({ slotKey, durationMs }) => this.showBeamDuration(slotKey, durationMs));
+    bus.on(EVENTS.BeamRefresh, ({ slotKey }) => { this.beamDurationActive.delete(slotKey); });
+    bus.on(EVENTS.WeaponOutOfRange, ({ slotKey, inRange }) => this.toggleOutOfRange(slotKey, !!inRange));
 
     // Подписываемся на событие снятия паузы для принудительного обновления прогресс-баров
     this.scene.events.on('game-resumed', () => {

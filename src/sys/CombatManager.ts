@@ -6,6 +6,7 @@ import { NPCStateManager, NPCState, MovementPriority } from './NPCStateManager';
 import { RelationOverrideManager } from './RelationOverrideManager';
 import { IndicatorManager } from './IndicatorManager';
 import { WeaponManager } from './combat/WeaponManager';
+import { CooldownService } from './combat/weapons/services/CooldownService';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -47,20 +48,17 @@ export class CombatManager {
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
   private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
   // ВАЖНО: тайминги и состояния перезарядки/подготовки оружия
-  // Хранит время последнего выстрела по слотам для каждого стрелка (NPC/игрок)
-  private lastFireTimesByShooter: Map<any, Record<string, number>> = new Map();
-  // Кулдауны лучевого оружия по стрелкам и слотам
-  private beamCooldowns: Map<any, Record<string, number>> = new Map();
+  // Кулдауны централизованы в CooldownService
   // Время окончания подготовки лучевого оружия по стрелкам и слотам
   private beamPrepUntil: Map<any, Record<string, number>> = new Map();
-  // Зарядка (не-лучевое) для игрока по слотам
-  private playerChargeUntil: Record<string, number> = {};
   // Активные слоты оружия текущего стрелка (для NPC autoFire)
   private weaponSlots: string[] = [];
   // Троттлинг логов для смены целей (dev)
   private lastPirateLogMs: Map<any, number> = new Map();
   // Активные лучи по стрелку и слоту
   private activeBeams: Map<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new Map();
+  // Единый сервис кулдаунов
+  private cooldowns: CooldownService = new CooldownService();
   
   private relationOverrides!: RelationOverrideManager;
   private indicatorMgr?: IndicatorManager;
@@ -72,8 +70,6 @@ export class CombatManager {
     this.npcStateManager = new NPCStateManager(scene, config);
     this.weaponManager = new WeaponManager(scene, config, this);
     // Страховка от потери полей при ре-инициализациях/горячей перезагрузке
-    this.lastFireTimesByShooter = this.lastFireTimesByShooter ?? new Map();
-    this.beamCooldowns = this.beamCooldowns ?? new Map();
     this.beamPrepUntil = this.beamPrepUntil ?? new Map();
     this.activeBeams = this.activeBeams ?? new Map();
     // Менеджер индикаторов может быть установлен позже из StarSystemScene
@@ -1223,7 +1219,7 @@ export class CombatManager {
     const dx = target.x - shooter.x;
     const dy = target.y - shooter.y;
     const dist = Math.hypot(dx, dy);
-    const times = this.getShooterTimes(shooter);
+    const times = this.cooldowns.getShooterTimes(shooter);
     const slotsArr = this.weaponSlots;
     for (let i = 0; i < slotsArr.length; i++) {
       const slotKey = slotsArr[i];
@@ -1231,8 +1227,7 @@ export class CombatManager {
       if (!w) continue;
       if ((w.type ?? 'single') === 'beam') {
         const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-        const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
-        const readyAt = shooterTimes[slotKey] ?? 0;
+        const readyAt = this.cooldowns.getBeamReadyAt(shooter, slotKey);
         // NPC стреляют только если не на паузе
         if (nowMs >= readyAt && dist <= w.range) {
           const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
@@ -1263,15 +1258,7 @@ export class CombatManager {
     }
   }
 
-  private getShooterTimes(shooter: any): Record<string, number> {
-    // Страховка: карта может быть сброшена окружением/горячей перезагрузкой
-    if (!this.lastFireTimesByShooter) {
-      (this as any).lastFireTimesByShooter = new Map();
-    }
-    let times = this.lastFireTimesByShooter.get(shooter);
-    if (!times) { times = {}; this.lastFireTimesByShooter.set(shooter, times); }
-    return times;
-  }
+  // getShooterTimes перенесён в CooldownService
 
   private applyDamage(target: any, damage: number, attacker?: any) {
     // Инвульнера во время докинга/дока/андокинга
@@ -1972,9 +1959,8 @@ export class CombatManager {
     // Автоматическое отключение по duration и установка refresh
     const durationId = `beam_duration_${slotKey}_${Date.now()}`;
     const durationTimer = this.scene.time.delayedCall(durationMs, () => {
-      const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
       const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      shooterTimes[slotKey] = now + refreshMs;
+      this.cooldowns.setBeamReadyAt(shooter, slotKey, now + refreshMs);
       // HUD: сразу после окончания duration запустить индикацию refresh
       if (shooter === this.ship) {
         try { this.scene.events.emit('beam-refresh', slotKey, refreshMs); } catch {}

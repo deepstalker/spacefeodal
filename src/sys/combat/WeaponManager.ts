@@ -2,9 +2,15 @@
 import type { CombatManager } from '../CombatManager';
 import { NPCState } from '../NPCStateManager';
 import type { EnhancedFogOfWar } from '../fog-of-war/EnhancedFogOfWar';
-import { DynamicObjectType } from '../fog-of-war/types';
-import { getWeaponType, isHoming, isBurstWeapon } from './weapons/types';
+import { getWeaponType, isHoming } from './weapons/types';
 import { getBeamVisualParams } from './weapons/beamHelpers';
+import { BeamService } from './weapons/services/BeamService';
+import { RangeUiService } from './weapons/ui/RangeUiService';
+import { ProjectileService } from './weapons/services/ProjectileService';
+import { calculateInterceptTime, getTargetVelocity } from './weapons/utils/aiming';
+import { TargetService } from './weapons/services/TargetService';
+import { EventBus, EVENTS } from './weapons/services/EventBus';
+import { CooldownService } from './weapons/services/CooldownService';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -15,22 +21,41 @@ export class WeaponManager {
   private pauseManager?: any;
   private fogOfWar?: EnhancedFogOfWar;
 
-  private lastFireTimesByShooter: WeakMap<any, Record<string, number>> = new WeakMap();
-  private playerWeaponTargets: Map<string, Target> = new Map();
-  private activeBeams: WeakMap<any, Map<string, { gfx: Phaser.GameObjects.Graphics; timer: Phaser.Time.TimerEvent; target: any }>> = new WeakMap();
-  private beamCooldowns: WeakMap<any, Record<string, number>> = new WeakMap();
-  private playerChargeUntil: Record<string, number> = {};
+  private targetService: TargetService;
+  private beamService: BeamService;
+  private cooldowns: CooldownService;
+  private projectileService: ProjectileService;
   private beamPrepUntil: WeakMap<any, Record<string, number>> = new WeakMap();
-  private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
+  private rangeUi: RangeUiService;
   private weaponSlots: string[] = ['laser', 'cannon', 'missile']; // Default, will be replaced for NPCs
 
   constructor(scene: Phaser.Scene, config: ConfigManager, combatManager: CombatManager) {
     this.scene = scene;
     this.config = config;
     this.combatManager = combatManager;
+    this.rangeUi = new RangeUiService(scene, config, combatManager);
+    this.targetService = new TargetService(scene, combatManager);
+    this.cooldowns = new CooldownService();
+    this.beamService = new BeamService(scene, config, combatManager, this.cooldowns, {
+      shouldContinueBeam: (sh, tg, w) => this.shouldContinueBeam(sh, tg, w),
+      applyBeamTickDamage: (sh, tg, w) => this.applyBeamTickDamage(sh, tg, w),
+      drawBeam: (gfx, sh, tg, w) => this.drawBeam(gfx, sh, tg, w),
+      getNowMs: () => this.getNowMs(),
+      isPaused: () => !!(this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()),
+      registerTimer: (id, timer) => { try { this.pauseManager?.registerTimer?.(id, timer); } catch {} },
+      unregisterTimer: (id) => { try { this.pauseManager?.unregisterTimer?.(id); } catch {} },
+      getPlayerShip: () => this.combatManager.getPlayerShip()
+    });
+    this.projectileService = new ProjectileService(scene, config, combatManager, {
+      getFoW: () => this.fogOfWar,
+      registerTimer: (id, timer) => { try { this.pauseManager?.registerTimer?.(id, timer); } catch {} },
+      unregisterTimer: (id) => { try { this.pauseManager?.unregisterTimer?.(id); } catch {} },
+      spawnHitEffect: (x, y, w) => this.spawnHitEffect(x, y, w),
+      isInvulnerable: (obj) => this.isInvulnerable(obj),
+    });
 
     this.scene.events.on('weapon-slot-selected', (slotKey: string, selected: boolean) => {
-        try { this.togglePlayerWeaponRangeCircle(slotKey, !!selected); } catch {}
+        try { this.rangeUi.toggle(slotKey, !!selected); } catch {}
     });
   }
 
@@ -72,131 +97,12 @@ export class WeaponManager {
     } catch {}
   }
 
-  private registerProjectileFoW(obj: any) {
-    if (!obj) return;
-    if (this.fogOfWar) {
-      try { this.fogOfWar.registerDynamicObject(obj, DynamicObjectType.PROJECTILE); } catch {}
-    }
-  }
-
-  private unregisterProjectileFoW(obj: any) {
-    if (!obj) return;
-    if (this.fogOfWar) {
-      try { this.fogOfWar.unregisterObject(obj); } catch {}
-    }
-  }
-
   // Спавн снаряда с учётом формы, поворота, глубины и регистрации в FoW
   private spawnProjectile(w: any, shooter: any, muzzle: { x: number; y: number }, angle: number, target: any) {
-    let proj: any;
-    if (w.projectile.shape === 'rect') {
-      proj = this.scene.add.rectangle(muzzle.x, muzzle.y, w.projectile.width, w.projectile.height, Number((w.projectile.color as string).replace('#','0x'))).setDepth(0.8) as any;
-      (proj as any).setRotation?.(angle);
-    } else {
-      const r = w.projectile.radius ?? 4;
-      proj = this.scene.add.circle(muzzle.x, muzzle.y, r, Number((w.projectile.color as string).replace('#','0x'))).setDepth(0.8) as any;
-    }
-    (proj as any).__combat = { damage: w.damage, target };
-    (proj as any).setDepth?.(((shooter as any).depth ?? 1) - 0.1);
-    this.registerProjectileFoW(proj);
-    return proj;
+    return this.projectileService.spawnProjectile(w, shooter, muzzle, angle, target);
   }
 
-  // Единая настройка таймера жизни снаряда с учётом pauseManager
-  private setupProjectileLifetime(proj: any, lifetimeMs: number, onExpire: () => void) {
-    const projId = `projectile_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
-    const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
-      try { onExpire(); } finally {
-        try { this.pauseManager?.unregisterTimer?.(projId); } catch {}
-      }
-    });
-    try { this.pauseManager?.registerTimer?.(projId, lifetimeTimer); } catch {}
-    return projId;
-  }
-
-  // Геометрия: минимальная дистанция от точки до отрезка (чистая функция)
-  private distPointToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
-    const vx = x2 - x1, vy = y2 - y1;
-    const wx = px - x1, wy = py - y1;
-    const vv = vx*vx + vy*vy;
-    const t = vv > 0 ? Phaser.Math.Clamp((wx*vx + wy*vy) / vv, 0, 1) : 0;
-    const cx = x1 + t * vx;
-    const cy = y1 + t * vy;
-    return Math.hypot(px - cx, py - cy);
-  }
-
-  // Проверка коллизий снаряда за прошедший тик. Возвращает 'hit' | 'target_lost' | 'expire' | 'none'
-  private checkProjectileCollisions(
-    prevX: number | undefined,
-    prevY: number | undefined,
-    proj: any,
-    shooter: any,
-    target: any,
-    w: any,
-    shooterFaction: any,
-    shooterOverrides: any
-  ): 'hit' | 'target_lost' | 'expire' | 'none' {
-    if (!target || !target.active) {
-      return 'target_lost';
-    }
-    const tgtEntry = this.combatManager.findTargetEntry(target);
-    const assignedByPlayer = this.combatManager.isTargetCombatAssignedPublic(target) || Array.from(this.playerWeaponTargets.values()).some(t => {
-      const te = this.combatManager.findTargetEntry(t);
-      return !!(te && tgtEntry && te.obj === tgtEntry.obj);
-    });
-    const entries = this.combatManager.getTargetEntries();
-    for (const rec of entries) {
-      const obj = rec.obj as any;
-      if (!obj || !obj.active) continue;
-      if (obj === shooter) continue;
-      if (obj === target) continue;
-      const invulnerable = this.isInvulnerable(obj);
-      if (invulnerable) continue;
-      const hitR = this.combatManager.getEffectiveRadiusPublic(obj);
-      const dAny = (typeof prevX === 'number' && typeof prevY === 'number')
-        ? this.distPointToSegment(obj.x, obj.y, prevX, prevY, (proj as any).x, (proj as any).y)
-        : Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
-      if (dAny <= hitR) {
-        const victimFaction = rec.faction;
-        const relSV = this.combatManager.getRelationPublic(shooterFaction, victimFaction, shooterOverrides);
-        const relVS = this.combatManager.getRelationPublic(victimFaction, shooterFaction, rec.overrides?.factions);
-        const hostile = (relSV === 'confrontation') || (relVS === 'confrontation');
-        const selectedByPlayerObj = this.combatManager.isTargetCombatSelectedPublic(obj);
-        const assignedByPlayerObj = this.combatManager.isTargetCombatAssignedPublic(obj);
-        const canApplyDueToSelectionObj = (shooter === this.combatManager.getPlayerShip()) && (selectedByPlayerObj || assignedByPlayerObj);
-        if (hostile || canApplyDueToSelectionObj) {
-          this.combatManager.applyDamagePublic(obj, w.damage, shooter);
-          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-          return 'hit';
-        }
-      }
-    }
-    const hitDist = this.combatManager.getEffectiveRadiusPublic(target as any);
-    const d = (typeof prevX === 'number' && typeof prevY === 'number')
-      ? this.distPointToSegment(target.x, target.y, prevX, prevY, (proj as any).x, (proj as any).y)
-      : Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
-    if (d <= hitDist) {
-      const invulnerable = this.isInvulnerable(target as any);
-      if (!invulnerable) {
-        const targetEntry = this.combatManager.findTargetEntry(target);
-        const targetFaction = targetEntry?.faction ?? (target === this.combatManager.getPlayerShip() ? 'player' : undefined);
-        const targetOverrides = (targetEntry as any)?.overrides?.factions;
-        const relSV = this.combatManager.getRelationPublic(shooterFaction, targetFaction, shooterOverrides);
-        const relVS = this.combatManager.getRelationPublic(targetFaction, shooterFaction, targetOverrides);
-        const hostileEnemy = (relSV === 'confrontation') || (relVS === 'confrontation');
-        const selectedByPlayer = this.combatManager.isTargetCombatSelectedPublic(target);
-        const canApplyDueToSelection = (shooter === this.combatManager.getPlayerShip()) && (assignedByPlayer || selectedByPlayer);
-        if (hostileEnemy || canApplyDueToSelection) {
-          this.combatManager.applyDamagePublic(target, w.damage, shooter);
-          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-          return 'hit';
-        }
-      } else {
-        return 'expire';
-      }
-    }
-    return 'none';
-  }
+  // Геометрия вынесена в utils/geometry.ts
 
   /**
    * Проверка видимости пары объектов в FoW (если FoW нет — считаем видимыми)
@@ -264,27 +170,6 @@ export class WeaponManager {
     return shipAccuracy;
   }
 
-  // Скорость цели из moveRef; 0,0 если нет данных
-  private getTargetVelocity(target: any): { vx: number; vy: number } {
-    let vx = 0, vy = 0;
-    const moveRef = (target as any).__moveRef;
-    if (moveRef && typeof moveRef.speed === 'number' && typeof moveRef.headingRad === 'number') {
-      const speedPerSecond = moveRef.speed;
-      const heading = moveRef.headingRad;
-      vx = Math.cos(heading) * speedPerSecond;
-      vy = Math.sin(heading) * speedPerSecond;
-    }
-    return { vx, vy };
-  }
-
-  public setPauseManager(pauseManager: any) {
-    this.pauseManager = pauseManager;
-  }
-
-  public setFogOfWar(fogOfWar: EnhancedFogOfWar) {
-    this.fogOfWar = fogOfWar;
-  }
-
   // Унифицированный доступ к времени с учётом pauseManager
   private getNowMs(): number {
     return this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
@@ -311,71 +196,32 @@ export class WeaponManager {
   // Централизованный emit события out-of-range
   private emitWeaponOutOfRange(slotKey: string, inRange: boolean) {
     try { this.scene.events.emit('weapon-out-of-range', slotKey, inRange); } catch {}
+    try { new EventBus(this.scene).emit(EVENTS.WeaponOutOfRange, { slotKey, inRange }); } catch {}
   }
 
   /** Прогресс перезарядки оружия игрока [0..1] */
   public getWeaponChargeProgress(slotKey: string): number {
-    const chargeUntil = this.playerChargeUntil[slotKey];
-    if (!chargeUntil) return 1;
-
     const now = this.getNowMs();
-    if (now >= chargeUntil) return 1;
-
     const w = this.config.weapons.defs[slotKey];
-    if (!w) return 1;
-
-    const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-    const chargeStartTime = chargeUntil - cooldownMs;
-    const elapsed = now - chargeStartTime;
-
-    return Math.max(0, Math.min(1, elapsed / cooldownMs));
+    return this.cooldowns.getWeaponChargeProgress(slotKey, now, w);
   }
 
   /** В процессе ли перезарядки оружие игрока */
   public isWeaponCharging(slotKey: string): boolean {
-    const chargeUntil = this.playerChargeUntil[slotKey];
-    if (chargeUntil) {
-      const now = this.getNowMs();
-      if (now < chargeUntil) return true;
-    }
-
-    const beamCooldowns = this.beamCooldowns.get(this.combatManager.getPlayerShip());
-    if (beamCooldowns && beamCooldowns[slotKey]) {
-      const now = this.getNowMs();
-      return now < beamCooldowns[slotKey];
-    }
-
-    return false;
+    const now = this.getNowMs();
+    return this.cooldowns.isWeaponCharging(slotKey, now, this.combatManager.getPlayerShip());
   }
 
   /** Прогресс обновления (refresh) лучевого оружия игрока [0..1] */
   public getBeamRefreshProgress(slotKey: string): number {
-    const beamCooldowns = this.beamCooldowns.get(this.combatManager.getPlayerShip());
-    if (!beamCooldowns || !beamCooldowns[slotKey]) return 1;
-
-    const refreshUntil = beamCooldowns[slotKey];
     const now = this.getNowMs();
-    if (now >= refreshUntil) return 1;
-
     const w = this.config.weapons.defs[slotKey];
-    if (!w) return 1;
-
-    const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-    const refreshStartTime = refreshUntil - refreshMs;
-    const elapsed = now - refreshStartTime;
-
-    return Math.max(0, Math.min(1, elapsed / refreshMs));
+    return this.cooldowns.getBeamRefreshProgress(slotKey, now, w, this.combatManager.getPlayerShip());
   }
 
   /** Очистить цель конкретного слота игрока с эмитами событий */
   private clearPlayerWeaponTarget(slotKey: string, target?: Target) {
-    if (this.playerWeaponTargets.has(slotKey)) {
-      this.playerWeaponTargets.delete(slotKey);
-    }
-    try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-    if (target) {
-      try { this.scene.events.emit('player-weapon-target-cleared', target, [slotKey]); } catch {}
-    }
+    this.targetService.clearSlot(slotKey, target as any);
   }
 
   /** Унифицированная обработка кулдауна и выстрела игрока для одного слота (single/burst) */
@@ -389,20 +235,20 @@ export class WeaponManager {
     isPaused: boolean
   ) {
     const dist = this.getDistance(ship, target);
-    const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
     if (dist > w.range) {
-      if (this.playerChargeUntil[slotKey]) delete this.playerChargeUntil[slotKey];
+      this.cooldowns.clearCharge(slotKey);
       try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
       return;
     }
     try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-    if (!this.playerChargeUntil[slotKey]) {
-      this.playerChargeUntil[slotKey] = now + cooldownMs;
+    const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
+    if (!this.cooldowns.getChargeUntil(slotKey)) {
+      this.cooldowns.setChargeUntil(slotKey, now + cooldownMs);
       return;
     }
-    if (now >= this.playerChargeUntil[slotKey]) {
+    if (now >= (this.cooldowns.getChargeUntil(slotKey) as number)) {
       if (!isPaused) {
-        this.playerChargeUntil[slotKey] = now + cooldownMs;
+        this.cooldowns.setChargeUntil(slotKey, now + cooldownMs);
         const muzzleOffset = this.resolveMuzzleOffset(ship, slotIndex, { x: 0, y: 0 });
         const w2 = { ...w, muzzleOffset, __slotIndex: slotIndex };
         const isBurst = ((w2?.burst?.count ?? 1) > 1) || (getWeaponType(w2) === 'burst');
@@ -414,64 +260,42 @@ export class WeaponManager {
 
   public setPlayerWeaponTarget(slotKey: string, target: Target | null) {
     if (target) {
-      // Обозначаем цель как враждебную к игроку через боевой менеджер
-      try { (this.combatManager as any).markTargetHostileToPlayer?.(target as any); } catch {}
-      this.playerWeaponTargets.set(slotKey, target);
+      this.targetService.setTarget(slotKey, target as any);
       const w = this.config.weapons.defs[slotKey];
       if (w) {
         if (getWeaponType(w) === 'beam') {
           const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-          const shooterTimes = this.beamCooldowns.get(this.combatManager.getPlayerShip()) ?? {};
-          this.beamCooldowns.set(this.combatManager.getPlayerShip(), shooterTimes);
           const now = this.getNowMs();
-          shooterTimes[slotKey] = now + refreshMs;
-          this.stopBeamIfAny(this.combatManager.getPlayerShip(), slotKey);
+          this.cooldowns.setBeamReadyAt(this.combatManager.getPlayerShip(), slotKey, now + refreshMs);
+          this.beamService.stopBeamIfAny(this.combatManager.getPlayerShip(), slotKey);
         } else {
-          const times = this.getShooterTimes(this.combatManager.getPlayerShip());
+          const times = this.cooldowns.getShooterTimes(this.combatManager.getPlayerShip());
           const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
           const now = this.getNowMs();
           times[slotKey] = now + cooldownMs;
         }
       }
     } else {
-      this.playerWeaponTargets.delete(slotKey);
-      try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+      this.targetService.setTarget(slotKey, null);
     }
   }
 
   public clearPlayerWeaponTargets() {
-    if (this.playerWeaponTargets.size > 0) {
-      const clearedSlots = Array.from(this.playerWeaponTargets.keys());
-      this.playerWeaponTargets.clear();
-      if (clearedSlots.length > 0) {
-        for (const slotKey of clearedSlots) {
-          try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-        }
-      }
-    }
+    this.targetService.clearAll();
   }
 
     public getPlayerWeaponTargets(): ReadonlyMap<string, Target> {
-        return this.playerWeaponTargets;
+        return this.targetService.getTargets() as ReadonlyMap<string, Target>;
     }
 
     public clearAssignmentsForTarget(target: any) {
-        const clearedSlots: string[] = [];
-        for (const [slot, tgt] of this.playerWeaponTargets.entries()) {
-            if (tgt === target) {
-                this.playerWeaponTargets.delete(slot);
-                clearedSlots.push(slot);
-            }
-        }
-        if (clearedSlots.length > 0) {
-            try { this.scene.events.emit('player-weapon-target-cleared', target, clearedSlots); } catch {}
-        }
+        this.targetService.clearAssignmentsForTarget(target);
     }
 
   public update(isPaused: boolean) {
     this.updatePlayerWeapons(isPaused);
     this.updateNpcWeapons(isPaused);
-    this.updatePlayerWeaponRangeCircles();
+    this.rangeUi.updateAll();
   }
 
   /** Обновление оружия игрока: цели, дальность, перезарядка и выстрелы */
@@ -481,7 +305,7 @@ export class WeaponManager {
 
     const playerRadarRange = this.combatManager.getRadarRangeForPublic(ship);
     const slotsToClear: string[] = [];
-    for (const [slot, target] of this.playerWeaponTargets.entries()) {
+    for (const [slot, target] of this.targetService.getTargets().entries()) {
         const distToTarget = Phaser.Math.Distance.Between(ship.x, ship.y, target.x, target.y);
         if (distToTarget > playerRadarRange) {
             slotsToClear.push(slot);
@@ -492,9 +316,9 @@ export class WeaponManager {
             this.clearPlayerWeaponTarget(slot);
         }
         try { this.scene.events.emit('player-weapon-target-cleared', null, slotsToClear); } catch {}
+        try { new EventBus(this.scene).emit(EVENTS.PlayerWeaponTargetCleared, { target: null, slots: slotsToClear }); } catch {}
     }
-
-    for (const [slotKey, target] of this.playerWeaponTargets.entries()) {
+    for (const [slotKey, target] of this.targetService.getTargets().entries()) {
         if (!target.active) {
             this.clearPlayerWeaponTarget(slotKey, target);
         }
@@ -505,7 +329,7 @@ export class WeaponManager {
         const now = this.getNowMs();
         for (let i = 0; i < playerSlots.length; i++) {
             const slotKey = playerSlots[i];
-            const target = this.playerWeaponTargets.get(slotKey);
+            const target = this.targetService.getTargets().get(slotKey) as any;
             if (!target || !target.active) continue;
             const w = this.config.weapons.defs[slotKey];
             if (!w) continue;
@@ -513,8 +337,7 @@ export class WeaponManager {
             const inRange = dist <= w.range;
 
             if (getWeaponType(w) === 'beam') {
-                const shooterTimes = this.beamCooldowns.get(this.combatManager.getPlayerShip()) ?? {};
-                const readyAt = shooterTimes[slotKey] ?? 0;
+                const readyAt = this.cooldowns.getBeamReadyAt(this.combatManager.getPlayerShip(), slotKey);
                 this.emitWeaponOutOfRange(slotKey, now >= readyAt && inRange);
                 // Для луча не выполняем общую обработку снарядов
                 continue;
@@ -560,7 +383,7 @@ export class WeaponManager {
     const dx = target.x - shooter.x;
     const dy = target.y - shooter.y;
     const dist = Math.hypot(dx, dy);
-    const times = this.getShooterTimes(shooter);
+    const times = this.cooldowns.getShooterTimes(shooter);
     const slotsArr = this.weaponSlots;
     for (let i = 0; i < slotsArr.length; i++) {
       const slotKey = slotsArr[i];
@@ -568,18 +391,17 @@ export class WeaponManager {
       if (!w) continue;
       if (getWeaponType(w) === 'beam') {
         const nowMs = this.getNowMs();
-        const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
-        const readyAt = shooterTimes[slotKey] ?? 0;
+        const readyAt = this.cooldowns.getBeamReadyAt(shooter, slotKey);
         if (nowMs >= readyAt && dist <= w.range) {
           if (!isPaused) {
-            this.ensureBeam(shooter, slotKey, w, target, dist);
+            this.beamService.ensureBeam(shooter, slotKey, w, target, dist);
           }
         } else {
-          this.stopBeamIfAny(shooter, slotKey);
+          this.beamService.stopBeamIfAny(shooter, slotKey);
         }
         continue;
       }
-      if (!this.isTargetInRange(shooter, target, w.range)) { this.stopBeamIfAny(shooter, slotKey); continue; }
+      if (!this.isTargetInRange(shooter, target, w.range)) { this.beamService.stopBeamIfAny(shooter, slotKey); continue; }
       if (this.shouldFireNow(times, slotKey, w)) {
         const now = this.getNowMs();
         if (!isPaused) {
@@ -611,144 +433,26 @@ export class WeaponManager {
     const shooterEntry = this.combatManager.findTargetEntry(shooter);
     const shooterFaction = shooterEntry?.faction ?? (shooter === this.combatManager.getPlayerShip() ? 'player' : undefined);
     const shooterOverrides = (shooterEntry as any)?.overrides?.factions;
-
-    const tryCollisions = (prevX?: number, prevY?: number) => {
-      return this.checkProjectileCollisions(prevX, prevY, proj, shooter, target, w, shooterFaction, shooterOverrides);
-    };
-
-    if (isHoming(w)) {
-      const adjustIntervalMs = Math.max(50, this.config.weaponTypes?.homing?.adjustIntervalMs ?? 300);
-      let desiredAngleCached = angle;
-      let lastDesiredUpdate = this.getNowMs();
-      const recomputeDesired = () => {
-        try {
-          const ap = this.getAimedTargetPoint(shooter, target, w) || { x: (target?.x ?? aim.x), y: (target?.y ?? aim.y) };
-          let wAcc = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
-          const sAcc = this.getShipAccuracy(shooter);
-          const baseAcc = Phaser.Math.Clamp(wAcc * sAcc, 0, 1);
-          const exp = (typeof w?.homing?.accuracyExponent === 'number' && w.homing.accuracyExponent > 0) ? w.homing.accuracyExponent : (this.config.weaponTypes?.homing?.accuracyExponent ?? 0.6);
-          const effAcc = Math.pow(baseAcc, exp);
-          const influence = Math.max(0, Math.min(1, w?.homing?.accuracyInfluenceMultiplier ?? this.config.weaponTypes?.homing?.accuracyInfluenceMultiplier ?? 0.35));
-          const cx = (target?.x ?? ap.x);
-          const cy = (target?.y ?? ap.y);
-          let aimX = cx + (ap.x - cx) * influence;
-          let aimY = cy + (ap.y - cy) * influence;
-          const maxErrDeg = Math.max(0, w?.homing?.maxAngleErrorDeg ?? this.config.weaponTypes?.homing?.maxAngleErrorDeg ?? 8);
-          const desiredCoreAngle = Math.atan2((target?.y ?? cy) - (proj as any).y, (target?.x ?? cx) - (proj as any).x);
-          const noisyAngle = Math.atan2(aimY - (proj as any).y, aimX - (proj as any).x);
-          let angleDelta = Phaser.Math.Angle.Wrap(noisyAngle - desiredCoreAngle);
-          const maxDelta = (maxErrDeg * (1 - effAcc)) * Math.PI / 180;
-          angleDelta = Phaser.Math.Clamp(angleDelta, -maxDelta, maxDelta);
-          const clampedAngle = Phaser.Math.Angle.Wrap(desiredCoreAngle + angleDelta);
-          desiredAngleCached = clampedAngle;
-        } catch {
-          const tx = (target?.x ?? aim.x);
-          const ty = (target?.y ?? aim.y);
-          desiredAngleCached = Math.atan2(ty - (proj as any).y, tx - (proj as any).x);
-        }
-      };
-      recomputeDesired();
-      const reverseLaunch = !!(w.__burstShot === true);
-      const backfireDeg = (w?.homing?.backfireDeg ?? this.config.weaponTypes?.homing?.backfireDeg ?? 0);
-      const backfireRand = (w?.homing?.backfireRandomDeg ?? this.config.weaponTypes?.homing?.backfireRandomDeg ?? 0);
-      const backfireJitter = reverseLaunch ? ((backfireDeg + (Math.random()*2 - 1) * backfireRand) * Math.PI/180) : 0;
-      const biasDeg = (w?.homing?.biasDeg ?? this.config.weaponTypes?.homing?.biasDeg ?? 0);
-      const biasRad = (biasDeg !== 0) ? ((Math.random()*2 - 1) * Math.abs(biasDeg) * Math.PI/180) : 0;
-      let currentAngle = (reverseLaunch ? angle + Math.PI + backfireJitter : angle) + biasRad;
-      (proj as any).setRotation?.(currentAngle);
-      const turnDegPerSec = (typeof w?.homing?.turnSpeedDegPerSec === 'number' && w.homing.turnSpeedDegPerSec > 0) ? w.homing.turnSpeedDegPerSec : (this.config.weaponTypes?.homing?.turnSpeedDegPerSec ?? 0);
-      const maxTurnRadPerMs = (turnDegPerSec > 0)
-        ? (turnDegPerSec * Math.PI / 180) / 1000
-        : Infinity;
-      const jitterAmp = Math.max(0, (w?.homing?.jitterDeg ?? this.config.weaponTypes?.homing?.jitterDeg ?? 0)) * Math.PI/180;
-      const jitterHz = Math.max(0, (w?.homing?.jitterHz ?? this.config.weaponTypes?.homing?.jitterHz ?? 0));
-      let jitterPhase = Math.random() * Math.PI * 2;
-
-      const onUpdateHoming = (_t: number, dt: number) => {
-        if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-          return;
-        }
-
-        this.setVisibleByFoW(proj as any);
-
-        const nowMs = this.getNowMs();
-        if (nowMs - lastDesiredUpdate >= adjustIntervalMs) {
-          recomputeDesired();
-          lastDesiredUpdate = nowMs;
-        }
-        let desired = desiredAngleCached;
-        if (jitterAmp > 0 && jitterHz > 0) {
-          jitterPhase += (Math.PI * 2) * jitterHz * (dt/1000);
-          desired += Math.sin(jitterPhase) * jitterAmp;
-        }
-        let delta = Phaser.Math.Angle.Wrap(desired - currentAngle);
-        const maxStep = maxTurnRadPerMs === Infinity ? Math.abs(delta) : (maxTurnRadPerMs * dt);
-        delta = Phaser.Math.Clamp(delta, -maxStep, maxStep);
-        currentAngle = Phaser.Math.Angle.Wrap(currentAngle + delta);
-        (proj as any).setRotation?.(currentAngle);
-
-        const vxH = Math.cos(currentAngle) * speed;
-        const vyH = Math.sin(currentAngle) * speed;
-        const prevX = (proj as any).x;
-        const prevY = (proj as any).y;
-        (proj as any).x = prevX + vxH * (dt/1000);
-        (proj as any).y = prevY + vyH * (dt/1000);
-
-        const col = tryCollisions(prevX, prevY);
-        if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-          this.unregisterProjectileFoW(proj);
-          if (col !== 'hit' && w.hitEffect) {
-            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-          }
-          (proj as any).destroy?.();
-        }
-      };
-      this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-      this.setupProjectileLifetime(proj, lifetimeMs, () => {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-        this.unregisterProjectileFoW(proj);
-        if (w.hitEffect) {
-          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-        }
-        (proj as any).destroy?.();
-      });
-
-      if (shooter === this.combatManager.getPlayerShip()) {
-        try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
+    this.projectileService.startFlight(
+      w,
+      proj,
+      shooter,
+      target,
+      angle,
+      speed,
+      lifetimeMs,
+      shooterFaction,
+      shooterOverrides,
+      {
+        getNowMs: () => this.getNowMs(),
+        isPaused: () => !!(this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()),
+        setVisibleByFoW: (obj: any) => this.setVisibleByFoW(obj),
       }
-      return;
-    }
-
-    const vx = Math.cos(angle) * speed;
-    const vy = Math.sin(angle) * speed;
-
-    const onUpdate = (_t: number, dt: number) => {
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
-      
-      this.setVisibleByFoW(proj as any);
-      const prevX = (proj as any).x;
-      const prevY = (proj as any).y;
-      (proj as any).x = prevX + vx * (dt/1000);
-      (proj as any).y = prevY + vy * (dt/1000);
-      const col = tryCollisions(prevX, prevY);
-      if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-        this.unregisterProjectileFoW(proj);
-        (proj as any).destroy?.();
-      }
-    };
-    this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
-    this.setupProjectileLifetime(proj, lifetimeMs, () => {
-      this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-      this.unregisterProjectileFoW(proj);
-      (proj as any).destroy?.();
-    });
+    );
 
     if (shooter === this.combatManager.getPlayerShip()) {
       try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
+      try { new EventBus(this.scene).emit(EVENTS.PlayerWeaponFired, { slotKey: _slot, target }); } catch {}
     }
   }
 
@@ -801,41 +505,15 @@ export class WeaponManager {
     return offP ?? defaultOffset;
   }
 
-  private getShooterTimes(shooter: any): Record<string, number> {
-    let times = this.lastFireTimesByShooter.get(shooter);
-    if (!times) { times = {}; this.lastFireTimesByShooter.set(shooter, times); }
-    return times;
-  }
+  // getShooterTimes перенесён в CooldownService
 
-  private calculateInterceptTime(rx: number, ry: number, vx: number, vy: number, projectileSpeed: number): number {
-    const maxIterations = 10;
-    const tolerance = 0.1;
-    
-    let t = Math.sqrt(rx * rx + ry * ry) / projectileSpeed;
-    
-    for (let i = 0; i < maxIterations; i++) {
-      const futureX = rx + vx * t;
-      const futureY = ry + vy * t;
-      
-      const distanceToFuture = Math.sqrt(futureX * futureX + futureY * futureY);
-      
-      const newT = distanceToFuture / projectileSpeed;
-      
-      if (Math.abs(newT - t) < tolerance / 1000) {
-        return newT;
-      }
-      
-      t = newT;
-    }
-    
-    return t;
-  }
+  
 
   private getAimedTargetPoint(shooter: any, target: any, w: any) {
     let weaponAccuracy = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
     const shipAccuracy = this.getShipAccuracy(shooter);
     const accuracy = Phaser.Math.Clamp(weaponAccuracy * shipAccuracy, 0, 1);
-    const { vx, vy } = this.getTargetVelocity(target);
+    const { vx, vy } = getTargetVelocity(target);
     
     const projectileSpeed = Math.max(1, w.projectileSpeed || 1);
     const sx = shooter.x;
@@ -852,7 +530,7 @@ export class WeaponManager {
     if (targetSpeed < 1) {
       tHit = distance / projectileSpeed;
     } else {
-      tHit = this.calculateInterceptTime(rx, ry, vx, vy, projectileSpeed);
+      tHit = calculateInterceptTime(rx, ry, vx, vy, projectileSpeed);
       
       if (tHit <= 0 || isNaN(tHit)) {
         tHit = distance / projectileSpeed;
@@ -875,81 +553,7 @@ export class WeaponManager {
     return { x: aimX, y: aimY };
   }
 
-  private ensureBeam(shooter: any, slotKey: string, w: any, target: any, distNow: number) {
-    const inRange = distNow <= w.range;
-    const isValid = shooter?.active && target?.active;
-    const map = this.activeBeams.get(shooter) || new Map();
-    this.activeBeams.set(shooter, map);
-    const state = map.get(slotKey);
-    if (state && state.target !== target) {
-      this.stopBeamIfAny(shooter, slotKey);
-    }
-    if (!inRange || !isValid) {
-      if (state) this.stopBeamIfAny(shooter, slotKey);
-      return;
-    }
-    if (state) {
-      return;
-    }
-    this.stopBeamIfAny(shooter, slotKey);
-    
-    const baseDepth = ((((shooter as any)?.depth) ?? 1) - 0.05);
-    const gfx = this.scene.add.graphics().setDepth(baseDepth);
-    const tickMs = Math.max(10, w?.beam?.tickMs ?? 100);
-    const durationMs = Math.max(tickMs, w?.beam?.durationMs ?? 1000);
-    const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-    const dmgTick = w?.beam?.damagePerTick ?? 1;
-    
-    const timer = this.scene.time.addEvent({ delay: 1000/Math.max(1, w.beam?.ticksPerSecond ?? 10), loop: true, callback: () => {
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
-      if (!this.shouldContinueBeam(shooter, target, w)) { this.stopBeamIfAny(shooter, slotKey); return; }
-      this.applyBeamTickDamage(shooter, target, w);
-    }});
-    
-    const redraw = () => {
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
-      
-      if (!this.shouldContinueBeam(shooter, target, w)) { this.stopBeamIfAny(shooter, slotKey); return; }
-      this.drawBeam(gfx, shooter, target, w);
-    };
-    this.scene.events.on(Phaser.Scenes.Events.UPDATE, redraw);
-    (gfx as any).__beamRedraw = redraw;
-    map.set(slotKey, { gfx, timer, target });
-    if (shooter === this.combatManager.getPlayerShip()) {
-      try { this.scene.events.emit('beam-start', slotKey, durationMs); } catch {}
-    }
-    const durationId = `beam_duration_${slotKey}_${Date.now()}`;
-    const durationTimer = this.scene.time.delayedCall(durationMs, () => {
-      const shooterTimes = this.beamCooldowns.get(shooter) ?? {}; this.beamCooldowns.set(shooter, shooterTimes);
-      const now = this.getNowMs();
-      shooterTimes[slotKey] = now + refreshMs;
-      if (shooter === this.combatManager.getPlayerShip()) {
-        try { this.scene.events.emit('beam-refresh', slotKey, refreshMs); } catch {}
-      }
-      this.stopBeamIfAny(shooter, slotKey);
-      try { this.pauseManager?.unregisterTimer?.(durationId); } catch {}
-    });
-    try { this.pauseManager?.registerTimer?.(durationId, durationTimer); } catch {}
-    
-    if (shooter === this.combatManager.getPlayerShip()) { try { this.scene.events.emit('player-weapon-fired', slotKey, target); } catch {} }
-  }
-
-  private stopBeamIfAny(shooter: any, slotKey: string) {
-    const map = this.activeBeams.get(shooter);
-    if (!map) return;
-    const s = map.get(slotKey);
-    if (!s) return;
-    
-    try { s.timer.remove(false); } catch {}
-    try { const cb = (s.gfx as any).__beamRedraw; if (cb) this.scene.events.off(Phaser.Scenes.Events.UPDATE, cb); } catch {}
-    try { s.gfx.clear(); s.gfx.destroy(); } catch {}
-    
-    map.delete(slotKey);
-  }
+  // ensureBeam/stopBeamIfAny перенесены в BeamService
 
   private spawnHitEffect(x: number, y: number, w: any) {
     const colorNum = Number((w.hitEffect.color as string).replace('#', '0x'));
@@ -958,62 +562,7 @@ export class WeaponManager {
     this.scene.tweens.add({ targets: g, alpha: 0, scale: 1.4, duration: w.hitEffect.durationMs ?? 200, onComplete: () => g.destroy() });
   }
 
-  private updatePlayerWeaponRangeCircles() {
-    const ship = this.combatManager.getPlayerShip();
-    if (ship && this.playerWeaponRangeCircles.size > 0) {
-        for (const [slotKey, circle] of this.playerWeaponRangeCircles.entries()) {
-            if (!circle || !circle.active) continue;
-            circle.setPosition(ship.x, ship.y);
-            const w = this.config.weapons?.defs?.[slotKey];
-            if (w && typeof w.range === 'number') {
-                circle.setRadius(w.range);
-            }
-        }
-    }
-  }
+  // Круги дальности вынесены в RangeUiService
 
-  private togglePlayerWeaponRangeCircle(slotKey: string, show: boolean) {
-    const def = this.config.weapons?.defs?.[slotKey];
-    if (!def || typeof def.range !== 'number') {
-      const old = this.playerWeaponRangeCircles.get(slotKey);
-      if (old) { try { old.setVisible(false); } catch {} }
-      return;
-    }
-    let circle = this.playerWeaponRangeCircles.get(slotKey);
-    if (show) {
-      if (!circle) {
-        const wr = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-        const fillColorNum = Number((wr.color ?? '#4ade80').replace('#','0x'));
-        const fillAlpha = typeof wr.fillAlpha === 'number' ? Phaser.Math.Clamp(wr.fillAlpha, 0, 1) : 0.08;
-        const strokeColorNum = Number((wr.strokeColor ?? wr.color ?? '#4ade80').replace('#','0x'));
-        const strokeAlpha = typeof wr.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr.strokeAlpha, 0, 1) : 0.8;
-        const strokeWidth = typeof wr.strokeWidth === 'number' ? Math.max(0, Math.floor(wr.strokeWidth)) : 1;
-        const ship = this.combatManager.getPlayerShip();
-        circle = this.scene.add.circle(ship?.x ?? 0, ship?.y ?? 0, def.range, fillColorNum, fillAlpha).setDepth(0.35);
-        circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
-        this.playerWeaponRangeCircles.set(slotKey, circle);
-      }
-      const wr2 = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-      const fillColorNum2 = Number((wr2.color ?? '#4ade80').replace('#','0x'));
-      const fillAlpha2 = typeof wr2.fillAlpha === 'number' ? Phaser.Math.Clamp(wr2.fillAlpha, 0, 1) : 0.08;
-      const strokeColorNum2 = Number((wr2.strokeColor ?? wr2.color ?? '#4ade80').replace('#','0x'));
-      const strokeAlpha2 = typeof wr2.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr2.strokeAlpha, 0, 1) : 0.8;
-      const strokeWidth2 = typeof wr2.strokeWidth === 'number' ? Math.max(0, Math.floor(wr2.strokeWidth)) : 1;
-      circle.setFillStyle(fillColorNum2, fillAlpha2);
-      circle.setStrokeStyle(strokeWidth2, strokeColorNum2, strokeAlpha2);
-      circle.setRadius(def.range);
-      const ship = this.combatManager.getPlayerShip();
-      circle.setPosition(ship?.x ?? 0, ship?.y ?? 0);
-      circle.setVisible(true);
-    } else {
-      if (circle) {
-        circle.setVisible(false);
-      }
-    }
-  }
-
-  public destroy() {
-    for (const c of this.playerWeaponRangeCircles.values()) { try { c.destroy(); } catch {} }
-    this.playerWeaponRangeCircles.clear();
-  }
+  public destroy() { this.rangeUi.destroy(); }
 }
