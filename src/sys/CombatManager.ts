@@ -45,7 +45,6 @@ export class CombatManager {
     };
   }>=[];
   private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
-  private playerWeaponTargets: Map<string, Target> = new Map();
   private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
   // ВАЖНО: тайминги и состояния перезарядки/подготовки оружия
   // Хранит время последнего выстрела по слотам для каждого стрелка (NPC/игрок)
@@ -90,10 +89,7 @@ export class CombatManager {
 
     // Обработка снятия паузы для корректировки временных меток
     this.scene.events.on('game-resumed', this.onGameResumed, this);
-    // Подписка на визуальные события выбора слотов оружия (только визуал)
-    this.scene.events.on('weapon-slot-selected', (slotKey: string, selected: boolean) => {
-      try { this.togglePlayerWeaponRangeCircle(slotKey, !!selected); } catch {}
-    });
+    // Подписка на weapon-slot-selected перенесена в WeaponManager
     
 
   }
@@ -311,19 +307,8 @@ export class CombatManager {
   }
 
   public clearPlayerWeaponTargets() {
-    if (this.playerWeaponTargets.size > 0) {
-
-      // Уведомляем UI о сбросе всех назначений
-      const clearedSlots = Array.from(this.playerWeaponTargets.keys());
-      this.playerWeaponTargets.clear();
-      if (clearedSlots.length > 0) {
-        // Скрываем out-of-range текст для всех очищенных слотов
-        for (const slotKey of clearedSlots) {
-          try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-        }
-        // try { this.scene.events.emit('player-weapon-target-cleared', null, clearedSlots); } catch {}
-      }
-    }
+    // Делегируем в WeaponManager и затем обновляем визуальные элементы
+    try { this.weaponManager.clearPlayerWeaponTargets(); } catch {}
     this.refreshSelectionCircleColor();
     this.refreshCombatRings();
     this.refreshCombatUIAssigned();
@@ -335,26 +320,13 @@ export class CombatManager {
   public setPlayerWeaponTarget(slotKey: string, target: any) {
     if (!slotKey) return;
     try {
-      if (!target) {
-        // Снятие цели
-        const had = this.playerWeaponTargets.delete(slotKey);
-        // Остановить beam (если был) и сбросить подсказки
-        this.stopBeamIfAny(this.ship, slotKey);
-        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-        if (had) {
-          try { this.scene.events.emit('player-weapon-target-cleared', null, [slotKey]); } catch {}
-        }
-      } else {
-        this.playerWeaponTargets.set(slotKey, target);
-        // ВАЖНО: немедленно перевести цель в состояние конфронтации к игроку через overrides,
-        // чтобы снаряды не проходили сквозь и AI начал реагировать
-        this.markTargetHostileToPlayer(target);
-      }
+      this.weaponManager.setPlayerWeaponTarget(slotKey, target);
+    } finally {
       // Обновляем визуальные элементы
       this.refreshCombatRings();
       this.refreshCombatUIAssigned();
       this.refreshSelectionCircleColor();
-    } catch {}
+    }
   }
 
   // === Relation Override API (для использования сценариями/системами) ===
@@ -372,7 +344,7 @@ export class CombatManager {
   }
 
   public getPlayerWeaponTargets(): ReadonlyMap<string, Target> {
-    return this.playerWeaponTargets;
+    return this.weaponManager.getPlayerWeaponTargets();
   }
 
   public getHpBarInfoFor(target: Target): { x: number; y: number; width: number; height: number } | null {
@@ -463,167 +435,8 @@ export class CombatManager {
       this.updateEnemiesAI(deltaMs);
     }
 
-    // Сброс назначенных оружий и выбранной цели вне радара
-    const playerRadarRange = this.getRadarRangeFor(this.ship);
-    const slotsToClear: string[] = [];
-    for (const [slot, target] of this.playerWeaponTargets.entries()) {
-      const distToTarget = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, target.x, target.y);
-      if (distToTarget > playerRadarRange) {
-        slotsToClear.push(slot);
-      }
-    }
-    if (slotsToClear.length > 0) {
-      const clearedTargets = new Set<Target>();
-      for (const slot of slotsToClear) {
-        const target = this.playerWeaponTargets.get(slot);
-        if (target) clearedTargets.add(target);
-        this.playerWeaponTargets.delete(slot);
-        // Скрываем надпись OUT OF RANGE, т.к. назначение цели снято
-        try { this.scene.events.emit('weapon-out-of-range', slot, false); } catch {}
-      }
-      try { this.scene.events.emit('player-weapon-target-cleared', null, slotsToClear); } catch {}
-      this.refreshCombatRings();
-      this.refreshCombatUIAssigned();
-      this.refreshSelectionCircleColor();
-    }
-    let anyOverrideCleared = false;
-    for (const t of this.targets) {
-      const ov = (t as any).overrides?.factions;
-      if (ov && ov['player'] === 'confrontation') {
-        const d = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
-        const npcRadar = this.getRadarRangeFor(t.obj);
-        if (d > npcRadar) {
-          delete ov['player'];
-          anyOverrideCleared = true;
-          // Если цель перестала быть враждебной и больше не является боевой (не назначена и не атакует игрока) — снимаем выбранную цель и индикаторы
-          const stillCombat = this.isTargetCombatAssigned(t.obj);
-          if (!stillCombat) {
-            if (this.selectedTarget === t.obj) {
-              this.clearSelection();
-            }
-            try { this.indicatorMgr?.hideNPCBadge(t.obj); } catch {}
-          }
-        }
-      }
-    }
-    if (anyOverrideCleared) {
-      this.refreshCombatRings();
-      this.refreshCombatUIAssigned();
-      this.refreshSelectionCircleColor();
-    }
-
-    // Проверка действительности назначенных целей и сброс недействительных
-    for (const [slotKey, target] of this.playerWeaponTargets.entries()) {
-      if (!target.active) {
-        this.playerWeaponTargets.delete(slotKey);
-        // Отправляем событие weapon-out-of-range для скрытия текста при сбросе недействительной цели
-        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-        // Уведомляем UI о сбросе назначения
-        try { this.scene.events.emit('player-weapon-target-cleared', target, [slotKey]); } catch {}
-      }
-    }
-    
-    // Player fire only по назначенным целям для каждого слота оружия
-    const playerSlots = this.config.player?.weapons ?? [];
-    if (playerSlots.length) {
-      // Используем скорректированное время с учетом паузы
-      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      const times = this.getShooterTimes(this.ship);
-      for (let i = 0; i < playerSlots.length; i++) {
-        const slotKey = playerSlots[i];
-        const target = this.playerWeaponTargets.get(slotKey);
-        if (!target || !target.active) continue;
-        const w = this.config.weapons.defs[slotKey];
-        if (!w) continue;
-        const dx = (target as any).x - this.ship.x;
-        const dy = (target as any).y - this.ship.y;
-        const dist = Math.hypot(dx, dy);
-        // Beam: подготовка в зоне действия, активация после подготовки, затем duration/refresh
-        if ((w.type ?? 'single') === 'beam') {
-          const readyObj = this.beamCooldowns.get(this.ship) ?? {}; this.beamCooldowns.set(this.ship, readyObj);
-          const readyAt = readyObj[slotKey] ?? 0;
-          const prepObj = this.beamPrepUntil.get(this.ship) ?? {}; this.beamPrepUntil.set(this.ship, prepObj);
-          const prepUntil = prepObj[slotKey] ?? 0;
-          if (dist > w.range) {
-            // выйти из зоны — отменяем подготовку и луч
-            if (prepUntil) { delete prepObj[slotKey]; }
-            try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
-            this.stopBeamIfAny(this.ship, slotKey);
-            continue;
-          }
-          try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-          // В зоне: если на кулдауне — ждём; если нет подготовки — начинаем
-          if (now < readyAt) { this.stopBeamIfAny(this.ship, slotKey); continue; }
-          if (!prepUntil) {
-            const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-            prepObj[slotKey] = now + refreshMs;
-            continue;
-          }
-          if (now >= prepUntil) {
-            delete prepObj[slotKey];
-            // Активируем beam только если не на паузе
-            if (!isPaused) {
-              this.ensureBeam(this.ship, slotKey, w, target, dist);
-            }
-          }
-          continue;
-        }
-        // Небимовое оружие: подготовка/зарядка в зоне, выстрел по завершении
-        const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-        if (dist > w.range) {
-          if (this.playerChargeUntil[slotKey]) { delete this.playerChargeUntil[slotKey]; }
-          try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
-          continue;
-        }
-        try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
-        if (!this.playerChargeUntil[slotKey]) {
-          this.playerChargeUntil[slotKey] = now + cooldownMs;
-          continue;
-        }
-        if (now >= this.playerChargeUntil[slotKey]) {
-          // Стреляем только если не на паузе
-          if (!isPaused) {
-            if (this.pauseManager?.getDebugSetting('log_pause_events')) {
-              console.log(`[CombatManager] Weapon ${slotKey} fired: now=${now}, nextReady=${now + cooldownMs}`);
-            }
-            this.playerChargeUntil[slotKey] = now + cooldownMs;
-            const muzzleOffset = this.resolveMuzzleOffset(this.ship, i, { x: 0, y: 0 });
-            const w2 = { ...w, muzzleOffset, __slotIndex: i };
-            const isBurst = ((w2?.burst?.count ?? 1) > 1) || ((w2.type ?? 'single') === 'burst');
-            if (isBurst) this.fireBurstWeapon(slotKey, w2, target as any, this.ship);
-            else this.fireWeapon(slotKey, w2, target as any, this.ship);
-          }
-        }
-      }
-    }
-    // enemies auto fire by intent
-    for (const t of this.targets) {
-      // Используем FSM, но допускаем легаси intent как триггер боя
-      const ctx = this.npcStateManager.getContext(t.obj);
-      const st = ctx?.state;
-      const legacyAttack = t.intent?.type === 'attack' && t.intent.target?.active;
-      const legacyFlee = t.intent?.type === 'flee' && t.intent.target?.active; // retreat не считается боевым
-      // Мирные профили (nonCombat) никогда не стреляют
-      const combatProfile = t.combatAI ? this.config.combatAI?.profiles?.[t.combatAI] : undefined;
-      const isNonCombat = !!combatProfile?.nonCombat;
-      const canShoot = !isNonCombat && ((st === NPCState.COMBAT_ATTACKING) || (st === NPCState.COMBAT_FLEEING) || legacyAttack || legacyFlee);
-      const targetObj = ctx?.targetStabilization?.currentTarget ?? t.intent?.target;
-      if (!targetObj) { continue; }
-      if (!targetObj || !targetObj.active) {
-  
-        continue;
-      }
-      
-      const saved = this.weaponSlots;
-      const slots = (t as any).weaponSlots as string[] | undefined;
-      if (slots && slots.length) this.weaponSlots = slots;
-      
-      // Стреляем в режимах ATTACKING и FLEEING, а также при легаси intent attack/flee
-      if (canShoot) {
-        this.autoFire(t.obj as any, targetObj);
-      }
-      this.weaponSlots = saved;
-    }
+    // Все расчёты оружия делегируем WeaponManager
+    this.weaponManager.update(!!isPaused);
     // update red rings for combat-selected targets
     for (const [tgt, ring] of this.combatRings.entries()) {
       if (!tgt || !tgt.active) { ring.destroy(); this.combatRings.delete(tgt); continue; }
@@ -667,25 +480,14 @@ export class CombatManager {
       }
     }
 
-    // Обновляем позиции кругов радиуса оружия игрока (закреплены на корабле)
-    if (this.ship && this.playerWeaponRangeCircles.size > 0) {
-      for (const [slotKey, circle] of this.playerWeaponRangeCircles.entries()) {
-        if (!circle || !circle.active) continue;
-        circle.setPosition(this.ship.x, this.ship.y);
-        // на случай изменения конфига оружия на лету — обновим радиус
-        const w = this.config.weapons?.defs?.[slotKey];
-        if (w && typeof w.range === 'number') {
-          circle.setRadius(w.range);
-        }
-      }
-    }
+    // Круги радиуса оружия управляются WeaponManager
   }
 
   private refreshSelectionCircleColor() {
     const t = this.selectedTarget;
     if (!t || !this.selectionCircle) return;
     // Красим красным если: (а) цель назначена на оружие игрока ИЛИ (б) цель держит игрока как свою цель
-    const anyOnThis = Array.from(this.playerWeaponTargets.values()).some(v => v === t);
+    const anyOnThis = Array.from(this.weaponManager.getPlayerWeaponTargets().values()).some(v => v === t);
     const rec = this.targets.find(tt => tt.obj === t);
     const targetsPlayer = !!rec?.intent && rec.intent.type === 'attack' && rec.intent.target === this.ship;
     if (anyOnThis || targetsPlayer) {
@@ -699,14 +501,14 @@ export class CombatManager {
 
   private isTargetCombatSelected(target: Target | null): boolean {
     if (!target) return false;
-    for (const t of this.playerWeaponTargets.values()) if (t === target) return true;
+    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t === target) return true;
     return false;
   }
 
   private isTargetCombatAssigned(target: any): boolean {
     if (!target) return false;
     // Проверяем, назначен ли игроком как цель для оружия
-    for (const t of this.playerWeaponTargets.values()) if (t === target) return true;
+    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t === target) return true;
     // Проверяем, атакует ли этот NPC игрока
     const targetEntry = this.targets.find(t => t.obj === target);
     if (targetEntry && targetEntry.intent?.target === this.ship && 
@@ -1635,22 +1437,8 @@ export class CombatManager {
         if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
         // снять информационную цель при необходимости
         if (this.selectedTarget === target) this.clearSelection();
-        // очистить назначения слотов на этот таргет и уведомить UI
-        const removedSlots: string[] = [];
-        for (const [slot, tgt] of this.playerWeaponTargets.entries()) {
-          if (tgt === target) { this.playerWeaponTargets.delete(slot); removedSlots.push(slot); }
-        }
-        if (removedSlots.length) {
-          // Отправляем событие weapon-out-of-range для скрытия надписи перед удалением назначений
-          for (const slot of removedSlots) {
-            try { this.scene.events.emit('weapon-out-of-range', slot, false); } catch {}
-          }
-          try { this.scene.events.emit('player-weapon-target-cleared', target, removedSlots); } catch {}
-        }
-        // убираем из системы движения NPC
-        this.npcMovement.unregisterNPC(target);
-        // убираем из системы состояний NPC
-        this.npcStateManager.unregisterNPC(target);
+        // очистить назначения слотов на этот таргет через WeaponManager и уведомить UI
+        try { this.weaponManager.clearAssignmentsForTarget(target); } catch {}
         // дерегистрируем из fog of war
         if (this.fogOfWar) {
           this.fogOfWar.unregisterObject(target);
@@ -2234,7 +2022,7 @@ export class CombatManager {
 
   private refreshCombatRings() {
     const assigned = new Set<any>();
-    for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t && (t as any).active) assigned.add(t);
     // Добавляем NPC, которые целятся в игрока
     for (const t of this.targets) {
       if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
@@ -2255,7 +2043,7 @@ export class CombatManager {
   }
   private refreshCombatUIAssigned() {
     const assigned = new Set<any>();
-    for (const t of this.playerWeaponTargets.values()) if (t && (t as any).active) assigned.add(t);
+    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t && (t as any).active) assigned.add(t);
     // Добавляем NPC, которые целятся в игрока, для отображения HP-бара
     for (const t of this.targets) {
       if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
@@ -2365,15 +2153,10 @@ export class CombatManager {
     }
   }
   private clearAssignmentsForTarget(objAny: any) {
-    const clearedSlots: string[] = [];
-    for (const [slot, tgt] of Array.from(this.playerWeaponTargets.entries())) {
-      if (tgt === objAny) { this.playerWeaponTargets.delete(slot); clearedSlots.push(slot); }
-    }
-    if (clearedSlots.length) {
-      try { this.scene.events.emit('player-weapon-target-cleared', objAny, clearedSlots); } catch {}
-      this.refreshCombatRings();
-      this.refreshCombatUIAssigned();
-    }
+    // Делегируем очистку назначений в WeaponManager и обновим визуал
+    try { this.weaponManager.clearAssignmentsForTarget(objAny); } catch {}
+    this.refreshCombatRings();
+    this.refreshCombatUIAssigned();
   }
 
   /**
