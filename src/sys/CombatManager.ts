@@ -732,6 +732,19 @@ export class CombatManager {
     return false;
   }
 
+  private isTargetCombatAssigned(target: any): boolean {
+    if (!target) return false;
+    // Проверяем, назначен ли игроком как цель для оружия
+    for (const t of this.playerWeaponTargets.values()) if (t === target) return true;
+    // Проверяем, атакует ли этот NPC игрока
+    const targetEntry = this.targets.find(t => t.obj === target);
+    if (targetEntry && targetEntry.intent?.target === this.ship && 
+        (targetEntry.intent.type === 'attack' || targetEntry.intent.type === 'flee')) {
+      return true;
+    }
+    return false;
+  }
+
   private updateEnemiesAI(deltaMs: number) {
     for (const t of this.targets) {
       if (!t.ai || t.ai.type !== 'ship') continue;
@@ -1691,45 +1704,56 @@ export class CombatManager {
     t.hpBarBg.width = barW;
     t.hpBarFill.width = barW * pct;
     const above = (this.getEffectiveRadius(t.obj as any) + 16);
-    const by = t.obj.y + above;
+    const by = t.obj.y - above;
     const barX = t.obj.x;
     const barY = by;
-    t.hpBarBg.setPosition(barX, barY);
-    t.hpBarFill.setPosition(barX - (barW - barW * pct) * 0.5, barY);
+    t.hpBarBg.setPosition(barX - barW * 0.5, barY);
+    t.hpBarFill.setPosition(barX - barW * 0.5, barY);
 
     try {
-      const isDamaged = t.hp < t.hpMax;
       const isSelected = this.selectedTarget === t.obj;
-      t.hpBarBg.setVisible(isDamaged || isSelected);
-      t.hpBarFill.setVisible(isDamaged || isSelected);
+      // Проверяем, является ли цель назначенной для боя (игрок нацелился на неё или она атакует игрока)
+      const isAssignedForCombat = this.isTargetCombatAssigned(t.obj);
+      // Видимость в тумане войны: показываем только если цель видима
+      const fowVisible = this.fogOfWar ? !!this.fogOfWar.isObjectVisible(t.obj as any) : true;
+      // Показываем HP-бар/бейдж только если цель выбрана или назначена для боя И видима
+      const shouldBeVisible = (isSelected || isAssignedForCombat) && fowVisible;
+      t.hpBarBg.setVisible(shouldBeVisible);
+      t.hpBarFill.setVisible(shouldBeVisible);
 
-      const name = this.resolveDisplayName(t as any) || 'Unknown';
-      const color = this.getRelationColor(this.getRelation('player', (t as any).faction));
-      
-      const ctx = this.npcStateManager.getContext(t.obj);
-      let status = '';
-      if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
-        if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee'; else {
-          const tgt = ctx.targetStabilization.currentTarget;
-          const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
-          status = tgt ? `Attack ${tgtName}` : 'Attack';
-        }
-      } else {
-        if ((t.obj as any).__targetPatrol) status = 'Patrol';
-        else if ((t.obj as any).__targetPlanet) {
-          const planet: any = (t.obj as any).__targetPlanet;
-          const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
-          status = `Moving to "${pname}"`;
-        } else status = 'Patrol';
-      }
       const cx = t.obj.x;
-      // Передаем координаты корабля - IndicatorManager сам позиционирует плашку выше HP бара
-      const cy = t.obj.y;
+      const cy = t.obj.y; // координаты корабля, IndicatorManager сам сместит выше HP
 
-      this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
+      if (shouldBeVisible) {
+        const name = this.resolveDisplayName(t as any) || 'Unknown';
+        const color = this.getRelationColor(this.getRelation('player', (t as any).faction));
+
+        const ctx = this.npcStateManager.getContext(t.obj);
+        let status = '';
+        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
+          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee'; else {
+            const tgt = ctx.targetStabilization.currentTarget;
+            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
+            status = tgt ? `Attack ${tgtName}` : 'Attack';
+          }
+        } else {
+          if ((t.obj as any).__targetPatrol) status = 'Patrol';
+          else if ((t.obj as any).__targetPlanet) {
+            const planet: any = (t.obj as any).__targetPlanet;
+            const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
+            status = `Moving to "${pname}"`;
+          } else status = 'Patrol';
+        }
+
+        this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
+        this.indicatorMgr?.updateNPCBadgeTransform(t.obj, cx, cy);
+      } else {
+        // Скрываем бейдж, чтобы не мигал когда цель не должна быть видимой
+        this.indicatorMgr?.hideNPCBadge(t.obj);
+      }
+
       // The line below is the one we wanted to comment out initially
       // try { (this.indicatorMgr as any).setBadgeWidth?.(t.obj, barW); } catch {}
-      this.indicatorMgr?.updateNPCBadgeTransform(t.obj, cx, cy);
 
     } catch {}
   }
@@ -2295,12 +2319,8 @@ export class CombatManager {
         }
         // Позиционирование плашки синхронизировано в updateHpBar
       } else {
-        // Hide UI if not assigned and not the player's selected info target
-        if (rec.obj !== this.selectedTarget) {
-          rec.hpBarBg.setVisible(false);
-          rec.hpBarFill.setVisible(false);
-          rec.nameLabel?.setVisible(false);
-        }
+        // Не принудительно скрываем HP бары здесь - это делает updateHpBar
+        // на основе более полной логики (поврежден, выбран, участвует в бою)
       }
     }
   }
