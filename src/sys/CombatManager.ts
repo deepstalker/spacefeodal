@@ -9,6 +9,7 @@ import { WeaponManager } from './combat/WeaponManager';
 import { CooldownService } from './combat/weapons/services/CooldownService';
 import { CombatUIManager } from './combat/ui/CombatUIManager';
 import { TargetManager } from './combat/core/TargetManager';
+import { CombatService } from './combat/CombatService';
 import type { TargetEntry, UIDependencies } from './combat/CombatTypes';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
@@ -23,6 +24,7 @@ export class CombatManager {
   private npcStateManager: NPCStateManager;
   private weaponManager: WeaponManager;
   private targetManager: TargetManager;
+  private combatService: CombatService; // Main combat coordination service
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
@@ -81,6 +83,10 @@ export class CombatManager {
     };
     this.uiManager = new CombatUIManager(scene, config, uiDeps);
     
+    // Initialize the main CombatService coordinator
+    this.combatService = new CombatService(scene, config);
+    this.setupCombatServiceIntegration();
+    
     // Страховка от потери полей при ре-инициализациях/горячей перезагрузке
     this.beamPrepUntil = this.beamPrepUntil ?? new Map();
     this.activeBeams = this.activeBeams ?? new Map();
@@ -98,8 +104,25 @@ export class CombatManager {
     // Обработка снятия паузы для корректировки временных меток
     this.scene.events.on('game-resumed', this.onGameResumed, this);
     // Подписка на weapon-slot-selected перенесена в WeaponManager
-    
+  }
 
+  /**
+   * Setup CombatService integration with all subsystems
+   */
+  private setupCombatServiceIntegration(): void {
+    // Set up all dependencies in CombatService
+    this.combatService.setPauseManager(this.pauseManager);
+    this.combatService.setNPCStateManager(this.npcStateManager);
+    this.combatService.setWeaponManager(this.weaponManager);
+    this.combatService.setUIManager(this.uiManager);
+    this.combatService.setTargetManager(this.targetManager);
+    
+    // Initialize graphics for CombatService
+    this.combatService.initializeGraphics();
+    
+    // Configure cross-dependencies
+    this.npcStateManager.setCombatManager(this);
+    this.npcStateManager.setNpcMovementManager(this.npcMovement);
   }
 
   public setIndicatorManager(indicators: IndicatorManager) {
@@ -110,6 +133,20 @@ export class CombatManager {
 
   public getWeaponManager(): WeaponManager {
     return this.weaponManager;
+  }
+
+  /**
+   * Get the CombatService instance (for advanced integrations)
+   */
+  public getCombatService(): CombatService {
+    return this.combatService;
+  }
+
+  /**
+   * Delegate target selection to CombatService
+   */
+  public getCombatServiceSelectedTarget(): any {
+    return this.combatService.getSelectedTarget();
   }
 
   // ПУБЛИЧНЫЕ ОБЁРТКИ ДЛЯ ДРУГИХ СИСТЕМ
@@ -142,6 +179,7 @@ export class CombatManager {
 
   attachShip(ship: Phaser.GameObjects.Image) {
     this.ship = ship;
+    this.combatService.setShip(ship);
   }
 
   setFogOfWar(fogOfWar: EnhancedFogOfWar) {
@@ -153,6 +191,8 @@ export class CombatManager {
     this.pauseManager = pauseManager;
     // Передаем pauseManager в систему движения NPC
     this.npcMovement.setPauseManager(pauseManager);
+    // Also configure CombatService
+    this.combatService.setPauseManager(pauseManager);
   }
 
   private onGameResumed(data: { pausedTimeMs: number }) {
@@ -290,6 +330,10 @@ export class CombatManager {
   private selectTarget(target: Target) {
     if (this.selectedTarget === target) return;
     this.selectedTarget = target;
+    
+    // Delegate to CombatService for coordinated target selection
+    this.combatService.selectTarget(target);
+    
     const base = this.getEffectiveRadius(target as any) + 5;
     this.selectionBaseRadius = base;
     if (!this.selectionCircle) {
@@ -325,6 +369,10 @@ export class CombatManager {
 
   private clearSelection() {
     this.selectedTarget = null;
+    
+    // Delegate to CombatService
+    this.combatService.selectTarget(null);
+    
     if (this.selectionCircle) {
       this.selectionCircle.setVisible(false);
     }
@@ -373,39 +421,6 @@ export class CombatManager {
     this.weaponManager.update(!!isPaused);
     // Обновляем UI через CombatUIManager
     this.uiManager.refreshCombatIndicators();
-
-    // Централизованное обновление плашек-индикаторов
-    for (const t of this.targets) {
-      if (t.obj === this.selectedTarget) {
-        const name = (t.obj as any).shipName ?? (t.shipId ?? `NPC #${(t.obj as any).__uniqueId}`);
-        const color = this.getRelationColor(this.getRelation('player', t.faction));
-        const cx = t.obj.x;
-        // Передаем координаты корабля - IndicatorManager сам позиционирует плашку выше HP бара
-        const cy = t.obj.y;
-
-        const ctx = this.npcStateManager.getContext(t.obj);
-        let status = '';
-        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
-          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee';
-          else {
-            const tgt = ctx.targetStabilization.currentTarget;
-            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
-            status = tgt ? `Attack ${tgtName}` : 'Attack';
-          }
-        } else {
-          if ((t.obj as any).__targetPatrol) status = 'Patrol';
-          else if ((t.obj as any).__targetPlanet) {
-            const planet: any = (t.obj as any).__targetPlanet;
-            const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
-            status = `Moving to "${pname}"`;
-          } else status = 'Patrol';
-        }
-
-        this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
-      } else {
-        this.indicatorMgr?.hideNPCBadge(t.obj);
-      }
-    }
 
     // Круги радиуса оружия управляются WeaponManager
   }
@@ -1197,7 +1212,7 @@ export class CombatManager {
     if (state === 'docking' || state === 'docked' || state === 'undocking') {
       return;
     }
-    const t = this.targets.find(tt => tt.obj === target);
+    const t = this.targetManager.getTarget(target);
     if (t) {
       t.hp -= damage;
       if (t.hp < 0) t.hp = 0;
@@ -1297,7 +1312,7 @@ export class CombatManager {
         if (attacker === this.ship) {
           (t as any).overrides.factions['player'] = 'confrontation';
         } else {
-          const srcEntry = this.targets.find(e => e.obj === attacker);
+          const srcEntry = this.targetManager.getTarget(attacker);
           const srcFaction = srcEntry?.faction;
           if (srcFaction) (t as any).overrides.factions[srcFaction] = 'confrontation';
         }
@@ -1305,7 +1320,7 @@ export class CombatManager {
       if (t.hp <= 0) {
         if (process.env.NODE_ENV === 'development') {
           console.log(`[Combat] Destroying NPC ${t.shipId} #${(target as any).__uniqueId}`, {
-            wasTargetOf: this.targets.filter(tt => tt.intent?.target === target).map(tt => `${tt.shipId}#${(tt.obj as any).__uniqueId}`)
+            wasTargetOf: this.targetManager.getAllTargets().filter(tt => tt.intent?.target === target).map(tt => `${tt.shipId}#${(tt.obj as any).__uniqueId}`)
           });
         }
         

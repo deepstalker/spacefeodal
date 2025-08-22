@@ -263,6 +263,39 @@ export class CombatUIManager {
       circle.setPosition(ship.x, ship.y);
     }
   }
+
+  /**
+   * Очистить недействительные индикаторы
+   * ДОБАВЛЕНО ДЛЯ СОВМЕСТИМОСТИ С CombatService
+   */
+  cleanupInvalidIndicators(): void {
+    if (this.indicatorMgr) {
+      this.indicatorMgr.cleanupInvalidNPCBadges();
+    }
+  }
+
+  /**
+   * Показать индикатор над объектом
+   * ДОБАВЛЕНО ДЛЯ СОВМЕСТИМОСТИ С CombatService
+   */
+  showIndicator(x: number, y: number, name: string, color?: number): void {
+    // Находим объект по координатам и показываем индикатор
+    // В текущей реализации используется showOrUpdateNPCBadge через updateHpBar
+    // Этот метод добавлен для совместимости с существующим API
+    if (this.indicatorMgr) {
+      // Создаем временный объект для совместимости
+      const tempObj = { x, y, active: true };
+      const colorStr = color ? `#${color.toString(16).padStart(6, '0')}` : '#ffffff';
+      
+      this.indicatorMgr.showOrUpdateNPCBadge(tempObj, {
+        name,
+        status: '',
+        color: colorStr,
+        x,
+        y
+      });
+    }
+  }
   
   /**
    * Очистка при уничтожении

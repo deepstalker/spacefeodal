@@ -440,6 +440,200 @@ export class CombatAI {
     return closest;
   }
   
+  // === Advanced AI Decision Methods ===
+  
+  /**
+   * Process sensor-based reactions for non-combat NPCs
+   * Extracted from CombatManager.updateSensors()
+   */
+  processSensorReactions(context: NPCStateContext): CombatDecision | null {
+    const combat = this.combatManager || (this.scene as any).combat;
+    const obj = context.obj;
+    const faction = context.faction;
+    const radar = combat?.getRadarRangeForPublic?.(obj) ?? 800;
+    
+    // Get AI profile and reactions
+    const aiProfile = this.getAIProfile(context);
+    const reactions = aiProfile?.sensors?.react?.onFaction;
+    if (!reactions) return null;
+    
+    // Find all entities in sensor range
+    const sensed: { obj: any; faction: string; }[] = [];
+    const all = combat?.getAllNPCs?.() ?? [];
+    
+    for (const target of all) {
+      if (target === obj || !target.obj?.active) continue;
+      
+      const distance = Phaser.Math.Distance.Between(obj.x, obj.y, target.obj.x, target.obj.y);
+      if (distance > radar) continue;
+      
+      // Skip docked targets
+      const state = target.obj.__state;
+      if (state === 'docked' || state === 'docking') continue;
+      
+      sensed.push({ obj: target.obj, faction: target.faction });
+    }
+    
+    // Check player
+    const player = combat?.getPlayerShip?.();
+    if (player && player.active) {
+      const distance = Phaser.Math.Distance.Between(obj.x, obj.y, player.x, player.y);
+      if (distance <= radar) {
+        sensed.push({ obj: player, faction: 'player' });
+      }
+    }
+    
+    // Sort to prefer non-pirate targets first (avoids mutual pirate selection)
+    const sorted = sensed.sort((a, b) => (a.faction === 'pirate' ? 1 : 0) - (b.faction === 'pirate' ? 1 : 0));
+    
+    for (const s of sorted) {
+      const relation = this.getFactionRelation(faction, s.faction);
+      let action = reactions[relation] ?? 'ignore';
+      
+      // Special pirate rule: retreat instead of attack when player is within weapon range
+      if (faction === 'pirate' && s.obj === player && action === 'attack') {
+        const weaponRange = this.getMaxWeaponRange(context);
+        const distanceToPlayer = Phaser.Math.Distance.Between(obj.x, obj.y, player.x, player.y);
+        
+        if (weaponRange > 0 && distanceToPlayer <= weaponRange) {
+          action = 'retreat';
+        }
+      }
+      
+      // Skip docked targets
+      if (s.obj.__state === 'docked' || s.obj.__state === 'docking') continue;
+      
+      if (action === 'attack') {
+        return {
+          action: 'attack',
+          target: s.obj,
+          priority: 75,
+          reasoning: `Sensor reaction: ${action} on ${relation} ${s.faction}`
+        };
+      }
+      
+      if (action === 'flee') {
+        return {
+          action: 'flee',
+          target: s.obj,
+          priority: 85,
+          reasoning: `Sensor reaction: ${action} from ${relation} ${s.faction}`
+        };
+      }
+      
+      if (action === 'retreat') {
+        return {
+          action: 'retreat',
+          target: s.obj,
+          priority: 80,
+          reasoning: `Sensor reaction: ${action} from ${relation} ${s.faction}`
+        };
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Check if aggression should cool down and clear player hostility
+   * Extracted from CombatManager aggression cooldown logic
+   */
+  checkAggressionCooldown(context: NPCStateContext): boolean {
+    const combat = this.combatManager || (this.scene as any).combat;
+    const all = combat?.getAllNPCs?.() ?? [];
+    const targetEntry = all.find((r: any) => r.obj === context.obj);
+    
+    if (!targetEntry || !targetEntry.overrides?.factions) return false;
+    
+    const now = this.scene.time.now;
+    const timeSinceLastDamage = now - context.aggression.lastDamageTime;
+    const timeSinceLastCombat = now - context.aggression.lastCombatTime;
+    
+    // Clear player hostility if enough time has passed and aggression is low
+    if (timeSinceLastDamage > 15000 && // 15 sec since last damage
+        timeSinceLastCombat > 10000 &&  // 10 sec since last combat
+        context.aggression.level < 0.2) { // very low aggression
+      
+      if (targetEntry.overrides.factions['player'] === 'confrontation') {
+        delete targetEntry.overrides.factions['player'];
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[AI] NPC cooled down, clearing player hostility', {
+            shipId: targetEntry.shipId,
+            id: (context.obj as any).__uniqueId,
+            aggressionLevel: context.aggression.level.toFixed(2)
+          });
+        }
+        
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Handle out-of-range attacker response
+   * Extracted from CombatManager outdistance logic
+   */
+  handleOutOfRangeAttacker(context: NPCStateContext, attacker: any): CombatDecision | null {
+    const combat = this.combatManager || (this.scene as any).combat;
+    const obj = context.obj;
+    const radar = combat?.getRadarRangeForPublic?.(obj) ?? 800;
+    
+    const distance = Phaser.Math.Distance.Between(obj.x, obj.y, attacker.x, attacker.y);
+    
+    if (distance > radar) {
+      // Attacker is outside radar range
+      const aiProfile = this.getAIProfile(context);
+      const behavior = aiProfile?.behavior;
+      
+      // Different behaviors for different NPC types
+      if (behavior === 'planet_trader' || behavior === 'orbital_trade') {
+        return {
+          action: 'flee',
+          target: attacker,
+          priority: 88,
+          reasoning: `Trader fleeing from out-of-range attacker (distance: ${distance.toFixed(0)})`
+        };
+      } else {
+        // Combat units pursue the attacker
+        return {
+          action: 'attack',
+          target: attacker,
+          priority: 75,
+          reasoning: `Pursuing out-of-range attacker (distance: ${distance.toFixed(0)})`
+        };
+      }
+    } else {
+      // Attacker is within radar range - engage immediately
+      return {
+        action: 'attack',
+        target: attacker,
+        priority: 85,
+        reasoning: `Engaging attacker within radar range (distance: ${distance.toFixed(0)})`
+      };
+    }
+  }
+  
+  /**
+   * Get maximum weapon range for this NPC
+   */
+  private getMaxWeaponRange(context: NPCStateContext): number {
+    const combat = this.combatManager || (this.scene as any).combat;
+    const all = combat?.getAllNPCs?.() ?? [];
+    const targetEntry = all.find((r: any) => r.obj === context.obj);
+    
+    if (!targetEntry?.weaponSlots) return 0;
+    
+    const maxRange = targetEntry.weaponSlots.reduce((max: number, slot: string) => {
+      const weaponDef = this.config.weapons?.defs?.[slot];
+      return Math.max(max, weaponDef?.range ?? 0);
+    }, 0);
+    
+    return maxRange;
+  }
+  
   // === Decision Validation ===
   
   /**
