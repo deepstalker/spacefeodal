@@ -7,6 +7,9 @@ import { RelationOverrideManager } from './RelationOverrideManager';
 import { IndicatorManager } from './IndicatorManager';
 import { WeaponManager } from './combat/WeaponManager';
 import { CooldownService } from './combat/weapons/services/CooldownService';
+import { CombatUIManager } from './combat/ui/CombatUIManager';
+import { TargetManager } from './combat/core/TargetManager';
+import type { TargetEntry, UIDependencies } from './combat/CombatTypes';
 
 type Target = Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean };
 
@@ -19,6 +22,7 @@ export class CombatManager {
   private fogOfWar?: EnhancedFogOfWar;
   private npcStateManager: NPCStateManager;
   private weaponManager: WeaponManager;
+  private targetManager: TargetManager;
   private ship!: Phaser.GameObjects.Image;
   private selectedTarget: Target | null = null;
   private selectionCircle?: Phaser.GameObjects.Arc;
@@ -26,27 +30,13 @@ export class CombatManager {
   private selectionBaseRadius = 70;
   private selectionPulsePhase = 0;
   
-  private targets: Array<{
-    obj: Phaser.GameObjects.GameObject & { x: number; y: number; active: boolean; rotation?: number };
-    hp: number; hpMax: number;
-    hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle;
-    nameLabel?: Phaser.GameObjects.Text;
-    ai?: { preferRange: number; retreatHpPct: number; type: 'ship' | 'static'; speed: number; disposition?: 'neutral' | 'enemy' | 'ally'; behavior?: string };
-    weaponSlots?: string[];
-    shipId?: string;
-    faction?: string;
-    combatAI?: string;
-    aiProfileKey?: string;
-    intent?: { type: 'attack' | 'flee' | 'retreat'; target: any } | null;
-    overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'> };
-    damageLog?: {
-      firstAttacker?: any;
-      totalDamageBySource?: Map<any, number>;
-      lastDamageTimeBySource?: Map<any, number>;
-    };
-  }>=[];
-  private combatRings: Map<any, Phaser.GameObjects.Arc> = new Map();
-  private playerWeaponRangeCircles: Map<string, Phaser.GameObjects.Arc> = new Map();
+  // Backward compatibility getter - delegates to TargetManager
+  // DEPRECATED: Gradually migrate all usages to targetManager directly
+  private get targets() {
+    return this.targetManager.getAllTargets();
+  }
+  // UI elements moved to CombatUIManager
+  private uiManager!: CombatUIManager;
   // ВАЖНО: тайминги и состояния перезарядки/подготовки оружия
   // Кулдауны централизованы в CooldownService
   // Время окончания подготовки лучевого оружия по стрелкам и слотам
@@ -69,6 +59,28 @@ export class CombatManager {
     this.npcMovement = new NPCMovementManager(scene, config);
     this.npcStateManager = new NPCStateManager(scene, config);
     this.weaponManager = new WeaponManager(scene, config, this);
+    
+    // Initialize TargetManager with dependencies
+    this.targetManager = new TargetManager(scene, config);
+    this.targetManager.setNpcStateManager(this.npcStateManager);
+    this.targetManager.setNpcMovement(this.npcMovement);
+    
+    // Initialize UI Manager with dependencies
+    const uiDeps: UIDependencies = {
+      getTargets: () => this.targetManager.getAllTargets(),
+      getSelectedTarget: () => this.selectedTarget,
+      getPlayerShip: () => this.ship,
+      getEffectiveRadius: (obj: any) => this.getEffectiveRadius(obj),
+      getRelation: (ofFaction: string | undefined, otherFaction: string | undefined, overrides?: any) => 
+        this.getRelation(ofFaction, otherFaction, overrides),
+      getRelationColor: (relation: string) => this.getRelationColor(relation),
+      resolveDisplayName: (target: any) => this.resolveDisplayName(target),
+      isTargetCombatAssigned: (target: any) => this.isTargetCombatAssigned(target),
+      getWeaponManager: () => this.weaponManager,
+      getNpcStateManager: () => this.npcStateManager
+    };
+    this.uiManager = new CombatUIManager(scene, config, uiDeps);
+    
     // Страховка от потери полей при ре-инициализациях/горячей перезагрузке
     this.beamPrepUntil = this.beamPrepUntil ?? new Map();
     this.activeBeams = this.activeBeams ?? new Map();
@@ -76,7 +88,7 @@ export class CombatManager {
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
     // Централизованный менеджер временных переопределений отношений
     this.relationOverrides = new RelationOverrideManager(scene, {
-      getTargets: () => this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides })),
+      getTargets: () => this.targetManager.getPublicTargetEntries(),
       getPlayer: () => this.ship,
       getRadarRangeFor: (o: any) => this.getRadarRangeFor(o),
       getNpcContext: (o: any) => this.npcStateManager.getContext(o),
@@ -92,6 +104,8 @@ export class CombatManager {
 
   public setIndicatorManager(indicators: IndicatorManager) {
     this.indicatorMgr = indicators;
+    this.uiManager.setIndicatorManager(indicators);
+    this.targetManager.setIndicatorManager(indicators);
   }
 
   public getWeaponManager(): WeaponManager {
@@ -100,11 +114,10 @@ export class CombatManager {
 
   // ПУБЛИЧНЫЕ ОБЁРТКИ ДЛЯ ДРУГИХ СИСТЕМ
   public getTargetEntries(): ReadonlyArray<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }; intent?: any; combatAI?: string; weaponSlots?: string[]; shipId?: string }>{
-    return this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides, intent: (t as any).intent, combatAI: (t as any).combatAI, weaponSlots: (t as any).weaponSlots, shipId: (t as any).shipId }));
+    return this.targetManager.getPublicTargetEntries();
   }
   public findTargetEntry(obj: any): { obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> }; intent?: any; combatAI?: string; weaponSlots?: string[]; shipId?: string } | undefined {
-    const t = this.targets.find(tt => tt.obj === obj);
-    return t ? { obj: t.obj, faction: t.faction, overrides: t.overrides, intent: (t as any).intent, combatAI: (t as any).combatAI, weaponSlots: (t as any).weaponSlots, shipId: (t as any).shipId } : undefined;
+    return this.targetManager.findPublicTargetEntry(obj);
   }
   public getNpcStateManager(): NPCStateManager { return this.npcStateManager; }
   public getEffectiveRadiusPublic(obj: any): number { return this.getEffectiveRadius(obj); }
@@ -113,18 +126,18 @@ export class CombatManager {
   public isTargetCombatSelectedPublic(target: any): boolean { return this.isTargetCombatSelected(target); }
 
   public clearIntentFor(obj: any) {
-    const entry = this.targets.find(t => t.obj === obj);
-    if (entry) (entry as any).intent = null;
+    const target = this.targetManager.getTarget(obj);
+    if (target) target.intent = null;
   }
   public setAIProfileFor(obj: any, profileKey: string) {
-    const entry = this.targets.find(t => t.obj === obj);
-    if (!entry) return;
+    const target = this.targetManager.getTarget(obj);
+    if (!target) return;
     const profile = this.config.aiProfiles.profiles[profileKey];
     if (!profile) return;
-    entry.aiProfileKey = profileKey;
-    entry.ai = entry.ai || ({ type: 'ship', preferRange: 0, speed: 0 } as any);
-    (entry.ai as any).behavior = profile.behavior;
-    (entry.ai as any).retreatHpPct = profile.combat?.retreatHpPct ?? 0;
+    target.aiProfileKey = profileKey;
+    target.ai = target.ai || ({ type: 'ship', preferRange: 0, speed: 0 } as any);
+    (target.ai as any).behavior = profile.behavior;
+    (target.ai as any).retreatHpPct = profile.combat?.retreatHpPct ?? 0;
   }
 
   attachShip(ship: Phaser.GameObjects.Image) {
@@ -133,6 +146,7 @@ export class CombatManager {
 
   setFogOfWar(fogOfWar: EnhancedFogOfWar) {
     this.fogOfWar = fogOfWar;
+    this.targetManager.setFogOfWar(fogOfWar);
   }
 
   setPauseManager(pauseManager: any) {
@@ -155,58 +169,13 @@ export class CombatManager {
   
 
   getTargetObjects(): Phaser.GameObjects.GameObject[] {
-    return this.targets.map(t => t.obj as Phaser.GameObjects.GameObject);
+    return this.targetManager.getTargetObjects();
   }
 
   getSelectedTarget(): Target | null { return this.selectedTarget; }
 
   spawnNPCPrefab(prefabKey: string, x: number, y: number) {
-    const prefab = this.config.stardwellers?.prefabs?.[prefabKey];
-    const shipDefId = prefab?.shipId ?? prefabKey; // allow direct ship id fallback
-    const ship = this.config.ships.defs[shipDefId] ?? this.config.ships.defs[this.config.ships.current];
-    if (!ship) { return null; }
-    let obj: any;
-    const s = ship.sprite;
-    const texKey = (s.key && this.scene.textures.exists(s.key)) ? s.key : (this.scene.textures.exists('ship_alpha') ? 'ship_alpha' : 'ship_alpha_public');
-    obj = this.scene.add.image(x, y, texKey).setDepth(0.8);
-    (obj as any).__prefabKey = prefabKey;
-    obj.setOrigin(s.origin?.x ?? 0.5, s.origin?.y ?? 0.5);
-    obj.setDisplaySize(s.displaySize?.width ?? 64, s.displaySize?.height ?? 128);
-    // Присваиваем уникальный ID
-    (obj as any).__uniqueId = ++CombatManager.npcCounter;
-    // Начальная ориентация — по носу из конфига
-    obj.setRotation(Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0));
-    // Запомним базовый масштаб после применения displaySize
-    (obj as any).__baseScaleX = obj.scaleX;
-    (obj as any).__baseScaleY = obj.scaleY;
-    obj.setAlpha(1);
-    obj.setVisible(true);
-    (obj as any).__noseOffsetRad = Phaser.Math.DegToRad(s.noseOffsetDeg ?? 0);
-    const barW = 192;
-    const above = (Math.max(obj.displayWidth, obj.displayHeight) * 0.5) + 16;
-    const bg = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x111827).setOrigin(0, 0.5).setDepth(0.5);
-    (bg as any).__baseWidth = barW;
-    const fill = this.scene.add.rectangle(obj.x - barW/2, obj.y - above, barW, 8, 0x22c55e).setOrigin(0, 0.5).setDepth(0.6);
-    bg.setVisible(false); fill.setVisible(false);
-    const aiProfileName = prefab?.aiProfile ?? 'planet_trader';
-    const profile = this.config.aiProfiles.profiles[aiProfileName] ?? { behavior: 'static' } as any;
-    const ai = { preferRange: 0, retreatHpPct: profile.combat?.retreatHpPct ?? 0, type: 'ship', behavior: profile.behavior } as any;
-    const entry: any = { obj, hp: ship.hull ?? 100, hpMax: ship.hull ?? 100, hpBarBg: bg, hpBarFill: fill, ai, shipId: prefab?.shipId ?? shipDefId, faction: prefab?.faction, combatAI: prefab?.combatAI, aiProfileKey: aiProfileName, intent: null };
-    if (prefab?.weapons && Array.isArray(prefab.weapons)) entry.weaponSlots = prefab.weapons.slice(0);
-    this.targets.push(entry);
-    
-    // Регистрируем NPC в системе движения
-    this.npcMovement.registerNPC(obj, shipDefId, prefab?.combatAI);
-    
-    // Регистрируем NPC в новой системе состояний
-    this.npcStateManager.registerNPC(obj, aiProfileName, prefab?.combatAI, prefab?.faction);
-    
-    // Регистрируем NPC в fog of war как динамический объект
-    if (this.fogOfWar) {
-      this.fogOfWar.registerDynamicObject(obj, DynamicObjectType.NPC);
-    }
-    
-    return obj as Target;
+    return this.targetManager.spawnNPCPrefab(prefabKey, x, y) as Target;
   }
 
   // enemies-by-config removed — use spawnNPCPrefab with stardwellers prefabs
@@ -231,54 +200,25 @@ export class CombatManager {
   }
 
   public findTargetAt(wx: number, wy: number) {
-    // Фильтруем цели в состоянии docking/docked/undocking - их нельзя выбирать для боя
-    const availableTargets = this.targets.filter(t => {
-      const state = (t.obj as any).__state;
-      const isDockingState = state === 'docking' || state === 'docked' || state === 'undocking';
-      if (isDockingState) {
-
-      }
-      return !isDockingState;
-    });
+    const target = this.targetManager.findTargetAt(wx, wy);
     
-    // Сначала проверим попадание по кругу вокруг объекта
-    let hit = availableTargets.find(t => {
-      const rad = this.getEffectiveRadius(t.obj as any) + 12;
-      return Phaser.Math.Distance.Between(t.obj.x, t.obj.y, wx, wy) <= rad;
-    });
-    if (hit) return hit;
-    // Также считаем попаданием клики по области HP-бара
-    hit = availableTargets.find(t => {
-      const bg = t.hpBarBg;
-      if (!bg || !bg.visible) return false;
-      const x1 = bg.x, y1 = bg.y - bg.height * 0.5;
-      const x2 = bg.x + bg.width, y2 = bg.y + bg.height * 0.5;
-      return wx >= x1 && wx <= x2 && wy >= y1 && wy <= y2;
-    }) as any;
-    if (hit) return hit;
-    // Последняя попытка: клик рядом с объектом в прямоугольнике дисплея
-    hit = availableTargets.find(t => {
-      const obj: any = t.obj;
-      // Если цель NPC — игрок, но игрок вне радара этого NPC, сбрасываем атакующий intent
-      if (t.intent?.type === 'attack' && t.intent.target === this.ship) {
-        const radar = this.getRadarRangeFor(t.obj);
-        const dToPlayer = Phaser.Math.Distance.Between(t.obj.x, t.obj.y, this.ship.x, this.ship.y);
+    if (target) {
+      // Проверяем валидность intentа для найденной цели
+      if (target.intent?.type === 'attack' && target.intent.target === this.ship) {
+        const radar = this.getRadarRangeFor(target.obj);
+        const dToPlayer = Phaser.Math.Distance.Between(target.obj.x, target.obj.y, this.ship.x, this.ship.y);
         if (dToPlayer > radar) {
-          t.intent = null;
-          const context = this.npcStateManager.getContext(obj);
+          target.intent = null;
+          const context = this.npcStateManager.getContext(target.obj);
           if (context) {
             context.targetStabilization.currentTarget = null;
             context.targetStabilization.targetScore = 0;
           }
         }
       }
-      const w = obj.displayWidth ?? obj.width ?? 128;
-      const h = obj.displayHeight ?? obj.height ?? 128;
-      const x1 = obj.x - w * 0.5, y1 = obj.y - h * 0.5;
-      const x2 = obj.x + w * 0.5, y2 = obj.y + h * 0.5;
-      return wx >= x1 && wx <= x2 && wy >= y1 && wy <= y2;
-    }) as any;
-    return hit ?? null;
+    }
+    
+    return target;
   }
 
   public forceSelectTarget(target: Target) {
@@ -306,8 +246,7 @@ export class CombatManager {
     // Делегируем в WeaponManager и затем обновляем визуальные элементы
     try { this.weaponManager.clearPlayerWeaponTargets(); } catch {}
     this.refreshSelectionCircleColor();
-    this.refreshCombatRings();
-    this.refreshCombatUIAssigned();
+    this.uiManager.refreshCombatIndicators();
   }
 
   /**
@@ -319,8 +258,7 @@ export class CombatManager {
       this.weaponManager.setPlayerWeaponTarget(slotKey, target);
     } finally {
       // Обновляем визуальные элементы
-      this.refreshCombatRings();
-      this.refreshCombatUIAssigned();
+      this.uiManager.refreshCombatIndicators();
       this.refreshSelectionCircleColor();
     }
   }
@@ -433,15 +371,8 @@ export class CombatManager {
 
     // Все расчёты оружия делегируем WeaponManager
     this.weaponManager.update(!!isPaused);
-    // update red rings for combat-selected targets
-    for (const [tgt, ring] of this.combatRings.entries()) {
-      if (!tgt || !tgt.active) { ring.destroy(); this.combatRings.delete(tgt); continue; }
-      const base = this.getEffectiveRadius(tgt as any) + 5;
-      ring.setRadius(base);
-      ring.setPosition((tgt as any).x, (tgt as any).y);
-    }
-    // ensure HP bars for all combat targets remain visible
-    this.refreshCombatUIAssigned();
+    // Обновляем UI через CombatUIManager
+    this.uiManager.refreshCombatIndicators();
 
     // Централизованное обновление плашек-индикаторов
     for (const t of this.targets) {
@@ -532,7 +463,7 @@ export class CombatManager {
           });
         }
         // Не выходим из функции: ниже отработает логика сенсоров (flee/escort/прочее)
-        this.updateHpBar(t as any);
+        this.uiManager.updateHpBar(t as TargetEntry);
       }
       
       const retreat = ((): number => {
@@ -864,7 +795,7 @@ export class CombatManager {
       }
       
       // update HP bar follow
-      this.updateHpBar(t as any);
+      this.uiManager.updateHpBar(t as TargetEntry);
     }
   }
 
@@ -1270,7 +1201,7 @@ export class CombatManager {
     if (t) {
       t.hp -= damage;
       if (t.hp < 0) t.hp = 0;
-      this.updateHpBar(t);
+      this.uiManager.updateHpBar(t as TargetEntry);
       this.floatDamageText(target.x, target.y - 70, damage);
       
       // ОТЛАДКА: логируем все атаки ПЕРЕД registerDamage
@@ -1445,68 +1376,7 @@ export class CombatManager {
     }
   }
 
-  private updateHpBar(t: { obj: any; hp: number; hpMax: number; hpBarBg: Phaser.GameObjects.Rectangle; hpBarFill: Phaser.GameObjects.Rectangle; nameLabel?: Phaser.GameObjects.Text }) {
-    const pct = Phaser.Math.Clamp(t.hp / Math.max(1, t.hpMax), 0, 1);
-    const baseW = ((t.hpBarBg as any).__baseWidth as number) || (t.hpBarBg?.width as number) || 192;
-    const extra = 64;
-    const maxByShip = Math.max(32, (t.obj as any).displayWidth + extra);
-    const barW = Math.min(baseW, maxByShip);
-    t.hpBarBg.width = barW;
-    t.hpBarFill.width = barW * pct;
-    const above = (this.getEffectiveRadius(t.obj as any) + 16);
-    const by = t.obj.y - above;
-    const barX = t.obj.x;
-    const barY = by;
-    t.hpBarBg.setPosition(barX - barW * 0.5, barY);
-    t.hpBarFill.setPosition(barX - barW * 0.5, barY);
 
-    try {
-      const isSelected = this.selectedTarget === t.obj;
-      // Проверяем, является ли цель назначенной для боя (игрок нацелился на неё или она атакует игрока)
-      const isAssignedForCombat = this.isTargetCombatAssigned(t.obj);
-      // Видимость в тумане войны: показываем только если цель видима
-      const fowVisible = this.fogOfWar ? !!this.fogOfWar.isObjectVisible(t.obj as any) : true;
-      // Показываем HP-бар/бейдж только если цель выбрана или назначена для боя И видима
-      const shouldBeVisible = (isSelected || isAssignedForCombat) && fowVisible;
-      t.hpBarBg.setVisible(shouldBeVisible);
-      t.hpBarFill.setVisible(shouldBeVisible);
-
-      const cx = t.obj.x;
-      const cy = t.obj.y; // координаты корабля, IndicatorManager сам сместит выше HP
-
-      if (shouldBeVisible) {
-        const name = this.resolveDisplayName(t as any) || 'Unknown';
-        const color = this.getRelationColor(this.getRelation('player', (t as any).faction));
-
-        const ctx = this.npcStateManager.getContext(t.obj);
-        let status = '';
-        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
-          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee'; else {
-            const tgt = ctx.targetStabilization.currentTarget;
-            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
-            status = tgt ? `Attack ${tgtName}` : 'Attack';
-          }
-        } else {
-          if ((t.obj as any).__targetPatrol) status = 'Patrol';
-          else if ((t.obj as any).__targetPlanet) {
-            const planet: any = (t.obj as any).__targetPlanet;
-            const pname = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
-            status = `Moving to "${pname}"`;
-          } else status = 'Patrol';
-        }
-
-        this.indicatorMgr?.showOrUpdateNPCBadge(t.obj, { name, status, color, x: cx, y: cy });
-        this.indicatorMgr?.updateNPCBadgeTransform(t.obj, cx, cy);
-      } else {
-        // Скрываем бейдж, чтобы не мигал когда цель не должна быть видимой
-        this.indicatorMgr?.hideNPCBadge(t.obj);
-      }
-
-      // The line below is the one we wanted to comment out initially
-      // try { (this.indicatorMgr as any).setBadgeWidth?.(t.obj, barW); } catch {}
-
-    } catch {}
-  }
 
   private getEffectiveRadius(obj: any): number {
     if (typeof obj.displayWidth === 'number' && typeof obj.displayHeight === 'number') {
@@ -2006,77 +1876,12 @@ export class CombatManager {
     return null;
   }
 
-  private refreshCombatRings() {
-    const assigned = new Set<any>();
-    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t && (t as any).active) assigned.add(t);
-    // Добавляем NPC, которые целятся в игрока
-    for (const t of this.targets) {
-      if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
-        assigned.add(t.obj);
-      }
-    }
-    for (const [t, ring] of this.combatRings.entries()) {
-      if (!assigned.has(t)) { ring.destroy(); this.combatRings.delete(t); }
-    }
-    for (const t of assigned.values()) {
-      if (!this.combatRings.has(t)) {
-        const base = this.getEffectiveRadius(t as any) + 5;
-        const r = this.scene.add.circle((t as any).x, (t as any).y, base, 0xA93226, 0.12).setDepth(0.44);
-        r.setStrokeStyle(2, 0xA93226, 1);
-        this.combatRings.set(t, r);
-      }
-    }
-  }
-  private refreshCombatUIAssigned() {
-    const assigned = new Set<any>();
-    for (const t of this.weaponManager.getPlayerWeaponTargets().values()) if (t && (t as any).active) assigned.add(t);
-    // Добавляем NPC, которые целятся в игрока, для отображения HP-бара
-    for (const t of this.targets) {
-      if (t.intent?.target === this.ship && (t.intent.type === 'attack' || t.intent.type === 'flee')) {
-        assigned.add(t.obj);
-      }
-    }
-    for (const rec of this.targets) {
-      const isAssigned = assigned.has(rec.obj);
-      if (isAssigned) {
-        rec.hpBarBg.setVisible(true);
-        rec.hpBarFill.setVisible(true);
-        // Плашка для NPC, которые целятся в игрока — показываем всегда
-        const relAB = this.getRelation('player', rec.faction, undefined);
-        const relBA = this.getRelation(rec.faction, 'player', rec.overrides?.factions);
-        const isEnemyNow = (relAB === 'confrontation') || (relBA === 'confrontation');
-        const color = isEnemyNow ? '#A93226' : '#9E9382';
-        const baseName = this.resolveDisplayName(rec) || 'Unknown';
-        const uniqueName = `${baseName}`;
-        // статус
-        const ctx = this.npcStateManager.getContext(rec.obj);
-        let status = '';
-        if (ctx && (ctx.state === NPCState.COMBAT_ATTACKING || ctx.state === NPCState.COMBAT_SEEKING || ctx.state === NPCState.COMBAT_FLEEING)) {
-          if (ctx.state === NPCState.COMBAT_FLEEING) status = 'Flee';
-          else {
-            const tgt = ctx.targetStabilization.currentTarget;
-            const tgtName = tgt === this.ship ? 'PLAYER' : `#${(tgt as any)?.__uniqueId ?? '?}'}`;
-            status = tgt ? `Attack ${tgtName}` : 'Attack';
-          }
-        } else {
-          if ((rec.obj as any).__targetPatrol) status = 'Patrol';
-          else if ((rec.obj as any).__targetPlanet) {
-            const planet: any = (rec.obj as any).__targetPlanet;
-            const name = planet?.data?.name ?? planet?.data?.id ?? 'Planet';
-            status = `Moving to "${name}"`;
-          } else status = 'Patrol';
-        }
-        // Позиционирование плашки синхронизировано в updateHpBar
-      } else {
-        // Не принудительно скрываем HP бары здесь - это делает updateHpBar
-        // на основе более полной логики (поврежден, выбран, участвует в бою)
-      }
-    }
-  }
+
+
 
   // Публичные помощники для FSM NPC
   public getAllNPCs(): Array<{ obj: any; faction?: string; overrides?: { factions?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'> } }> {
-    return this.targets.map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides }));
+    return this.targetManager.getPublicTargetEntries().map(t => ({ obj: t.obj, faction: t.faction, overrides: t.overrides }));
   }
   public getPlayerShip(): any { return this.ship; }
   public getRelationPublic(ofFaction: string | undefined, otherFaction: string | undefined, overrides?: Record<string, 'ally'|'neutral'|'confrontation'|'cautious'>): 'ally'|'neutral'|'confrontation'|'cautious' {
@@ -2099,120 +1904,37 @@ export class CombatManager {
 
   // ВКЛ/ВЫКЛ визуального круга радиуса оружия игрока (строго визуально)
   private togglePlayerWeaponRangeCircle(slotKey: string, show: boolean) {
-    const def = this.config.weapons?.defs?.[slotKey];
-    if (!def || typeof def.range !== 'number') {
-      // если нет данных — просто скрываем существующий круг
-      const old = this.playerWeaponRangeCircles.get(slotKey);
-      if (old) { try { old.setVisible(false); } catch {} }
-      return;
-    }
-    // создаем при необходимости
-    let circle = this.playerWeaponRangeCircles.get(slotKey);
-    if (show) {
-      if (!circle) {
-        const wr = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-        const fillColorNum = Number((wr.color ?? '#4ade80').replace('#','0x'));
-        const fillAlpha = typeof wr.fillAlpha === 'number' ? Phaser.Math.Clamp(wr.fillAlpha, 0, 1) : 0.08;
-        const strokeColorNum = Number((wr.strokeColor ?? wr.color ?? '#4ade80').replace('#','0x'));
-        const strokeAlpha = typeof wr.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr.strokeAlpha, 0, 1) : 0.8;
-        const strokeWidth = typeof wr.strokeWidth === 'number' ? Math.max(0, Math.floor(wr.strokeWidth)) : 1;
-        circle = this.scene.add.circle(this.ship?.x ?? 0, this.ship?.y ?? 0, def.range, fillColorNum, fillAlpha).setDepth(0.35);
-        circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
-        this.playerWeaponRangeCircles.set(slotKey, circle);
-      }
-      // на случай, если параметры были изменены в рантайме — обновим стиль
-      const wr2 = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-      const fillColorNum2 = Number((wr2.color ?? '#4ade80').replace('#','0x'));
-      const fillAlpha2 = typeof wr2.fillAlpha === 'number' ? Phaser.Math.Clamp(wr2.fillAlpha, 0, 1) : 0.08;
-      const strokeColorNum2 = Number((wr2.strokeColor ?? wr2.color ?? '#4ade80').replace('#','0x'));
-      const strokeAlpha2 = typeof wr2.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr2.strokeAlpha, 0, 1) : 0.8;
-      const strokeWidth2 = typeof wr2.strokeWidth === 'number' ? Math.max(0, Math.floor(wr2.strokeWidth)) : 1;
-      circle.setFillStyle(fillColorNum2, fillAlpha2);
-      circle.setStrokeStyle(strokeWidth2, strokeColorNum2, strokeAlpha2);
-      circle.setRadius(def.range);
-      circle.setPosition(this.ship?.x ?? 0, this.ship?.y ?? 0);
-      circle.setVisible(true);
-    } else {
-      if (circle) {
-        circle.setVisible(false);
-      }
-    }
+    this.uiManager.togglePlayerWeaponRangeCircle(slotKey, show);
   }
   private clearAssignmentsForTarget(objAny: any) {
     // Делегируем очистку назначений в WeaponManager и обновим визуал
     try { this.weaponManager.clearAssignmentsForTarget(objAny); } catch {}
-    this.refreshCombatRings();
-    this.refreshCombatUIAssigned();
+    this.uiManager.refreshCombatIndicators();
   }
 
   /**
    * Корректно удалить NPC из всех систем (например, после успешного докинга)
    */
   public despawnNPC(target: any, reason?: string) {
-    const t = this.targets.find(tt => tt.obj === target);
-    if (!t) {
-      try { (target as any)?.destroy?.(); } catch {}
-      return;
-    }
-
-    // Снимаем назначенные слоты игрока на цель
+    // Очищаем назначения оружия перед удалением
     this.clearAssignmentsForTarget(target);
-
-    // Удаляем визуальные элементы HP/имён/колец
-    try { t.hpBarBg.destroy(); } catch {}
-    try { t.hpBarFill.destroy(); } catch {}
-    try { t.nameLabel?.destroy(); } catch {}
-    const ring = this.combatRings.get(target);
-    if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
-
-    // Удаляем из систем движения/состояний/тумана войны
-    try { this.npcMovement.unregisterNPC(target); } catch {}
-    try { this.npcStateManager.unregisterNPC(target); } catch {}
-    try { if (this.fogOfWar) this.fogOfWar.unregisterObject(target); } catch {}
-
-    // Снимаем выделение если это был выбранный таргет
+    
+    // Очищаем выбор если это был выбранный таргет
     if (this.selectedTarget === target) this.clearSelection();
-
-    // Убираем из списка целей и уничтожаем объект
-    this.targets = this.targets.filter(rec => rec.obj !== target);
-    // Убираем из массива NPC сцены, если используется
-    try {
-      const arr: any[] | undefined = (this.scene as any).npcs;
-      if (Array.isArray(arr)) {
-        const idx = arr.indexOf(target);
-        if (idx >= 0) arr.splice(idx, 1);
-      }
-    } catch {}
-    try { (target as any).destroy?.(); } catch {}
+    
+    // Делегируем основное удаление в TargetManager
+    this.targetManager.despawnNPC(target, reason);
   }
 
   public forceCleanupInactiveTargets() {
-    // вспомогательно: вызывается при необходимости, удаляет все неактивные объекты
-    const removed: any[] = [];
-    for (const rec of this.targets) {
-      if (!rec.obj || !(rec.obj as any).active) {
-        try { (rec.obj as any).destroy?.(); } catch {}
-        try { rec.hpBarBg.destroy(); } catch {}
-        try { rec.hpBarFill.destroy(); } catch {}
-        try { rec.nameLabel?.destroy(); } catch {}
-        try { this.indicatorMgr?.destroyNPCBadge(rec.obj); } catch {}
-        removed.push(rec.obj);
-      }
-    }
-    if (removed.length) {
-      this.targets = this.targets.filter(rec => !removed.includes(rec.obj));
-      removed.forEach(t => { 
-        // Удаляем из всех систем
-        this.npcStateManager.unregisterNPC(t);
-        const ring = this.combatRings.get(t); 
-        if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(t); } 
-      });
-    }
+    // делегируем очистку в TargetManager
+    this.targetManager.forceCleanupInactiveTargets();
   }
 
   // Метод для корректного завершения работы
   public destroy() {
     this.npcStateManager.destroy();
+    this.targetManager.destroy();
     this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
     // Очистка визуальных кругов радиусов
     for (const c of this.playerWeaponRangeCircles.values()) { try { c.destroy(); } catch {} }

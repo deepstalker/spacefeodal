@@ -1,99 +1,25 @@
 import type { ConfigManager } from './ConfigManager';
+import type { NPCStateContext } from './combat/CombatTypes';
+import { NPCStateMachine, NPCState } from './combat/state/NPCStateMachine';
+import { TargetAnalyzer } from './combat/ai/TargetAnalyzer';
+import { MovementCoordinator } from './combat/movement/MovementCoordinator';
 
-// Определяем все возможные состояния NPC
-export enum NPCState {
-  SPAWNING = 'spawning',           // Только что заспавнился
-  IDLE = 'idle',                   // Бездействие
-  PATROLLING = 'patrolling',       // Патрулирование
-  TRADING = 'trading',             // Торговля (движение к планетам)
-  COMBAT_SEEKING = 'combat_seeking', // Ищет цель для атаки
-  COMBAT_ATTACKING = 'combat_attacking', // Активно атакует
-  COMBAT_FLEEING = 'combat_fleeing', // Бегство от противника
-  DOCKING = 'docking',             // Процесс стыковки
-  DOCKED = 'docked',               // Пристыкован
-  UNDOCKING = 'undocking',         // Процесс отстыковки
-  RETURNING_HOME = 'returning_home', // Возвращается домой
-  DESTROYED = 'destroyed'          // Уничтожен
-}
+// Экспортируем NPCState для совместимости
+export { NPCState } from './combat/state/NPCStateMachine';
 
-// Система остывания агрессии
-interface AggressionState {
-  level: number;              // 0-1, текущий уровень агрессии
-  lastDamageTime: number;     // время последнего урона
-  lastCombatTime: number;     // время последнего боя
-  cooldownRate: number;       // скорость остывания агрессии/сек
-  sources: Map<any, {         // источники агрессии
-    damage: number;
-    lastTime: number;
-  }>;
-}
-
-// Стабилизация выбора целей
-interface TargetStabilization {
-  currentTarget: any | null;
-  targetScore: number;
-  targetSwitchTime: number;   // время последней смены цели
-  requiredAdvantage: number;  // требуемое преимущество для смены
-  stabilityPeriod: number;    // период стабильности после смены
-}
-
-// Приоритеты команд движения
-export enum MovementPriority {
-  EMERGENCY_FLEE = 100,       // Экстренное бегство
-  COMBAT = 80,               // Боевые действия
-  PLAYER_COMMAND = 60,       // Команды игрока
-  SCENARIO = 50,             // Сценарные события
-  PATROL = 40,               // Патрулирование
-  TRADE = 20,               // Торговые операции
-  IDLE = 10                 // Базовое поведение
-}
-
-interface MovementCommand {
-  mode: string;
-  target: { x: number; y: number; targetObject?: any };
-  distance?: number;
-  priority: MovementPriority;
-  source: string;            // откуда пришла команда
-  timestamp: number;
-}
-
-// Контекст состояния NPC
-interface NPCStateContext {
-  obj: any;                  // игровой объект
-  state: NPCState;
-  previousState: NPCState;
-  stateEnterTime: number;
-  
-  // Агрессия и боевое поведение
-  aggression: AggressionState;
-  targetStabilization: TargetStabilization;
-  
-  // Движение
-  movementQueue: MovementCommand[];
-  currentMovement: MovementCommand | null;
-  
-  // Конфигурация
-  aiProfile?: string;
-  combatAI?: string;
-  faction?: string;
-  
-  // Сохраняем существующие поля для совместимости
-  legacy: {
-    __behavior?: string;
-    __state?: string;
-    intent?: any;
-    __targetPatrol?: any;
-    __targetPlanet?: any;
-    __homeRef?: any;
-    forceIntentUntil?: number;
-  };
-}
+// Экспортируем MovementPriority для совместимости
+export { MovementPriority } from './combat/movement/MovementCoordinator';
 
 export class NPCStateManager {
   private scene: Phaser.Scene;
   private pauseManager?: any; // PauseManager reference
   private config: ConfigManager;
   private contexts: Map<any, NPCStateContext> = new Map();
+  
+  // Новые компоненты (dependency injection)
+  private stateMachine: NPCStateMachine;
+  private targetAnalyzer: TargetAnalyzer;
+  private movementCoordinator: MovementCoordinator;
   
   // Настройки системы
   private readonly AGGRESSION_COOLDOWN_RATE = 0.3; // агрессия снижается на 30%/сек
@@ -105,12 +31,32 @@ export class NPCStateManager {
     this.scene = scene;
     this.config = config;
     
+    // Создаем новые компоненты
+    this.stateMachine = new NPCStateMachine(scene, config);
+    this.targetAnalyzer = new TargetAnalyzer(scene, config);
+    this.movementCoordinator = new MovementCoordinator(scene, config);
+    
+    // Настраиваем зависимости между компонентами
+    this.stateMachine.setTargetAnalyzer(this.targetAnalyzer);
+    this.stateMachine.setMovementCoordinator(this.movementCoordinator);
+    
     // Обновляем состояния каждый кадр
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, this.update, this);
   }
 
   setPauseManager(pauseManager: any) {
     this.pauseManager = pauseManager;
+  }
+
+  // === Dependency Injection для интеграции с CombatManager ===
+  
+  setCombatManager(combatManager: any): void {
+    this.stateMachine.setCombatManager(combatManager);
+    this.movementCoordinator.setCombatManager(combatManager);
+  }
+  
+  setNpcMovementManager(npcMovementManager: any): void {
+    this.movementCoordinator.setNpcMovementManager(npcMovementManager);
   }
 
   // Регистрация нового NPC (вызывается при спавне)
@@ -137,8 +83,8 @@ export class NPCStateManager {
     
     const context: NPCStateContext = {
       obj,
-      state: NPCState.SPAWNING,
-      previousState: NPCState.SPAWNING,
+      state: NPCState.SPAWNING as any,
+      previousState: NPCState.SPAWNING as any,
       stateEnterTime: this.scene.time.now,
       
       aggression: {
@@ -189,36 +135,11 @@ export class NPCStateManager {
       // Дополнительная проверка что контекст всё ещё валиден
       const currentContext = this.contexts.get(obj);
       if (currentContext && currentContext.obj === obj) {
-        this.initializeFromLegacy(currentContext);
+        this.stateMachine.initializeFromLegacy(currentContext);
       } else if (process.env.NODE_ENV === 'development') {
         console.error(`[NPCState] Context corrupted during delayed init for ${objId}`);
       }
     });
-  }
-
-  // Инициализация из существующих полей (для совместимости)
-  private initializeFromLegacy(context: NPCStateContext): void {
-    const obj = context.obj;
-    const behavior = obj.__behavior || context.aiProfile;
-    
-    // Определяем начальное состояние на основе поведения
-    switch (behavior) {
-      case 'patrol':
-        this.transitionTo(context, NPCState.PATROLLING);
-        break;
-      case 'planet_trader':
-      case 'orbital_trade':
-        this.transitionTo(context, NPCState.TRADING);
-        break;
-      case 'aggressive':
-        this.transitionTo(context, NPCState.COMBAT_SEEKING);
-        break;
-      case 'static':
-        this.transitionTo(context, NPCState.IDLE);
-        break;
-      default:
-        this.transitionTo(context, NPCState.IDLE);
-    }
   }
 
   // Удаление NPC
@@ -252,77 +173,11 @@ export class NPCStateManager {
     }
   }
 
-  // Переход между состояниями
+  // === Методы делегирования к компонентам ===
+  
+  // Переход между состояниями (делегирование к StateMachine)
   transitionTo(context: NPCStateContext, newState: NPCState): boolean {
-    if (!this.canTransition(context.state, newState)) {
-      return false;
-    }
-    
-    const oldState = context.state;
-    this.exitState(context, oldState);
-    
-    context.previousState = oldState;
-    context.state = newState;
-    context.stateEnterTime = this.scene.time.now;
-    
-    this.enterState(context, newState);
-    
-    return true;
-  }
-
-  // Проверка возможности перехода
-  private canTransition(from: NPCState, to: NPCState): boolean {
-    // Определяем запрещенные переходы
-    const forbidden = [
-      [NPCState.DESTROYED, '*'], // из уничтоженного никуда нельзя
-      [NPCState.DOCKING, NPCState.TRADING], // из стыковки сразу в торговлю нельзя
-      [NPCState.UNDOCKING, NPCState.DOCKING] // из отстыковки сразу в стыковку нельзя
-    ];
-    
-    for (const [fromState, toState] of forbidden) {
-      if ((fromState === from || fromState === '*') && 
-          (toState === to || toState === '*')) {
-        return false;
-      }
-    }
-    
-    return true;
-  }
-
-  // Выход из состояния
-  private exitState(context: NPCStateContext, state: NPCState): void {
-    // Очистка специфичных для состояния данных
-    switch (state) {
-      case NPCState.COMBAT_ATTACKING:
-      case NPCState.COMBAT_SEEKING:
-        // Сохраняем время последнего боя
-        context.aggression.lastCombatTime = this.scene.time.now;
-        break;
-    }
-  }
-
-  // Вход в состояние
-  private enterState(context: NPCStateContext, state: NPCState): void {
-    const obj = context.obj;
-    
-    // Синхронизируем с legacy полями
-    switch (state) {
-      case NPCState.DOCKING:
-        obj.__state = 'docking';
-        break;
-      case NPCState.DOCKED:
-        obj.__state = 'docked';
-        break;
-      case NPCState.UNDOCKING:
-        obj.__state = 'undocking';
-        break;
-      case NPCState.TRADING:
-        obj.__state = 'travel';
-        break;
-      default:
-        // Для остальных состояний очищаем __state
-        delete obj.__state;
-    }
+    return this.stateMachine.transitionTo(context, newState);
   }
 
   // Добавление команды движения
@@ -476,200 +331,14 @@ export class NPCStateManager {
     }
   }
 
-  // Оценка цели (улучшенная система)
+  // Оценка цели (делегирование к TargetAnalyzer)
   evaluateTarget(context: NPCStateContext, target: any): number {
-    if (!target || !target.active) return -1;
-    
-    const obj = context.obj;
-    const aggression = context.aggression;
-    
-    let score = 0;
-    
-    // Урон от цели (важнейший фактор)
-    const damageData = aggression.sources.get(target);
-    if (damageData) {
-      let damageScore = damageData.damage * 2.0; // x2 множитель за урон
-      
-      // Игрок оценивается наравне с другими целями
-      // (убраны специальные бонусы)
-      
-      score += damageScore;
-      
-      // Бонус за недавний урон
-      const timeSinceDamage = this.scene.time.now - damageData.lastTime;
-      if (timeSinceDamage < 5000) {
-        score += (5000 - timeSinceDamage) * 0.001; // до +5 очков за свежий урон
-      }
-    }
-    
-    // Расчет расстояния до цели
-    const distance = Phaser.Math.Distance.Between(obj.x, obj.y, target.x, target.y);
-    
-    // Расстояние до цели (штраф)
-    score -= distance * 0.002; // -2 очка за 1000 единиц расстояния
-    
-    // Бонус за близость к текущей цели (предотвращает дребезжание)
-    if (target === context.targetStabilization.currentTarget) {
-      score += 2.0; // бонус за стабильность
-    }
-    
-    return score;
+    return this.targetAnalyzer.evaluateTarget(context, target);
   }
 
-  // Стабильный выбор цели
+  // Стабильный выбор цели (делегирование к TargetAnalyzer)
   selectStableTarget(context: NPCStateContext, candidates: any[]): any | null {
-    if (candidates.length === 0) return null;
-    
-    const stabilization = context.targetStabilization;
-    const now = this.scene.time.now;
-    const objId = (context.obj as any).__uniqueId || 'unknown';
-    
-    // Оцениваем всех кандидатов
-    let bestTarget: any = null;
-    let bestScore = -1;
-    
-    // Получаем корабль игрока из CombatManager
-    const playerShip = (this.scene as any).combatManager?.ship;
-    const playerCandidate = candidates.find(candidate => candidate === playerShip);
-    
-    const candidateScores: any[] = [];
-    for (const candidate of candidates) {
-      const score = this.evaluateTarget(context, candidate);
-      const isPlayerCandidate = candidate === playerCandidate;
-      const candidateId = isPlayerCandidate ? 'PLAYER' : `#${(candidate as any).__uniqueId || 'UNK'}`;
-      candidateScores.push({ id: candidateId, score: score.toFixed(2), isPlayer: isPlayerCandidate });
-      
-      // ОТЛАДКА: детально логируем игрока
-      if (process.env.NODE_ENV === 'development' && isPlayerCandidate) {
-        console.log(`[PlayerCandidate] Found PLAYER in candidates for ${objId}`, {
-          playerScore: score.toFixed(2),
-          playerTexture: (candidate as any)?.texture?.key,
-          playerActive: candidate?.active,
-          aggressionLevel: (context.aggression.level * 100).toFixed(0) + '%',
-          damageFromPlayer: context.aggression.sources.get(candidate) || 'none'
-        });
-      }
-      
-      if (score > bestScore) {
-        bestScore = score;
-        bestTarget = candidate;
-      }
-    }
-    
-    const bestTargetId = !bestTarget ? 'null' : 
-                         bestTarget === playerCandidate ? 'PLAYER' : 
-                         `#${(bestTarget as any).__uniqueId || 'UNK'}`;
-    const currentTargetId = !stabilization.currentTarget ? 'none' :
-                           stabilization.currentTarget === playerCandidate ? 'PLAYER' : 
-                           `#${(stabilization.currentTarget as any).__uniqueId || 'UNK'}`;
-    
-    // Проверяем, нужно ли менять цель
-    if (bestTarget !== stabilization.currentTarget) {
-      const timeSinceSwitch = now - stabilization.targetSwitchTime;
-      
-      // ИСПРАВЛЕНО: правильная формула для требуемого превосходства
-      const currentScore = stabilization.currentTarget ? stabilization.targetScore : 0;
-      const requiredScore = currentScore * (1 + stabilization.requiredAdvantage);
-      
-      const canSwitchByTime = timeSinceSwitch > stabilization.stabilityPeriod;
-      const canSwitchByScore = bestScore > requiredScore;
-      const hasCurrentTarget = !!stabilization.currentTarget;
-      
-      // Debug logging disabled
-      // if (process.env.NODE_ENV === 'development') {
-      //   console.log(`[StableTarget] ${objId} considering switch: ${currentTargetId} → ${bestTargetId}`, {
-      //     candidateScores,
-      //     currentScore: currentScore.toFixed(2),
-      //     bestScore: bestScore.toFixed(2),
-      //     requiredScore: requiredScore.toFixed(2),
-      //     timeSinceSwitch: timeSinceSwitch + 'ms',
-      //     stabilityPeriod: stabilization.stabilityPeriod + 'ms',
-      //     canSwitchByTime,
-      //     canSwitchByScore,
-      //     hasCurrentTarget,
-      //     requiredAdvantage: (stabilization.requiredAdvantage * 100).toFixed(0) + '%'
-      //   });
-      // }
-      
-      // Меняем цель если:
-      // 1. У нас нет текущей цели ИЛИ
-      // 2. (Прошел период стабильности И новая цель значительно лучше)
-      if (!hasCurrentTarget || (canSwitchByTime && canSwitchByScore)) {
-        
-        stabilization.currentTarget = bestTarget;
-        stabilization.targetScore = bestScore;
-        stabilization.targetSwitchTime = now;
-        
-        // Debug logging disabled
-        // if (process.env.NODE_ENV === 'development') {
-        //   console.log(`[StableTarget] ${objId} SWITCHED to ${bestTargetId}`, {
-        //     reason: !hasCurrentTarget ? 'no_current_target' : 'better_target',
-        //     newScore: bestTarget ? bestScore.toFixed(2) : 'null'
-        //   });
-        // }
-        
-        // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при переключении
-        // Debug logging disabled
-        // if (!bestTarget && process.env.NODE_ENV === 'development') {
-        //   console.error(`[StableTarget] ${objId} SWITCHING TO NULL!`, {
-        //     candidateScores,
-        //     bestScore,
-        //     hasCurrentTarget,
-        //     canSwitchByTime,
-        //     canSwitchByScore,
-        //     reason: 'switched_to_null_target'
-        //   });
-        // }
-        
-        return bestTarget;
-      } else {
-        // Остаемся с текущей целью
-        // Debug logging disabled
-        // if (process.env.NODE_ENV === 'development') {
-        //   console.log(`[StableTarget] ${objId} KEEPING ${currentTargetId}`, {
-        //     reason: !canSwitchByTime ? 'stabilization_period' : 'insufficient_score_advantage'
-        //   });
-        // }
-        
-        // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем при сохранении цели
-        // Debug logging disabled
-        // if (!stabilization.currentTarget && process.env.NODE_ENV === 'development') {
-        //   console.error(`[StableTarget] ${objId} KEEPING NULL TARGET!`, {
-        //     candidateScores,
-        //     bestScore,
-        //     bestTargetId,
-        //     hasCurrentTarget,
-        //     reason: 'keeping_null_target'
-        //   });
-        // }
-        
-        return stabilization.currentTarget;
-      }
-    } else {
-      // Цель не изменилась - обновляем счет
-      stabilization.targetScore = bestScore;
-      
-      // Debug logging disabled
-      // if (process.env.NODE_ENV === 'development') {
-      //   console.log(`[StableTarget] ${objId} UNCHANGED ${bestTargetId}`, {
-      //     score: bestTarget ? bestScore.toFixed(2) : 'null',
-      //     candidateCount: candidates.length
-      //   });
-      // }
-      
-      // КРИТИЧНАЯ ОТЛАДКА: проверяем что возвращаем
-      // Debug logging disabled
-      // if (!bestTarget && process.env.NODE_ENV === 'development') {
-      //   console.warn(`[StableTarget] ${objId} RETURNING NULL!`, {
-      //     candidateScores,
-      //     bestScore,
-      //     hasCurrentTarget: !!stabilization.currentTarget,
-      //     reason: 'no_valid_target_found'
-      //   });
-      // }
-      
-      return bestTarget;
-    }
+    return this.targetAnalyzer.selectStableTarget(context, candidates);
   }
 
   // Получение текущего состояния
@@ -723,11 +392,11 @@ export class NPCStateManager {
       // Обновляем агрессию
       this.updateAggression(context, deltaMs);
       
-      // Обновляем очередь команд движения
-      this.updateMovementQueue(context);
+      // Обновляем очередь команд движения (делегирование к MovementCoordinator)
+      this.movementCoordinator.updateMovementCommands(context);
       
-      // Логика конкретных состояний
-      this.updateStateLogic(context, deltaMs);
+      // Логика конкретных состояний (делегирование к StateMachine)
+      this.stateMachine.updateStateLogic(context, deltaMs);
     }
     
     // Очищаем поврежденные или неактивные контексты
