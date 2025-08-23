@@ -64,8 +64,6 @@ export class HUDManager {
   // Speed display state
   private lastSpeedU: number = 0;
   private pausedSpeedU: number | null = null;
-  private isPaused: boolean = false;
-  private lastChargeProgressBySlot: Map<string, number> = new Map();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -112,17 +110,10 @@ export class HUDManager {
     bus.on(EVENTS.BeamRefresh, ({ slotKey }) => { this.beamDurationActive.delete(slotKey); });
     bus.on(EVENTS.WeaponOutOfRange, ({ slotKey, inRange }) => this.toggleOutOfRange(slotKey, !!inRange));
 
-    // Подписываемся на событие снятия паузы для принудительного обновления прогресс-баров
+    // Подписываемся на событие снятия паузы только для сброса отображения скорости
     this.scene.events.on('game-resumed', () => {
-      // Немедленно обновляем прогресс-бары после снятия паузы
-      this.updateWeaponChargeBars();
-      // Возврат отображения скорости к фактической
+      // Возврат отображения скорости к фактической после паузы
       this.pausedSpeedU = null;
-    });
-    this.scene.events.on('game-paused', () => { this.isPaused = true; });
-    this.scene.events.on('game-resumed', () => { 
-      this.isPaused = false;
-      // Без очистки и скрытия: оставляем бары в актуальном состоянии, чтобы избежать скачков
     });
 
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateHUD());
@@ -131,7 +122,8 @@ export class HUDManager {
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.syncSlotsVisual());
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateTimeUI());
     
-    // Прогресс-бары оружия обновляются ВСЕГДА, даже во время паузы
+    // КРИТИЧЕСКИЙ ФИКС: Прогресс-бары оружия теперь полагаются на pause-aware систему таймеров
+    // В WeaponManager через PauseManager.getAdjustedTime() для корректной остановки прогресса во время паузы
     this.scene.events.on(Phaser.Scenes.Events.UPDATE, () => this.updateWeaponChargeBars());
 
     // Клавиши
@@ -978,12 +970,10 @@ export class HUDManager {
   }
 
   private updateWeaponChargeBars() {
-    // Если игра на паузе, не обновляем прогресс-бары
-    // Визуальные бары должны обновляться всегда (даже на паузе), поэтому не выходим
-    
     if (!this.combatManager || !this.configRef?.player?.weapons) return;
     
     const playerWeapons = this.configRef.player.weapons;
+    const paused = !!this.pauseManager?.getPaused?.();
     
     for (let i = 0; i < playerWeapons.length; i++) {
       const slotKey = playerWeapons[i];
@@ -1008,37 +998,44 @@ export class HUDManager {
         const w = this.configRef.weapons.defs[slotKey];
         const isBeam = (w?.type ?? 'single') === 'beam';
         
+        // КРИТИЧЕСКИЙ ФИКС: Полагаемся на pause-aware getNowMs() в WeaponManager
+        // который использует PauseManager.getAdjustedTime() для корректного подсчёта времени во время паузы
         const progress = isBeam 
           ? this.weaponManager.getBeamRefreshProgress(slotKey)
           : this.weaponManager.getWeaponChargeProgress(slotKey);
         
         // Показываем прогресс-бар
         const bar = this.ensureHudBar(slotKey, recSlot);
-        bar.bg.setVisible(true);
-        bar.outline.setVisible(true);
-        bar.fill.setVisible(true);
+        // Во время паузы не дергаем видимость, чтобы избежать "миганий" полосы
+        if (!paused) {
+          bar.bg.setVisible(true);
+          bar.outline.setVisible(true);
+          bar.fill.setVisible(true);
+        } else {
+          // Если полоса была скрыта и мы на паузе — принудительно показать, чтобы пользователь видел прогресс
+          // (созданные элементы могут быть не видны из-за предыдущих состояний)
+          if (!bar.bg.visible && !bar.outline.visible && !bar.fill.visible) {
+            bar.bg.setVisible(true);
+            bar.outline.setVisible(true);
+            bar.fill.setVisible(true);
+          }
+        }
         
-        // Обновляем ширину напрямую на основе прогресса таймера с клампом монотонности
-        const prev = this.lastChargeProgressBySlot.get(slotKey);
-        const next = Phaser.Math.Clamp(progress, 0, 1);
-        const stable = (this.pauseManager?.getPaused?.() ? Math.max(prev ?? 0, next) : next);
-        bar.fill.width = stable * (bar.width - 4);
-        this.lastChargeProgressBySlot.set(slotKey, stable);
+        // Обновляем ширину напрямую на основе pause-aware прогресса таймера
+        const clampedProgress = Phaser.Math.Clamp(progress, 0, 1);
+        bar.fill.width = clampedProgress * (bar.width - 4);
         
         // Скрываем out-of-range во время зарядки
         this.toggleOutOfRange(slotKey, false);
       } else {
-        // На паузе скрываем бары, чтобы избежать зависания
-        // Не на паузе: скрываем прогресс-бар, если оружие не заряжается
-        const bar = this.cooldownBarsBySlot.get(slotKey);
-        if (bar) {
-          // Во время паузы не скрываем и не обнуляем — закрепляем текущую ширину
-          if (!this.pauseManager?.getPaused?.()) {
+        // Во время паузы НЕ меняем видимость (чтобы избежать мерцаний / резких исчезновений)
+        if (!paused) {
+          // Скрываем прогресс-бар, если оружие не заряжается
+          const bar = this.cooldownBarsBySlot.get(slotKey);
+          if (bar) {
             bar.bg.setVisible(false);
             bar.outline.setVisible(false);
             bar.fill.setVisible(false);
-            // Удаляем из кэша прогресса при скрытии бара
-            this.lastChargeProgressBySlot.delete(slotKey);
           }
         }
       }
@@ -1083,9 +1080,6 @@ export class HUDManager {
       bar.bg.setVisible(false);
       bar.outline.setVisible(false);
       bar.fill.setVisible(false);
-      
-      // Удаляем из кэша прогресса
-      this.lastChargeProgressBySlot.delete(slotKey);
     }
   }
 
@@ -1384,9 +1378,6 @@ export class HUDManager {
     // очистить выборы
     this.selectedSlots.clear();
     this.cursorOrder = [];
-    
-    // очистить кэш прогресса перезарядки
-    this.lastChargeProgressBySlot.clear();
     
     // уничтожить все прогресс-бары перезарядки
     for (const [slotKey, bar] of this.cooldownBarsBySlot.entries()) {

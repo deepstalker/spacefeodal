@@ -44,6 +44,9 @@ export class WeaponManager {
       isPaused: () => !!(this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()),
       registerTimer: (id, timer) => { try { this.pauseManager?.registerTimer?.(id, timer); } catch {} },
       unregisterTimer: (id) => { try { this.pauseManager?.unregisterTimer?.(id); } catch {} },
+      registerUpdateHandler: (id, handler) => { try { this.pauseManager?.registerUpdateHandler?.(id, handler); } catch {} },
+      unregisterUpdateHandler: (id) => { try { this.pauseManager?.unregisterUpdateHandler?.(id); } catch {} },
+      getWrappedUpdateHandler: (id) => { try { return this.pauseManager?.getWrappedUpdateHandler?.(id) ?? null; } catch { return null; } },
       getPlayerShip: () => this.combatManager.getPlayerShip()
     });
     this.projectileService = new ProjectileService(scene, config, combatManager, {
@@ -52,11 +55,21 @@ export class WeaponManager {
       unregisterTimer: (id) => { try { this.pauseManager?.unregisterTimer?.(id); } catch {} },
       spawnHitEffect: (x, y, w) => this.spawnHitEffect(x, y, w),
       isInvulnerable: (obj) => this.isInvulnerable(obj),
+      registerUpdateHandler: (id, handler) => { try { this.pauseManager?.registerUpdateHandler?.(id, handler); } catch {} },
+      unregisterUpdateHandler: (id) => { try { this.pauseManager?.unregisterUpdateHandler?.(id); } catch {} },
     });
 
     this.scene.events.on('weapon-slot-selected', (slotKey: string, selected: boolean) => {
         try { this.rangeUi.toggle(slotKey, !!selected); } catch {}
     });
+  }
+
+  /**
+   * Инъекция PauseManager после создания CombatManager/WeaponManager
+   * Вызывается из CombatManager.setPauseManager()
+   */
+  public setPauseManager(pm: any) {
+    this.pauseManager = pm;
   }
 
   /**
@@ -193,10 +206,11 @@ export class WeaponManager {
     return (now - last) >= cooldownMs;
   }
 
-  // Централизованный emit события out-of-range
-  private emitWeaponOutOfRange(slotKey: string, inRange: boolean) {
-    try { this.scene.events.emit('weapon-out-of-range', slotKey, inRange); } catch {}
-    try { new EventBus(this.scene).emit(EVENTS.WeaponOutOfRange, { slotKey, inRange }); } catch {}
+  // Централизованный emit события Out Of Range (show=true => показать текст OOR)
+  private emitWeaponOutOfRange(slotKey: string, show: boolean) {
+    try { this.scene.events.emit('weapon-out-of-range', slotKey, show); } catch {}
+    // Обратная совместимость: поле называется inRange в типах EventBus, но фактически передаём флаг show
+    try { new EventBus(this.scene).emit(EVENTS.WeaponOutOfRange, { slotKey, inRange: show } as any); } catch {}
   }
 
   /** Прогресс перезарядки оружия игрока [0..1] */
@@ -237,10 +251,10 @@ export class WeaponManager {
     const dist = this.getDistance(ship, target);
     if (dist > w.range) {
       this.cooldowns.clearCharge(slotKey);
-      try { this.scene.events.emit('weapon-out-of-range', slotKey, true); } catch {}
+      this.emitWeaponOutOfRange(slotKey, true);
       return;
     }
-    try { this.scene.events.emit('weapon-out-of-range', slotKey, false); } catch {}
+    this.emitWeaponOutOfRange(slotKey, false);
     const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
     if (!this.cooldowns.getChargeUntil(slotKey)) {
       this.cooldowns.setChargeUntil(slotKey, now + cooldownMs);
@@ -264,9 +278,7 @@ export class WeaponManager {
       const w = this.config.weapons.defs[slotKey];
       if (w) {
         if (getWeaponType(w) === 'beam') {
-          const refreshMs = Math.max(0, w?.beam?.refreshMs ?? 500);
-          const now = this.getNowMs();
-          this.cooldowns.setBeamReadyAt(this.combatManager.getPlayerShip(), slotKey, now + refreshMs);
+          // Не откладываем старт луча искусственно — просто останавливаем текущий, чтобы ensureBeam мог стартовать сразу
           this.beamService.stopBeamIfAny(this.combatManager.getPlayerShip(), slotKey);
         } else {
           const times = this.cooldowns.getShooterTimes(this.combatManager.getPlayerShip());
@@ -328,25 +340,33 @@ export class WeaponManager {
     if (playerSlots.length) {
         const now = this.getNowMs();
         for (let i = 0; i < playerSlots.length; i++) {
-            const slotKey = playerSlots[i];
-            const target = this.targetService.getTargets().get(slotKey) as any;
-            if (!target || !target.active) continue;
-            const w = this.config.weapons.defs[slotKey];
-            if (!w) continue;
-            const dist = this.getDistance(ship, target);
-            const inRange = dist <= w.range;
+          const slotKey = playerSlots[i];
+          const target = this.targetService.getTargets().get(slotKey) as any;
+          if (!target || !target.active) continue;
+          const w = this.config.weapons.defs[slotKey];
+          if (!w) continue;
+          const dist = this.getDistance(ship, target);
+          const inRange = dist <= w.range;
 
-            if (getWeaponType(w) === 'beam') {
+          if (getWeaponType(w) === 'beam') {
                 const readyAt = this.cooldowns.getBeamReadyAt(this.combatManager.getPlayerShip(), slotKey);
-                this.emitWeaponOutOfRange(slotKey, now >= readyAt && inRange);
+                // Показ Out Of Range зависит ТОЛЬКО от дистанции
+                this.emitWeaponOutOfRange(slotKey, !inRange);
+                // Запускаем/останавливаем луч для игрока
+                if (!isPaused && inRange && now >= readyAt) {
+                    this.beamService.ensureBeam(ship, slotKey, w, target, dist);
+                } else {
+                    this.beamService.stopBeamIfAny(ship, slotKey);
+                }
                 // Для луча не выполняем общую обработку снарядов
                 continue;
-            } else {
-                this.emitWeaponOutOfRange(slotKey, inRange);
-            }
+          } else {
+                // Для нелучевого: показать OOR, если не в радиусе
+                this.emitWeaponOutOfRange(slotKey, !inRange);
+          }
 
-            // Унифицированная обработка кулдауна и выстрела только для нелучевого оружия
-            this.updatePlayerCooldownAndFire(ship, i, slotKey, w, target, now, isPaused);
+          // Унифицированная обработка кулдауна и выстрела только для нелучевого оружия
+          this.updatePlayerCooldownAndFire(ship, i, slotKey, w, target, now, isPaused);
         }
     }
   }
@@ -447,6 +467,9 @@ export class WeaponManager {
         getNowMs: () => this.getNowMs(),
         isPaused: () => !!(this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()),
         setVisibleByFoW: (obj: any) => this.setVisibleByFoW(obj),
+        registerUpdateHandler: (id, handler) => { try { this.pauseManager?.registerUpdateHandler?.(id, handler); } catch {} },
+        unregisterUpdateHandler: (id) => { try { this.pauseManager?.unregisterUpdateHandler?.(id); } catch {} },
+        getWrappedUpdateHandler: (id) => { try { return this.pauseManager?.getWrappedUpdateHandler?.(id); } catch { return null; } },
       }
     );
 
