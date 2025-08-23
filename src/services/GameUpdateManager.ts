@@ -35,6 +35,18 @@ export class GameUpdateManager {
       }
     });
   }
+  
+  /**
+   * Корректно уничтожить менеджер и отписаться от событий
+   */
+  public destroy(): void {
+    try {
+      this.scene.events.off(Phaser.Scenes.Events.UPDATE);
+    } catch (e) {
+      console.warn('[GameUpdateManager] Error removing UPDATE listener:', e);
+    }
+    
+    this.updateFns = [];
+    this.pausedAwareFns = [];
+  }
 }
-
-

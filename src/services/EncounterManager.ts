@@ -47,6 +47,32 @@ export class EncounterManager {
     const banner = this.scene.add.text(w/2, h/2, `Вы нашли: ${name}`, { color: '#ffffff', fontSize: '28px', fontStyle: 'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(5000);
     this.scene.tweens.add({ targets: banner, alpha: 0, duration: 2200, ease: 'Sine.easeIn', onComplete: () => banner.destroy() });
   }
+  
+  /**
+   * Корректно уничтожить менеджер и освободить ресурсы
+   */
+  public destroy(): void {
+    // Уничтожить все оставшиеся баннеры
+    try {
+      // Находим все текстовые объекты с высокой глубиной, которые могут быть баннерами
+      const allChildren = this.scene.children.getAll();
+      for (const child of allChildren) {
+        if (child && (child as any).depth >= 5000 && (child as any).depth <= 6000) {
+          try {
+            (child as any).destroy();
+          } catch (e) {
+            console.warn('[EncounterManager] Error destroying banner:', e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[EncounterManager] Error during banner cleanup:', e);
+    }
+    
+    // Очистить массив encounters
+    this.encounters = [];
+    this.playerShip = undefined;
+  }
 }
 
 

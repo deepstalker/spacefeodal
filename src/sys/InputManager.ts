@@ -45,7 +45,9 @@ export class InputManager {
   /** Подписка на действие высокого уровня (единый шина событий) */
   onAction(action: string, handler: (payload?: any) => void) {
     this.scene.events.on('input:action', (a: string, payload?: any) => {
-      if (a === action) handler(payload);
+      if (a === action) {
+        handler(payload);
+      }
     });
   }
 
@@ -62,12 +64,16 @@ export class InputManager {
     if (!binding) return null;
     const kc: any = (Phaser.Input.Keyboard as any).KeyCodes ?? (Phaser as any).Input.Keyboard.KeyCodes;
     const name = binding.toUpperCase();
-    if (kc && kc[name] != null) return kc[name];
+    if (kc && kc[name] != null) {
+      return kc[name];
+    }
     if (binding === '+') return kc?.PLUS ?? kc?.NUMPAD_ADD ?? kc?.EQUALS ?? null;
     if (binding === '-') return kc?.MINUS ?? kc?.NUMPAD_SUBTRACT ?? kc?.DASH ?? kc?.SUBTRACT ?? null;
     if (binding === ' ') return kc?.SPACE ?? kc?.SPACEBAR ?? null;
     // Один символ A-Z/0-9
-    if (/^[A-Z0-9]$/.test(name) && kc && kc[name] != null) return kc[name];
+    if (/^[A-Z0-9]$/.test(name) && kc && kc[name] != null) {
+      return kc[name];
+    }
     return null;
   }
 

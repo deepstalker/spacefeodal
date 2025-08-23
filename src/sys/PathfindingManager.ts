@@ -24,6 +24,15 @@ export class PathfindingManager {
   planPath(req: PathRequest): PlannedPath {
     return { points: [new Phaser.Math.Vector2(req.goal.x, req.goal.y)] };
   }
+  
+  /**
+   * Корректно уничтожить менеджер и освободить ресурсы
+   */
+  public destroy(): void {
+    // Очистить ссылки
+    this.scene = undefined as any;
+    this.config = undefined as any;
+  }
 }
 
 

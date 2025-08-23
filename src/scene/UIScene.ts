@@ -43,6 +43,9 @@ export default class UIScene extends Phaser.Scene {
         this.configRef = pl.config;
         this.hud.updateForNewSystem(pl.config, pl.ship);
       });
+
+      // Открытие меню систем через InputManager действия - ТОЛЬКО после готовности системы
+      this.bindSystemMenuAction();
     };
     // Если уже создана — попробуем сразу
     if ((starScene as any).config && (starScene as any).ship) {
@@ -56,13 +59,6 @@ export default class UIScene extends Phaser.Scene {
       starScene.events.once('system-ready', onReady);
     }
 
-
-    // Открытие меню систем через InputManager действия
-    try {
-      const stars = this.scene.get('StarSystemScene') as any;
-      const inputMgr = stars?.inputMgr;
-      inputMgr?.onAction('systemMenu', () => this.toggleSystemMenu());
-    } catch {}
 
     // Debug overlay: NPC quotas/active/pending
     this.npcDebugText = this.add.text(16, 100, '', { color: '#ffffff', fontFamily: 'roboto', fontSize: '20px' })
@@ -83,8 +79,26 @@ export default class UIScene extends Phaser.Scene {
     this.hud?.showGameOver();
   }
 
+  private bindSystemMenuAction() {
+    try {
+      const stars = this.scene.get('StarSystemScene') as any;
+      const inputMgr = stars?.inputMgr;
+      if (inputMgr) {
+        inputMgr.onAction('systemMenu', () => {
+          this.toggleSystemMenu();
+        });
+      }
+    } catch (error) {
+      console.error('UIScene: Error binding systemMenu action:', error);
+    }
+  }
+
   private async toggleSystemMenu() {
-    if (this.systemMenu) { this.systemMenu.destroy(); this.systemMenu = undefined; return; }
+    if (this.systemMenu) { 
+      this.systemMenu.destroy(); 
+      this.systemMenu = undefined; 
+      return; 
+    }
     const sw = this.scale.width; const sh = this.scale.height;
     const systems = await (async()=>{ try { return await (await fetch('/configs/systems/systems.json')).json(); } catch { return await (await fetch('/configs/systems.json')).json(); } })();
     const items = Object.entries(systems.defs).map(([id, def]: any) => ({ id, name: def.name }));
@@ -100,6 +114,16 @@ export default class UIScene extends Phaser.Scene {
           // Смена системы (runtime): сохраняем выбор в localStorage
           try { localStorage.setItem('sf_selectedSystem', it.id); } catch {}
           const starScene = this.scene.get('StarSystemScene') as any;
+          
+          // Полная очистка ресурсов перед переходом
+          try {
+            if (starScene.cleanupBeforeTransition) {
+              starScene.cleanupBeforeTransition();
+            }
+          } catch (e) {
+            console.error('[UIScene] Error during cleanup before transition:', e);
+          }
+          
           starScene.scene.stop('StarSystemScene');
           starScene.scene.stop('UIScene');
           starScene.scene.start('PreloadScene');

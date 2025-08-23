@@ -756,6 +756,174 @@ export default class StarSystemScene extends Phaser.Scene {
       console.error('[StarSystemScene] Error during startup orphan cleanup:', error);
     }
   }
+
+  /**
+   * Полная очистка ресурсов сцены перед переходом между системами
+   * Вызывается перед остановкой сцены для предотвращения утечек памяти и дублирования объектов
+   */
+  public cleanupBeforeTransition(): void {
+    console.log('[StarSystemScene] Performing cleanup before system transition');
+    
+    try {
+      // 1. Остановить все таймеры и события
+      this.time.removeAllEvents();
+      
+      // 2. Очистить все игровые объекты
+      // Удалить все NPC
+      for (const npc of this.npcs) {
+        try {
+          if (npc && npc.active && !npc.destroyed) {
+            // Сначала попытаться удалить через CombatManager
+            try {
+              this.combat.despawnNPC(npc, 'system transition');
+            } catch (e) {
+              console.warn('[StarSystemScene] Error despawning NPC through CombatManager:', e);
+              // Если не удалось, прямое уничтожение
+              try {
+                npc.destroy();
+              } catch (e2) {
+                console.warn('[StarSystemScene] Error destroying NPC directly:', e2);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[StarSystemScene] Error processing NPC during cleanup:', e);
+        }
+      }
+      this.npcs = [];
+      
+      // 3. Очистить все encounter маркеры
+      for (const marker of this.encounterMarkers) {
+        try {
+          marker.marker?.destroy();
+          marker.label?.destroy();
+        } catch (e) {
+          console.warn('[StarSystemScene] Error destroying encounter marker:', e);
+        }
+      }
+      this.encounterMarkers = [];
+      
+      // 4. Очистить все планеты и их метки
+      for (const planet of this.planets) {
+        try {
+          planet.obj?.destroy();
+          planet.label?.destroy();
+        } catch (e) {
+          console.warn('[StarSystemScene] Error destroying planet:', e);
+        }
+      }
+      this.planets = [];
+      
+      // 5. Уничтожить игровые объекты
+      try {
+        this.ship?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying ship:', e);
+      }
+      
+      try {
+        this.routeGraphics?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying routeGraphics:', e);
+      }
+      
+      try {
+        this.clickMarker?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying clickMarker:', e);
+      }
+      
+      try {
+        this.starfield?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying starfield:', e);
+      }
+      
+      try {
+        this.bgTile?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying bgTile:', e);
+      }
+      
+      try {
+        this.aimLine?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying aimLine:', e);
+      }
+      
+      // 6. Очистить все менеджеры и сервисы
+      try {
+        this.updateMgr?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying updateMgr:', e);
+      }
+      
+      try {
+        this.combat?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying combat:', e);
+      }
+      
+      try {
+        this.fogOfWar?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying fogOfWar:', e);
+      }
+      
+      try {
+        this.indicators?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying indicators:', e);
+      }
+      
+      try {
+        this.inputHandler?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying inputHandler:', e);
+      }
+      
+      try {
+        this.encounterManager?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying encounterManager:', e);
+      }
+      
+      try {
+        this.npcBehaviorMgr?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying npcBehaviorMgr:', e);
+      }
+      
+      try {
+        this.pathRender?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying pathRender:', e);
+      }
+      
+      try {
+        this.starfieldRenderer?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying starfieldRenderer:', e);
+      }
+      
+      try {
+        this.systemInitializer?.destroy();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error destroying systemInitializer:', e);
+      }
+      
+      // 7. Очистить все события
+      try {
+        this.events.removeAllListeners();
+      } catch (e) {
+        console.warn('[StarSystemScene] Error removing all listeners:', e);
+      }
+      
+      console.log('[StarSystemScene] Cleanup completed successfully');
+    } catch (error) {
+      console.error('[StarSystemScene] Critical error during cleanup:', error);
+    }
+  }
 }
 
 

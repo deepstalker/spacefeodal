@@ -58,6 +58,39 @@ export class StarfieldRenderer {
       g.fillCircle(x, y, r);
     }
   }
+  
+  /**
+   * Корректно уничтожить рендерер и освободить ресурсы
+   */
+  public destroy(): void {
+    try {
+      this.scene.events.off(Phaser.Scenes.Events.UPDATE);
+    } catch (e) {
+      console.warn('[StarfieldRenderer] Error removing UPDATE listener:', e);
+    }
+    
+    try {
+      this.starfieldGfx?.destroy();
+    } catch (e) {
+      console.warn('[StarfieldRenderer] Error destroying starfieldGfx:', e);
+    }
+    
+    try {
+      this.starsLayer?.destroy();
+    } catch (e) {
+      console.warn('[StarfieldRenderer] Error destroying starsLayer:', e);
+    }
+    
+    try {
+      this.nebulaLayer?.destroy();
+    } catch (e) {
+      console.warn('[StarfieldRenderer] Error destroying nebulaLayer:', e);
+    }
+    
+    this.starfieldGfx = undefined;
+    this.starsLayer = null;
+    this.nebulaLayer = null;
+  }
 }
 
 

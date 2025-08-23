@@ -298,6 +298,10 @@ export class HUDManager {
   private createSystemTitle() {
     if (!this.configRef) return;
     const sys = this.configRef.system;
+    if (!sys) {
+      console.warn('HUDManager: System config not loaded yet, skipping system title creation');
+      return;
+    }
     const padBelowMap = 20;
     const titleFontPx = 48;
     const sectorGapPx = 20;
@@ -1340,6 +1344,9 @@ export class HUDManager {
     this.createHUD(ship);
     this.createWeaponBar();
     this.createMinimap(ship);
+    this.createSystemTitle(); // КРИТИЧЕСКИЙ ФИКС: добавляем создание заголовка системы
+    this.createPauseUI();
+    this.createTimeUI();
     
     // Переинтегрируем fog of war с миникартой
     const starScene = this.scene.scene.get('StarSystemScene') as any;
@@ -1357,9 +1364,13 @@ export class HUDManager {
     this.pauseIndicator?.destroy(); this.cycleCounterText?.destroy(); this.cycleProgressBar?.destroy(); this.cycleProgressBarBg?.destroy();
     if (this.pauseBlinkTween) { this.pauseBlinkTween.destroy(); this.pauseBlinkTween = undefined; }
 
+    // уничтожить элементы заголовка системы
+    this.systemTitleText?.destroy(); this.systemSectorText?.destroy();
+
     // очистить ссылки
     this.speedText = undefined; this.followToggle = undefined; this.shipNameText = undefined; this.shipIcon = undefined; this.weaponSlotsContainer = undefined; this.weaponPanel = undefined; this.hullFill = undefined; this.followLabel = undefined; this.gameOverGroup = undefined; this.minimapHit = undefined;
     this.pauseIndicator = undefined; this.cycleCounterText = undefined; this.cycleProgressBar = undefined; this.cycleProgressBarBg = undefined;
+    this.systemTitleText = undefined; this.systemSectorText = undefined;
 
     // уничтожить текстовые ref
     const hpText = (this.scene as any).__hudHullValue as Phaser.GameObjects.Text | undefined; hpText?.destroy(); (this.scene as any).__hudHullValue = undefined;

@@ -79,29 +79,33 @@ export class MinimapManager {
 
     // Star (bigger marker)
     this.g.fillStyle(0xffcc00, 1);
-    if (inRect(sys.star.x, sys.star.y)) {
+    if (sys.star && typeof sys.star.x === 'number' && typeof sys.star.y === 'number' && inRect(sys.star.x, sys.star.y)) {
       const { sx, sy } = toScreen(sys.star.x, sys.star.y);
       this.g.fillCircle(sx, sy, 4);
     }
 
     // Planets
-    for (const p of sys.planets) {
-      // Берём текущие мировые координаты планет, если StarSystemScene их обновляет и проксирует в config
-      const px = (p as any)._x ?? (sys.star.x + p.orbit.radius);
-      const py = (p as any)._y ?? sys.star.y;
-      if (inRect(px, py)) {
-        const { sx, sy } = toScreen(px, py);
-        this.g.fillStyle(0x00c2a8, 1);
-        this.g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+    if (Array.isArray(sys.planets) && sys.star && typeof sys.star.x === 'number' && typeof sys.star.y === 'number') {
+      for (const p of sys.planets) {
+        if (!p || !p.orbit || typeof p.orbit.radius !== 'number') continue;
+        // Берём текущие мировые координаты планет, если StarSystemScene их обновляет и проксирует в config
+        const px = (p as any)._x ?? (sys.star.x + p.orbit.radius);
+        const py = (p as any)._y ?? sys.star.y;
+        if (typeof px === 'number' && typeof py === 'number' && inRect(px, py)) {
+          const { sx, sy } = toScreen(px, py);
+          this.g.fillStyle(0x00c2a8, 1);
+          this.g.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+        }
       }
     }
 
     // Encounters (POI) — relative to star center
-    if (Array.isArray(sys.poi)) {
+    if (Array.isArray(sys.poi) && sys.star && typeof sys.star.x === 'number' && typeof sys.star.y === 'number') {
       for (const e of sys.poi) {
+        if (!e) continue;
         const ex = sys.star.x + ((e as any).x ?? 0);
         const ey = sys.star.y + ((e as any).y ?? 0);
-        if (inRect(ex, ey)) {
+        if (typeof ex === 'number' && typeof ey === 'number' && inRect(ex, ey)) {
           const { sx, sy } = toScreen(ex, ey);
           this.g.fillStyle(0xf0e68c, 1);
           this.g.fillCircle(sx, sy, 3.5);
@@ -112,7 +116,7 @@ export class MinimapManager {
     // Player ship
     if (this.shipRef) {
       const s: any = this.shipRef;
-      if (inRect(s.x, s.y)) {
+      if (s && typeof s.x === 'number' && typeof s.y === 'number' && inRect(s.x, s.y)) {
         const { sx, sy } = toScreen(s.x, s.y);
         this.g.fillStyle(0x5d8a9b, 1);
         this.g.fillRect(sx - 2, sy - 2, 4, 4);
@@ -127,6 +131,7 @@ export class MinimapManager {
         const o: any = t.obj;
         if (!o || !o.active) continue;
         if (o === this.shipRef) continue;
+        if (typeof o.x !== 'number' || typeof o.y !== 'number') continue;
         if (!inRect(o.x, o.y)) continue;
         
         // Проверяем видимость через fog of war
@@ -148,7 +153,7 @@ export class MinimapManager {
     // Radar range ring (тонкое кольцо цвета #5D8A9B)
     if (this.fogOfWar && this.shipRef) {
       const s: any = this.shipRef;
-      if (inRect(s.x, s.y)) {
+      if (s && typeof s.x === 'number' && typeof s.y === 'number' && inRect(s.x, s.y)) {
         const radarRange = this.fogOfWar.getRadarRange();
         const { sx, sy } = toScreen(s.x, s.y);
         const radarRadius = radarRange * scaleX; // используем scaleX для радиуса

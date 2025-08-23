@@ -34,6 +34,16 @@ export class PlanetOrbitManager {
       if (confPlanet) { confPlanet._x = px; confPlanet._y = py; }
     }
   }
+  
+  /**
+   * Корректно уничтожить менеджер и освободить ресурсы
+   */
+  public destroy(): void {
+    // Очистить ссылки
+    this.scene = undefined as any;
+    this.config = undefined as any;
+    this.planets = [];
+  }
 }
 
 

@@ -123,6 +123,43 @@ export class InputHandler {
     }
     this.lastPointerWorld = undefined;
   }
+  
+  /**
+   * Корректно уничтожить обработчик и освободить ресурсы
+   */
+  public destroy(): void {
+    // Отписаться от всех событий мыши
+    try {
+      this.scene.input.off('pointerdown');
+    } catch (e) {
+      console.warn('[InputHandler] Error removing pointerdown listener:', e);
+    }
+    
+    try {
+      this.scene.input.off('pointerup');
+    } catch (e) {
+      console.warn('[InputHandler] Error removing pointerup listener:', e);
+    }
+    
+    try {
+      this.scene.input.off('pointermove');
+    } catch (e) {
+      console.warn('[InputHandler] Error removing pointermove listener:', e);
+    }
+    
+    // Уничтожить маркер клика
+    try {
+      this.clickMarker?.destroy();
+    } catch (e) {
+      console.warn('[InputHandler] Error destroying clickMarker:', e);
+    }
+    
+    // Очистить ссылки
+    this.ship = undefined;
+    this.movement = undefined as any;
+    this.findNPCAt = undefined as any;
+    this.clickMarker = undefined;
+    this.rightClickTargetNPC = null;
+    this.lastPointerWorld = undefined;
+  }
 }
-
-

@@ -20,7 +20,7 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
   private enabled: boolean = true;
   private lastUpdateTime: number = 0;
   
-  private radarRing?: Phaser.GameObjects.Arc;
+  private radarRing: Phaser.GameObjects.Arc | null = null;
 
   constructor(scene: Phaser.Scene, config: ConfigManager) {
     this.scene = scene;
@@ -280,15 +280,41 @@ export class EnhancedFogOfWar implements IEnhancedFogOfWar {
 
   private updateRadarRing(): void {
     if (!this.radarRing) return;
+    
+    // Проверяем, что объект кольца все еще валиден
+    if (!this.radarRing.active) {
+      this.radarRing = null;
+      return;
+    }
 
     try {
       const radarRange = this.radarSystem.getRadarRange();
       
-      // Обновляем позицию и размер кольца
-      this.radarRing.setPosition(this.playerX, this.playerY);
-      this.radarRing.setRadius(radarRange);
+      // Дополнительная проверка перед обновлением
+      if (this.radarRing && this.radarRing.active) {
+        this.radarRing.setPosition(this.playerX, this.playerY);
+        // Безопасная установка радиуса
+        if (typeof radarRange === 'number' && radarRange > 0) {
+          this.radarRing.setRadius(radarRange);
+        }
+      }
     } catch (error) {
       console.error('[FogOfWar] Error updating radar ring:', error);
+      // Если есть ошибка с кольцом радара, безопасно удаляем и создаем заново
+      try {
+        if (this.radarRing) {
+          this.radarRing.destroy();
+        }
+      } catch {} // Игнорируем ошибки при уничтожении
+      
+      this.radarRing = null;
+      
+      // Пересоздаем кольцо радара
+      try {
+        this.createRadarRing();
+      } catch (recreateError) {
+        console.warn('[FogOfWar] Failed to recreate radar ring:', recreateError);
+      }
     }
   }
 }

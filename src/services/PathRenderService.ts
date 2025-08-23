@@ -66,6 +66,28 @@ export class PathRenderService {
       this.routeGraphics.fillTriangle(b.x, b.y, left.x, left.y, right.x, right.y);
     }
   }
+  
+  /**
+   * Корректно уничтожить сервис и освободить ресурсы
+   */
+  public destroy(): void {
+    try {
+      this.routeGraphics?.destroy();
+    } catch (e) {
+      console.warn('[PathRenderService] Error destroying routeGraphics:', e);
+    }
+    
+    try {
+      this.aimLine?.destroy();
+    } catch (e) {
+      console.warn('[PathRenderService] Error destroying aimLine:', e);
+    }
+    
+    this.routeGraphics = undefined as any;
+    this.aimLine = undefined as any;
+    this.ship = undefined;
+    this.movement = undefined as any;
+  }
 }
 
 

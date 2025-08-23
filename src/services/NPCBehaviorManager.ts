@@ -154,6 +154,16 @@ export class NPCBehaviorManager {
   private findPlanetRec(id: string) {
     return (this.scene as any).planets?.find?.((p: any) => (p as any).data?.id === id);
   }
+  
+  /**
+   * Корректно уничтожить менеджер и освободить ресурсы
+   */
+  public destroy(): void {
+    // Очистить все данные
+    this.npcs = [];
+    this.combat = undefined;
+    this.escortTargets.clear();
+  }
 }
 
 

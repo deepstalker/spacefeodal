@@ -197,7 +197,26 @@ export class MovementManager {
     }, obj);
   }
 
-  // getRenderPathPoints удалён как неиспользуемый (визуальный путь рисуется напрямую по текущей цели)
+  /**
+   * Корректно уничтожить менеджер и освободить ресурсы
+   */
+  public destroy(): void {
+    // Отписаться от событий
+    try {
+      this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
+    } catch (e) {
+      console.warn('[MovementManager] Error removing UPDATE listener:', e);
+    }
+    
+    // Очистить ссылки
+    this.scene = undefined as any;
+    this.config = undefined as any;
+    this.pauseManager = undefined;
+    this.target = null;
+    this.command = null;
+    this.controlledObject = null;
+    this.targetVelocity = new Phaser.Math.Vector2(0, 0);
+  }
 
   private update(time: number, deltaMs: number) {
     // Проверяем конфиг паузы

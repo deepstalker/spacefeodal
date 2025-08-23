@@ -246,6 +246,31 @@ export class IndicatorManager {
 	updateAllPlanetBadges(planets: Array<{ obj: Phaser.GameObjects.Image }>) {
 		for (const p of planets) this.updatePlanetBadgePosition(p.obj);
 	}
+	
+	/**
+	 * Корректно уничтожить все индикаторы и освободить ресурсы
+	 */
+	public destroy(): void {
+		// Уничтожить все NPC бейджи
+		for (const badge of this.npcBadges.values()) {
+			try {
+				badge.container.destroy();
+			} catch (e) {
+				console.warn('[IndicatorManager] Error destroying NPC badge:', e);
+			}
+		}
+		this.npcBadges.clear();
+		
+		// Уничтожить все планетарные бейджи
+		for (const badge of this.planetBadges.values()) {
+			try {
+				badge.container.destroy();
+			} catch (e) {
+				console.warn('[IndicatorManager] Error destroying planet badge:', e);
+			}
+		}
+		this.planetBadges.clear();
+	}
 }
 
 

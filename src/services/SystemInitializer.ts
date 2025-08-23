@@ -76,6 +76,43 @@ export class SystemInitializer {
       if (confPlanet) { confPlanet._x = px0; confPlanet._y = py0; }
     }
   }
+  
+  /**
+   * Корректно уничтожить все инициализированные объекты
+   */
+  public destroy(): void {
+    // Уничтожить все планеты
+    for (const planet of this.planets) {
+      try {
+        planet.obj?.destroy();
+      } catch (e) {
+        console.warn('[SystemInitializer] Error destroying planet:', e);
+      }
+      
+      try {
+        planet.label?.destroy();
+      } catch (e) {
+        console.warn('[SystemInitializer] Error destroying planet label:', e);
+      }
+    }
+    this.planets = [];
+    
+    // Уничтожить все encounter маркеры
+    for (const marker of this.encounterMarkers) {
+      try {
+        marker.marker?.destroy();
+      } catch (e) {
+        console.warn('[SystemInitializer] Error destroying encounter marker:', e);
+      }
+      
+      try {
+        marker.label?.destroy();
+      } catch (e) {
+        console.warn('[SystemInitializer] Error destroying encounter label:', e);
+      }
+    }
+    this.encounterMarkers = [];
+  }
 }
 
 
