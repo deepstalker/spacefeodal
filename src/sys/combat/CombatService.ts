@@ -241,11 +241,16 @@ export class CombatService {
     
     const targets = this.targetManager.getAllTargets();
     
+    // Сначала скрываем все индикаторы для избежания дублирования
+    for (const target of targets) {
+      this.uiManager.hideIndicator(target.obj);
+    }
+    
     for (const target of targets) {
       // Update HP bars for all targets
       this.uiManager.updateHpBar(target);
       
-      // Update selection indicator for selected target
+      // Update selection indicator for selected target only
       if (target.obj === this.selectedTarget) {
         const name = (target.obj as any).shipName ?? (target.shipId ?? `NPC #${(target.obj as any).__uniqueId}`);
         const color = this.getRelationColor(this.getRelation('player', target.faction));
@@ -262,6 +267,11 @@ export class CombatService {
    * Select a target for UI display
    */
   selectTarget(obj: any): void {
+    // Очищаем индикатор предыдущей цели
+    if (this.selectedTarget && this.uiManager) {
+      this.uiManager.hideIndicator(this.selectedTarget);
+    }
+    
     this.selectedTarget = obj;
     
     if (obj && this.selectionCircle) {

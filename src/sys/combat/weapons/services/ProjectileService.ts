@@ -7,6 +7,8 @@ export type ProjectileCallbacks = {
   getFoW: () => EnhancedFogOfWar | undefined;
   registerTimer?: (id: string, timer: Phaser.Time.TimerEvent) => void;
   unregisterTimer?: (id: string) => void;
+  registerUpdateHandler?: (id: string, handler: Function) => void;
+  unregisterUpdateHandler?: (id: string) => void;
   spawnHitEffect: (x: number, y: number, w: any) => void;
   isInvulnerable: (obj: any) => boolean;
 };
@@ -83,20 +85,31 @@ export class ProjectileService {
     if (!target || !target.active) {
       return 'target_lost';
     }
+    
+    // Mark that we've already handled a hit for this projectile
+    if ((proj as any).__hitHandled) {
+      return 'hit';
+    }
+
     const tgtEntry = this.combat.findTargetEntry(target);
     const assignedByPlayer = this.combat.isTargetCombatAssignedPublic(target) || this.combat.isTargetCombatSelectedPublic(target);
     const entries = this.combat.getTargetEntries();
+    
+    // First check for any collisions with other objects
     for (const rec of entries) {
       const obj = rec.obj as any;
       if (!obj || !obj.active) continue;
       if (obj === shooter) continue;
       if (obj === target) continue;
+      
       const invulnerable = this.cb.isInvulnerable(obj);
       if (invulnerable) continue;
+      
       const hitR = this.combat.getEffectiveRadiusPublic(obj);
       const dAny = (typeof prevX === 'number' && typeof prevY === 'number')
         ? distPointToSegment(obj.x, obj.y, prevX, prevY, (proj as any).x, (proj as any).y)
         : Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
+      
       if (dAny <= hitR) {
         const victimFaction = rec.faction;
         const relSV = this.combat.getRelationPublic(shooterFaction, victimFaction, shooterOverrides);
@@ -105,17 +118,22 @@ export class ProjectileService {
         const selectedByPlayerObj = this.combat.isTargetCombatSelectedPublic(obj);
         const assignedByPlayerObj = this.combat.isTargetCombatAssignedPublic(obj);
         const canApplyDueToSelectionObj = (shooter === this.combat.getPlayerShip()) && (selectedByPlayerObj || assignedByPlayerObj);
+        
         if (hostile || canApplyDueToSelectionObj) {
           this.combat.applyDamagePublic(obj, w.damage, shooter);
+          (proj as any).__hitHandled = true; // Mark as handled
           this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
           return 'hit';
         }
       }
     }
+
+    // Then check for collision with the main target
     const hitDist = this.combat.getEffectiveRadiusPublic(target as any);
     const d = (typeof prevX === 'number' && typeof prevY === 'number')
       ? distPointToSegment(target.x, target.y, prevX, prevY, (proj as any).x, (proj as any).y)
       : Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
+    
     if (d <= hitDist) {
       const invulnerable = this.cb.isInvulnerable(target as any);
       if (!invulnerable) {
@@ -127,8 +145,10 @@ export class ProjectileService {
         const hostileEnemy = (relSV === 'confrontation') || (relVS === 'confrontation');
         const selectedByPlayer = this.combat.isTargetCombatSelectedPublic(target);
         const canApplyDueToSelection = (shooter === this.combat.getPlayerShip()) && selectedByPlayer;
+        
         if (hostileEnemy || canApplyDueToSelection) {
           this.combat.applyDamagePublic(target, w.damage, shooter);
+          (proj as any).__hitHandled = true; // Mark as handled
           this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
           return 'hit';
         }
@@ -156,6 +176,9 @@ export class ProjectileService {
       getNowMs: () => number;
       isPaused: () => boolean;
       setVisibleByFoW: (obj: any) => void;
+      registerUpdateHandler?: (id: string, handler: Function) => void;
+      unregisterUpdateHandler?: (id: string) => void;
+      getWrappedUpdateHandler?: (id: string) => Function | null;
     }
   ) {
     const tryCollisions = (prevX?: number, prevY?: number) => {
@@ -205,7 +228,8 @@ export class ProjectileService {
       let jitterPhase = Math.random() * Math.PI * 2;
 
       const onUpdateHoming = (_t: number, dt: number) => {
-        if (opts.isPaused()) return;
+        // КРИТИЧЕСКИЙ ФИКС: PauseManager теперь контролирует выполнение через обертку
+        // Убираем ручную проверку isPaused() - это делает PauseManager
         opts.setVisibleByFoW(proj as any);
 
         const nowMs = opts.getNowMs();
@@ -233,20 +257,62 @@ export class ProjectileService {
 
         const col = tryCollisions(prevX, prevY);
         if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+          const homingUpdateId = (proj as any).__homingUpdateId;
+          const wrappedHandler = (proj as any).__wrappedHomingHandler;
+          if (wrappedHandler) {
+            this.scene.events.off(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+          } else {
+            this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+          }
+          try { opts.unregisterUpdateHandler?.(homingUpdateId); } catch {}
           this.unregisterProjectileFoW(proj);
-          if (col !== 'hit' && w.hitEffect) {
+          
+          // Only spawn hit effect if this wasn't already handled in checkProjectileCollisions
+          // and this is a missile (has hitEffect) and we didn't already hit something
+          if (col !== 'hit' && w.hitEffect && !(proj as any).__hitHandled) {
             this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
+            (proj as any).__hitHandled = true;
           }
           (proj as any).destroy?.();
         }
       };
-      this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+      
+      // КРИТИЧЕСКИЙ ФИКС: Регистрируем UPDATE обработчик в PauseManager для корректной паузы
+      const homingUpdateId = `projectile_homing_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
+      (proj as any).__homingUpdateId = homingUpdateId; // Сохраняем ID для очистки
+      
+      // Регистрируем в PauseManager для автоматического контроля паузы
+      try { opts.registerUpdateHandler?.(homingUpdateId, onUpdateHoming); } catch {}
+      
+      // Получаем pause-aware обработчик для регистрации в Phaser
+      const wrappedHandler = opts.getWrappedUpdateHandler?.(homingUpdateId);
+      if (wrappedHandler) {
+        this.scene.events.on(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+        (proj as any).__wrappedHomingHandler = wrappedHandler;
+      } else {
+        // Фолбэк: регистрируем напрямую (старая логика)
+        this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+      }
       this.setupProjectileLifetime(proj, lifetimeMs, () => {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+        // Skip if already handled
+        if ((proj as any).__hitHandled) {
+          return;
+        }
+        
+        const homingUpdateId = (proj as any).__homingUpdateId;
+        const wrappedHandler = (proj as any).__wrappedHomingHandler;
+        if (wrappedHandler) {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+        } else {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
+        }
+        try { opts.unregisterUpdateHandler?.(homingUpdateId); } catch {}
         this.unregisterProjectileFoW(proj);
-        if (w.hitEffect) {
+        
+        // Only spawn hit effect if this is a missile (has hitEffect) and we didn't already hit something
+        if (w.hitEffect && !(proj as any).__hitHandled) {
           this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
+          (proj as any).__hitHandled = true;
         }
         (proj as any).destroy?.();
       });
@@ -257,7 +323,8 @@ export class ProjectileService {
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
     const onUpdate = (_t: number, dt: number) => {
-      if (opts.isPaused()) return;
+      // КРИТИЧЕСКИЙ ФИКС: PauseManager теперь контролирует выполнение через обертку
+      // Убираем ручную проверку isPaused() - это делает PauseManager
       opts.setVisibleByFoW(proj as any);
       const prevX = (proj as any).x;
       const prevY = (proj as any).y;
@@ -265,15 +332,62 @@ export class ProjectileService {
       (proj as any).y = prevY + vy * (dt/1000);
       const col = tryCollisions(prevX, prevY);
       if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+        const linearUpdateId = (proj as any).__linearUpdateId;
+        const wrappedHandler = (proj as any).__wrappedLinearHandler;
+        if (wrappedHandler) {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+        } else {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+        }
+        try { opts.unregisterUpdateHandler?.(linearUpdateId); } catch {}
         this.unregisterProjectileFoW(proj);
+        
+        // Only spawn hit effect if this is a missile (has hitEffect) and we didn't already hit something
+        if (w.hitEffect && !(proj as any).__hitHandled) {
+          this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
+          (proj as any).__hitHandled = true;
+        }
         (proj as any).destroy?.();
       }
     };
-    this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
+    
+    // КРИТИЧЕСКИЙ ФИКС: Регистрируем UPDATE обработчик в PauseManager для корректной паузы
+    const linearUpdateId = `projectile_linear_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
+    (proj as any).__linearUpdateId = linearUpdateId; // Сохраняем ID для очистки
+    
+    // Регистрируем в PauseManager для автоматического контроля паузы
+    try { opts.registerUpdateHandler?.(linearUpdateId, onUpdate); } catch {}
+    
+    // Получаем pause-aware обработчик для регистрации в Phaser
+    const wrappedHandler = opts.getWrappedUpdateHandler?.(linearUpdateId);
+    if (wrappedHandler) {
+      this.scene.events.on(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+      (proj as any).__wrappedLinearHandler = wrappedHandler;
+    } else {
+      // Фолбэк: регистрируем напрямую (старая логика)
+      this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
+    }
     this.setupProjectileLifetime(proj, lifetimeMs, () => {
-      this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+      // Skip if already handled
+      if ((proj as any).__hitHandled) {
+        return;
+      }
+      
+      const linearUpdateId = (proj as any).__linearUpdateId;
+      const wrappedHandler = (proj as any).__wrappedLinearHandler;
+      if (wrappedHandler) {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, wrappedHandler);
+      } else {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
+      }
+      try { opts.unregisterUpdateHandler?.(linearUpdateId); } catch {}
       this.unregisterProjectileFoW(proj);
+      
+      // Only spawn hit effect if this is a missile (has hitEffect) and we didn't already hit something
+      if (w.hitEffect && !(proj as any).__hitHandled) {
+        this.cb.spawnHitEffect((proj as any).x, (proj as any).y, w);
+        (proj as any).__hitHandled = true;
+      }
       (proj as any).destroy?.();
     });
   }

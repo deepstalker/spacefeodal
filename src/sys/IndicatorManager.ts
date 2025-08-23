@@ -102,13 +102,16 @@ export class IndicatorManager {
 	setBadgeWidth(obj: any, width: number) {
 		const b = this.npcBadges.get(obj);
 		if (!b) return;
+		
+		// Проверяем, изменилась ли ширина
+		if (Math.abs(b.width - width) < 1) return; // Нет изменений - не перерисовываем
 
 		b.width = width;
 		b.nameText.setWordWrapWidth(width - 2 * this.padX, false);
 		b.statusText.setWordWrapWidth(width - 2 * this.padX, false);
 
 		// Re-draw background with new width
-		const totalH = b.background.height; // Assume height doesn't change here
+		const totalH = (b.background as any).height || this.badgeMinHeight; // Assume height doesn't change here
 		b.background.clear();
 		b.background.fillStyle(this.bgColor, this.bgAlpha);
 		b.background.fillRoundedRect(-width / 2, -totalH / 2, width, totalH, 4);
@@ -119,30 +122,58 @@ export class IndicatorManager {
 	showOrUpdateNPCBadge(obj: any, opts: { name: string; status: string; color?: string; x: number; y: number }) {
 		const b = this.ensureNpcBadge(obj);
 		const s = this.getUIScale();
+		
+		// Проверяем, нужно ли обновлять содержимое
+		let needsContentUpdate = false;
+		let needsLayoutUpdate = false;
+		
 		// Update texts only if changed to avoid reflow flicker
-		if (b.nameText.text !== opts.name) b.nameText.setText(opts.name);
-		if (opts.color && (b.nameText.style.color !== opts.color)) b.nameText.setColor(opts.color);
-		if (b.statusText.text !== opts.status) b.statusText.setText(opts.status);
-		// Dynamic layout: prevent overlap
-		const padX = this.padX, padY = this.padY;
-		const nameH = b.nameText.height;
-		const statusH = b.statusText.height;
-		const gap = 6;
-		const totalH = Math.max(this.badgeMinHeight, padY + nameH + gap + statusH + padY);
-
-		const w = b.width;
-		b.background.clear();
-		b.background.fillStyle(this.bgColor, this.bgAlpha);
-		b.background.fillRoundedRect(-w / 2, -totalH / 2, w, totalH, 4);
-		b.background.lineStyle(this.strokeWidth, this.strokeColor, this.strokeAlpha);
-		b.background.strokeRoundedRect(-w / 2, -totalH / 2, w, totalH, 4);
-		(b.background as any).height = totalH; // Store for setBadgeWidth
-
-		// place name at top, status below
-		const nameY = -totalH / 2 + padY + nameH / 2;
-		b.nameText.setY(nameY);
-		b.statusText.setY(nameY + nameH / 2 + gap + statusH / 2);
-		// Position above given point
+		if (b.nameText.text !== opts.name) {
+			b.nameText.setText(opts.name);
+			needsContentUpdate = true;
+		}
+		if (opts.color && (b.nameText.style.color !== opts.color)) {
+			b.nameText.setColor(opts.color);
+		}
+		if (b.statusText.text !== opts.status) {
+			b.statusText.setText(opts.status);
+			needsContentUpdate = true;
+		}
+		
+		// Dynamic layout: prevent overlap - только если содержимое изменилось
+		if (needsContentUpdate) {
+			const padX = this.padX, padY = this.padY;
+			const nameH = b.nameText.height;
+			const statusH = b.statusText.height;
+			const gap = 6;
+			const totalH = Math.max(this.badgeMinHeight, padY + nameH + gap + statusH + padY);
+			
+			// Проверяем, изменился ли размер
+			const currentHeight = (b.background as any).height || 0;
+			if (Math.abs(currentHeight - totalH) > 1) {
+				needsLayoutUpdate = true;
+			}
+			
+			// Перерисовываем фон только если размер изменился
+			if (needsLayoutUpdate) {
+				const w = b.width;
+				b.background.clear();
+				b.background.fillStyle(this.bgColor, this.bgAlpha);
+				b.background.fillRoundedRect(-w / 2, -totalH / 2, w, totalH, 4);
+				b.background.lineStyle(this.strokeWidth, this.strokeColor, this.strokeAlpha);
+				b.background.strokeRoundedRect(-w / 2, -totalH / 2, w, totalH, 4);
+				(b.background as any).height = totalH; // Store for setBadgeWidth
+			}
+			
+			// Обновляем позиции текста только если layout изменился
+			if (needsLayoutUpdate) {
+				const nameY = -totalH / 2 + padY + nameH / 2;
+				b.nameText.setY(nameY);
+				b.statusText.setY(nameY + nameH / 2 + gap + statusH / 2);
+			}
+		}
+		
+		// Всегда обновляем позицию и масштаб контейнера
 		b.container.setPosition(opts.x, opts.y - this.npcOffsetAboveHp);
 		b.container.setScale(s);
 		b.container.setVisible(true);

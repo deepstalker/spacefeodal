@@ -191,6 +191,8 @@ export class CombatManager {
     this.pauseManager = pauseManager;
     // Передаем pauseManager в систему движения NPC
     this.npcMovement.setPauseManager(pauseManager);
+    // ВАЖНО: Передаем pauseManager в WeaponManager (создан ранее в конструкторе)
+    try { (this.weaponManager as any)?.setPauseManager?.(pauseManager); } catch {}
     // Also configure CombatService
     this.combatService.setPauseManager(pauseManager);
   }
@@ -389,6 +391,9 @@ export class CombatManager {
     // НЕ блокируем весь update на паузе - только конкретные действия
     const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
     
+    // НОВОЕ: Периодическая очистка для предотвращения накопления дубликатов
+    this.performPeriodicCleanup(_time);
+    
     // pulse selection
     if (this.selectedTarget && this.selectedTarget.active && this.selectionCircle) {
       this.selectionPulsePhase += deltaMs * 0.01;
@@ -423,6 +428,232 @@ export class CombatManager {
     this.uiManager.refreshCombatIndicators();
 
     // Круги радиуса оружия управляются WeaponManager
+  }
+  
+  /**
+   * Периодическая очистка для предотвращения накопления дубликатов
+   */
+  private lastCleanupTime: number = 0;
+  private performPeriodicCleanup(currentTime: number): void {
+    // Выполняем очистку каждые 5 секунд
+    const CLEANUP_INTERVAL = 5000;
+    
+    if (currentTime - this.lastCleanupTime < CLEANUP_INTERVAL) {
+      return;
+    }
+    
+    this.lastCleanupTime = currentTime;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[CombatManager] Performing periodic cleanup');
+    }
+    
+    // 1. Очистка неактивных целей в TargetManager
+    try {
+      this.targetManager.forceCleanupInactiveTargets();
+    } catch (e) {
+      console.error('[CombatManager] Error during target cleanup:', e);
+    }
+    
+    // 2. Валидация и исправление дубликатов ID
+    try {
+      const fixedCount = this.targetManager.validateAndFixDuplicateIds();
+      if (fixedCount > 0 && process.env.NODE_ENV === 'development') {
+        console.log(`[CombatManager] Fixed ${fixedCount} duplicate IDs`);
+      }
+    } catch (e) {
+      console.error('[CombatManager] Error during ID validation:', e);
+    }
+    
+    // 3. Диагностика интеграции между системами
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const integrity = this.targetManager.validateRegistrationIntegrity();
+        if (integrity.missingRegistrations.length > 0) {
+          console.warn('[CombatManager] Registration integrity issues:', {
+            total: integrity.totalTargets,
+            registeredInNpcState: integrity.registeredInNpcState,
+            missingRegistrations: integrity.missingRegistrations.slice(0, 3) // Показываем только первые 3
+          });
+        }
+      } catch (e) {
+        console.error('[CombatManager] Error during integrity validation:', e);
+      }
+    }
+    
+    // 4. Очистка массивов NPC в сцене от неактивных объектов
+    try {
+      this.targetManager.cleanupSceneNPCArrays();
+    } catch (e) {
+      console.error('[CombatManager] Error during scene array cleanup:', e);
+    }
+    
+    // 5. Синхронизация между старой и новой системами
+    try {
+      this.syncLegacyAndNewSystems();
+    } catch (e) {
+      console.error('[CombatManager] Error during system sync:', e);
+    }
+  }
+  
+  /**
+   * Синхронизация между старой системой targets и новыми компонентами
+   */
+  private syncLegacyAndNewSystems(): void {
+    const allTargets = this.targetManager.getAllTargets();
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[CombatManager] Starting system sync with ${allTargets.length} targets`);
+    }
+    
+    let successfulRegistrations = 0;
+    let failedRegistrations = 0;
+    let removedTargets = 0;
+    
+    // Проверяем что все цели имеют валидные состояния в NPCStateManager
+    for (const target of allTargets) {
+      if (!target.obj || !target.obj.active) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[CombatManager] Skipping inactive target: ${(target.obj as any).__uniqueId}`);
+        }
+        continue;
+      }
+      
+      const context = this.npcStateManager.getContext(target.obj);
+      if (!context) {
+        const uniqueId = (target.obj as any).__uniqueId;
+        const prefabKey = (target.obj as any).__prefabKey;
+        
+        // Попытка повторной регистрации для NPC без контекста
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(`[CombatManager] Re-registering unregistered NPC: ${uniqueId}`, {
+            prefab: prefabKey,
+            shipId: target.shipId,
+            faction: target.faction,
+            aiProfile: target.aiProfileKey,
+            combatAI: target.combatAI,
+            position: { x: target.obj.x, y: target.obj.y },
+            active: target.obj.active,
+            destroyed: target.obj.destroyed
+          });
+        }
+        
+        // Дополнительная валидация перед попыткой регистрации
+        if (!target.obj || 
+            typeof target.obj.x !== 'number' || 
+            typeof target.obj.y !== 'number' ||
+            target.obj.destroyed) {
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[CombatManager] ✗ Invalid object state for NPC ${uniqueId}, removing from TargetManager`);
+          }
+          
+          this.targetManager.removeTarget(target.obj);
+          removedTargets++;
+          continue;
+        }
+        
+        try {
+          // КРИТИЧНО: Используем данные из TargetEntry для регистрации
+          this.npcStateManager.registerNPC(
+            target.obj,
+            target.aiProfileKey || 'default',
+            target.combatAI || 'default_aggressive',
+            target.faction || 'neutral'
+          );
+          
+          successfulRegistrations++;
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[CombatManager] ✓ Successfully re-registered NPC: ${uniqueId}`);
+          }
+        } catch (e) {
+          failedRegistrations++;
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[CombatManager] ✗ Failed to re-register NPC ${uniqueId}:`, {
+              error: e instanceof Error ? e.message : String(e),
+              stack: e instanceof Error ? e.stack : undefined,
+              npcData: {
+                prefab: prefabKey,
+                shipId: target.shipId,
+                faction: target.faction,
+                aiProfile: target.aiProfileKey,
+                combatAI: target.combatAI,
+                position: { x: target.obj.x, y: target.obj.y },
+                uniqueId: uniqueId,
+                hasRequiredProps: {
+                  x: typeof target.obj.x === 'number',
+                  y: typeof target.obj.y === 'number',
+                  active: target.obj.active,
+                  destroyed: target.obj.destroyed
+                }
+              }
+            });
+          }
+          
+          // Попробуем альтернативную стратегию: очистка и повторная попытка
+          if (uniqueId && uniqueId !== 'unknown') {
+            try {
+              // Проверим, есть ли "призрачные" контексты для этого ID
+              const allContexts = this.npcStateManager.getAllContexts();
+              let foundOrphanedContext = false;
+              
+              for (const [contextObj, contextData] of allContexts) {
+                if ((contextObj as any).__uniqueId === uniqueId && contextObj !== target.obj) {
+                  if (process.env.NODE_ENV === 'development') {
+                    console.warn(`[CombatManager] Found orphaned context for ID ${uniqueId}, cleaning up`);
+                  }
+                  this.npcStateManager.unregisterNPC(contextObj);
+                  foundOrphanedContext = true;
+                }
+              }
+              
+              if (foundOrphanedContext) {
+                // Повторная попытка после очистки
+                this.npcStateManager.registerNPC(
+                  target.obj,
+                  target.aiProfileKey || 'default',
+                  target.combatAI || 'default_aggressive',
+                  target.faction || 'neutral'
+                );
+                
+                successfulRegistrations++;
+                failedRegistrations--;
+                
+                if (process.env.NODE_ENV === 'development') {
+                  console.log(`[CombatManager] ✓ Successfully re-registered NPC after cleanup: ${uniqueId}`);
+                }
+                continue;
+              }
+            } catch (retryError) {
+              if (process.env.NODE_ENV === 'development') {
+                console.error(`[CombatManager] ✗ Retry also failed for NPC ${uniqueId}:`, retryError);
+              }
+            }
+          }
+          
+          // Если все попытки не удались, удаляем NPC из TargetManager
+          // чтобы избежать постоянных ошибок "NO CONTEXT"
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`[CombatManager] Removing problematic NPC from TargetManager: ${uniqueId}`);
+          }
+          
+          this.targetManager.removeTarget(target.obj);
+          removedTargets++;
+        }
+      }
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[CombatManager] System sync completed`, {
+        totalTargets: allTargets.length,
+        successfulRegistrations,
+        failedRegistrations,
+        removedTargets,
+        finalTargetCount: this.targetManager.getAllTargets().length
+      });
+    }
   }
 
   private refreshSelectionCircleColor() {
@@ -814,394 +1045,42 @@ export class CombatManager {
     }
   }
 
+  // DEPRECATED: Legacy fireWeapon method removed to avoid duplication
+  // All weapon firing now handled by WeaponManager → ProjectileService
   private fireWeapon(_slot: string, w: any, target: any, shooter: any) {
-    // Используем уже рассчитанное смещение дула, если оно передано вызвавшей стороной
-    const fallbackOffset = { x: 0, y: 0 };
-    const mo = (w && w.muzzleOffset) ? w.muzzleOffset : this.resolveMuzzleOffset(shooter, (w && typeof w.__slotIndex === 'number') ? w.__slotIndex : 0, fallbackOffset);
-    const muzzle = this.getMuzzleWorldPositionFor(shooter, mo);
-    const aim = this.getAimedTargetPoint(shooter, target, w);
-    const angle = Math.atan2(aim.y - muzzle.y, aim.x - muzzle.x);
-    // projectile visual
-    let proj: Phaser.GameObjects.GameObject & { x: number; y: number };
-    if (w.projectile.shape === 'rect') {
-      proj = this.scene.add.rectangle(muzzle.x, muzzle.y, w.projectile.width, w.projectile.height, Number((w.projectile.color as string).replace('#','0x'))).setDepth(0.8) as any;
-      (proj as any).setRotation?.(angle);
-    } else {
-      const r = w.projectile.radius ?? 4;
-      proj = this.scene.add.circle(muzzle.x, muzzle.y, r, Number((w.projectile.color as string).replace('#','0x'))).setDepth(0.8) as any;
-    }
-    (proj as any).__combat = { damage: w.damage, target };
-    // under shooter
-    (proj as any).setDepth?.(((shooter as any).depth ?? 1) - 0.1);
-    
-    // Регистрируем снаряд в fog of war как динамический объект
-    if (this.fogOfWar) {
-      this.fogOfWar.registerDynamicObject(proj, DynamicObjectType.PROJECTILE);
-    }
-
-    // projectileSpeed в px/s; позиция обновляется в UPDATE через dt/1000 — единицы согласованы
-    const speed = Math.max(1, w.projectileSpeed || 1);
-    
-    // Рассчитываем время жизни снаряда: для homing приоритет фиксированному; иначе дистанция/скорость
-    const lifetimeMs = Math.max(1,
-      (w?.type === 'homing' && w?.homing?.lifetimeMs)
-        ? w.homing.lifetimeMs
-        : ((w.range / Math.max(1, speed)) * 1000 + 50)
-    );
-    // Capture shooter's faction once for friendly-fire filtering
-    const shooterEntry = this.targets.find(t => t.obj === shooter);
-    const shooterFaction = shooterEntry?.faction ?? (shooter === this.ship ? 'player' : undefined);
-    const shooterOverrides = (shooterEntry as any)?.overrides?.factions;
-
-    // Общая функция проверки столкновений и нанесения урона/эффектов
-    const tryCollisions = () => {
-      // collision simple distance check
-      if (!target || !target.active) {
-        return 'target_lost' as const;
-      }
-      // Check collisions with any other valid enemy target along the path
-      for (let i = 0; i < this.targets.length; i++) {
-        const rec = this.targets[i];
-        const obj = rec.obj as any;
-        if (!obj || !obj.active) continue;
-        if (obj === shooter) continue;
-        // Пропускаем основную целевую точку здесь — она обрабатывается ниже отдельной веткой,
-        // чтобы не потерять урон по нейтральной цели из-за фильтра союзников
-        if (obj === target) continue;
-        const st = obj.__state;
-        const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof obj.alpha === 'number' && obj.alpha <= 0.05) || obj.visible === false;
-        if (invulnerable) continue;
-        const hitR = this.getEffectiveRadius(obj);
-        const dAny = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, obj.x, obj.y);
-        if (dAny <= hitR) {
-          // Relation filter: projectiles pass through non-hostile targets
-          const victimFaction = rec.faction;
-          const relSV = this.getRelation(shooterFaction, victimFaction, shooterOverrides);
-          const relVS = this.getRelation(victimFaction, shooterFaction, rec.overrides?.factions);
-          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation');
-          if (hostile) {
-            this.applyDamage(obj, w.damage, shooter);
-            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-            return 'hit' as const;
-          }
-        }
-      }
-      const hitDist = this.getEffectiveRadius(target as any);
-      const d = Phaser.Math.Distance.Between((proj as any).x, (proj as any).y, target.x, target.y);
-      if (d <= hitDist) {
-        // Пропускаем визуальные эффекты и урон, если цель в доке/андоке или невидима
-        const st = (target as any).__state;
-        const invulnerable = st === 'docking' || st === 'docked' || st === 'undocking' || (typeof (target as any).alpha === 'number' && (target as any).alpha <= 0.05) || (target as any).visible === false;
-        if (!invulnerable) {
-          // Фильтр отношений учитывает overrides с обеих сторон: дружественные цели пропускаем
-          const targetEntry = this.targets.find(t => t.obj === target);
-          const targetFaction = targetEntry?.faction ?? (target === this.ship ? 'player' : undefined);
-          const targetOverrides = (targetEntry as any)?.overrides?.factions;
-          const relSV = this.getRelation(shooterFaction, targetFaction, shooterOverrides);
-          const relVS = this.getRelation(targetFaction, shooterFaction, targetOverrides);
-          const hostile = (relSV === 'confrontation') || (relVS === 'confrontation');
-          if (hostile) {
-            this.applyDamage(target, w.damage, shooter);
-            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-            return 'hit' as const;
-          }
-        } else {
-          // цель в состоянии дока — не принимаем урон, но снаряд уничтожаем
-          return 'expire' as const;
-        }
-      }
-      return 'none' as const;
-    };
-
-    // HOMING: управляемый снаряд со временем жизни
-    if ((w.type ?? 'single') === 'homing') {
-      // Цель для наведения с учетом точности оружия/корабля; обновление не чаще чем раз в 300мс
-      const adjustIntervalMs = Math.max(50, this.config.weaponTypes?.homing?.adjustIntervalMs ?? 300);
-      let desiredAngleCached = angle;
-      let lastDesiredUpdate = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      const recomputeDesired = () => {
-        try {
-          // Получаем прицельную точку с учетом общей логики точности
-          const ap = this.getAimedTargetPoint(shooter, target, w) || { x: (target?.x ?? aim.x), y: (target?.y ?? aim.y) };
-          // Нелинейное сглаживание точности для homing
-          let wAcc = typeof w?.accuracy === 'number' ? Phaser.Math.Clamp(w.accuracy, 0, 1) : 1;
-          let sAcc = 1;
-          const entry = this.targets.find(t => t.obj === shooter);
-          if (shooter === this.ship) {
-            const playerShipId = this.config.player?.shipId ?? this.config.ships.current;
-            const shipDef = this.config.ships.defs[playerShipId];
-            const sa = shipDef?.combat?.accuracy;
-            if (typeof sa === 'number') sAcc = Phaser.Math.Clamp(sa, 0, 1);
-          } else if (entry) {
-            const eShipId = entry.shipId ?? this.config.ships.current;
-            const shipDef = this.config.ships.defs[eShipId];
-            const sa = shipDef?.combat?.accuracy;
-            if (typeof sa === 'number') sAcc = Phaser.Math.Clamp(sa, 0, 1);
-          }
-          const baseAcc = Phaser.Math.Clamp(wAcc * sAcc, 0, 1);
-          const exp = (typeof w?.homing?.accuracyExponent === 'number' && w.homing.accuracyExponent > 0) ? w.homing.accuracyExponent : (this.config.weaponTypes?.homing?.accuracyExponent ?? 0.6);
-          const effAcc = Math.pow(baseAcc, exp); // 0..1, выше — точнее
-          // уменьшение влияния неточности
-          const influence = Math.max(0, Math.min(1, w?.homing?.accuracyInfluenceMultiplier ?? this.config.weaponTypes?.homing?.accuracyInfluenceMultiplier ?? 0.35));
-          const cx = (target?.x ?? ap.x);
-          const cy = (target?.y ?? ap.y);
-          let aimX = cx + (ap.x - cx) * influence;
-          let aimY = cy + (ap.y - cy) * influence;
-          // Ограничиваем максимальную угловую ошибку
-          const maxErrDeg = Math.max(0, w?.homing?.maxAngleErrorDeg ?? this.config.weaponTypes?.homing?.maxAngleErrorDeg ?? 8);
-          const desiredCoreAngle = Math.atan2((target?.y ?? cy) - (proj as any).y, (target?.x ?? cx) - (proj as any).x);
-          const noisyAngle = Math.atan2(aimY - (proj as any).y, aimX - (proj as any).x);
-          let angleDelta = Phaser.Math.Angle.Wrap(noisyAngle - desiredCoreAngle);
-          const maxDelta = (maxErrDeg * (1 - effAcc)) * Math.PI / 180;
-          angleDelta = Phaser.Math.Clamp(angleDelta, -maxDelta, maxDelta);
-          const clampedAngle = Phaser.Math.Angle.Wrap(desiredCoreAngle + angleDelta);
-          desiredAngleCached = clampedAngle;
-        } catch {
-          const tx = (target?.x ?? aim.x);
-          const ty = (target?.y ?? aim.y);
-          desiredAngleCached = Math.atan2(ty - (proj as any).y, tx - (proj as any).x);
-        }
-      };
-      recomputeDesired();
-      const reverseLaunch = !!(w.__burstShot === true); // признак выстрела в серии для обратного старта
-      // Дополнительный "выброс" сверх 180° и случайность
-      const backfireDeg = (w?.homing?.backfireDeg ?? this.config.weaponTypes?.homing?.backfireDeg ?? 0);
-      const backfireRand = (w?.homing?.backfireRandomDeg ?? this.config.weaponTypes?.homing?.backfireRandomDeg ?? 0);
-      const backfireJitter = reverseLaunch ? ((backfireDeg + (Math.random()*2 - 1) * backfireRand) * Math.PI/180) : 0;
-      // Постоянное случайное смещение траектории на снаряд
-      const biasDeg = (w?.homing?.biasDeg ?? this.config.weaponTypes?.homing?.biasDeg ?? 0);
-      const biasRad = (biasDeg !== 0) ? ((Math.random()*2 - 1) * Math.abs(biasDeg) * Math.PI/180) : 0;
-      let currentAngle = (reverseLaunch ? angle + Math.PI + backfireJitter : angle) + biasRad;
-      (proj as any).setRotation?.(currentAngle);
-      const turnDegPerSec = (typeof w?.homing?.turnSpeedDegPerSec === 'number' && w.homing.turnSpeedDegPerSec > 0) ? w.homing.turnSpeedDegPerSec : (this.config.weaponTypes?.homing?.turnSpeedDegPerSec ?? 0);
-      const maxTurnRadPerMs = (turnDegPerSec > 0)
-        ? (turnDegPerSec * Math.PI / 180) / 1000
-        : Infinity;
-      // Параметры периодического шума направления
-      const jitterAmp = Math.max(0, (w?.homing?.jitterDeg ?? this.config.weaponTypes?.homing?.jitterDeg ?? 0)) * Math.PI/180;
-      const jitterHz = Math.max(0, (w?.homing?.jitterHz ?? this.config.weaponTypes?.homing?.jitterHz ?? 0));
-      let jitterPhase = Math.random() * Math.PI * 2;
-
-      const onUpdateHoming = (_t: number, dt: number) => {
-        // Проверяем паузу боевых систем
-        if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-          return;
-        }
-
-        // Быстрое скрытие снаряда вне радара игрока
-        if (this.fogOfWar) {
-          try {
-            const visible = this.fogOfWar.isObjectVisible(proj as any);
-            (proj as any).setVisible?.(visible);
-          } catch {}
-        }
-
-        // Поворот к цели с ограничением скорости поворота
-        const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-        if (nowMs - lastDesiredUpdate >= adjustIntervalMs) {
-          recomputeDesired();
-          lastDesiredUpdate = nowMs;
-        }
-        let desired = desiredAngleCached;
-        // Периодический шум
-        if (jitterAmp > 0 && jitterHz > 0) {
-          jitterPhase += (Math.PI * 2) * jitterHz * (dt/1000);
-          desired += Math.sin(jitterPhase) * jitterAmp;
-        }
-        let delta = Phaser.Math.Angle.Wrap(desired - currentAngle);
-        const maxStep = maxTurnRadPerMs === Infinity ? Math.abs(delta) : (maxTurnRadPerMs * dt);
-        delta = Phaser.Math.Clamp(delta, -maxStep, maxStep);
-        currentAngle = Phaser.Math.Angle.Wrap(currentAngle + delta);
-        (proj as any).setRotation?.(currentAngle);
-
-        // Перемещение с постоянной скоростью
-        const vxH = Math.cos(currentAngle) * speed;
-        const vyH = Math.sin(currentAngle) * speed;
-        (proj as any).x += vxH * (dt/1000);
-        (proj as any).y += vyH * (dt/1000);
-
-        const col = tryCollisions();
-        if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-          this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-          // Дерегистрируем снаряд из fog of war
-          if (this.fogOfWar) {
-            this.fogOfWar.unregisterObject(proj);
-          }
-          // Взрыв только визуально при истечении/потере цели
-          if (col !== 'hit' && w.hitEffect) {
-            this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-          }
-          (proj as any).destroy?.();
-        }
-      };
-      this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-      // Таймер жизни: по окончании — взрыв в текущей точке
-      const projId = `projectile_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
-      const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdateHoming);
-        if (this.fogOfWar) {
-          this.fogOfWar.unregisterObject(proj);
-        }
-        if (w.hitEffect) {
-          this.spawnHitEffect((proj as any).x, (proj as any).y, w);
-        }
-        (proj as any).destroy?.();
-        try { this.pauseManager?.unregisterTimer?.(projId); } catch {}
-      });
-      try { this.pauseManager?.registerTimer?.(projId, lifetimeTimer); } catch {}
-
-      // Сигнализируем UI о выстреле игрока для мигания иконки
-      if (shooter === this.ship) {
-        try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
-      }
-      return;
-    }
-
-    // Прямая баллистика (single/burst)
-    const vx = Math.cos(angle) * speed; // px/s
-    const vy = Math.sin(angle) * speed; // px/s
-
-    const onUpdate = (_t: number, dt: number) => {
-      // Проверяем паузу боевых систем
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
-      
-      // Быстрое скрытие снаряда вне радара игрока (не ждём батч-апдейт FoW)
-      if (this.fogOfWar) {
-        try {
-          const visible = this.fogOfWar.isObjectVisible(proj as any);
-          (proj as any).setVisible?.(visible);
-        } catch {}
-      }
-      (proj as any).x += vx * (dt/1000);
-      (proj as any).y += vy * (dt/1000);
-      const col = tryCollisions();
-      if (col === 'hit' || col === 'target_lost' || col === 'expire') {
-        this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-        if (this.fogOfWar) { this.fogOfWar.unregisterObject(proj); }
-        (proj as any).destroy?.();
-      }
-    };
-    this.scene.events.on(Phaser.Scenes.Events.UPDATE, onUpdate);
-    // Создаем таймер жизни снаряда (без немедленной постановки на паузу)
-    const projId = `projectile_${(proj as any)._uid ?? Phaser.Utils.String.UUID()}`;
-    const lifetimeTimer = this.scene.time.delayedCall(lifetimeMs, () => {
-      this.scene.events.off(Phaser.Scenes.Events.UPDATE, onUpdate);
-      // Дерегистрируем снаряд из fog of war при истечении времени жизни
-      if (this.fogOfWar) {
-        this.fogOfWar.unregisterObject(proj);
-      }
-      (proj as any).destroy?.();
-      // Снимаем регистрацию таймера
-      try { this.pauseManager?.unregisterTimer?.(projId); } catch {}
-    });
-    // Регистрируем таймер в PauseManager, чтобы он замораживался на паузе
-    try { this.pauseManager?.registerTimer?.(projId, lifetimeTimer); } catch {}
-
-    // Сигнализируем UI о выстреле игрока для мигания иконки
-    if (shooter === this.ship) {
-      try { this.scene.events.emit('player-weapon-fired', _slot, target); } catch {}
-    }
+    // Delegate to WeaponManager for consistent pause handling
+    console.warn('[CombatManager] Legacy fireWeapon called - delegating to WeaponManager');
+    // This should not be called anymore - WeaponManager handles all weapon firing
   }
 
+  // DEPRECATED: Legacy fireBurstWeapon method removed to avoid duplication
+  // All burst weapon firing now handled by WeaponManager
   private fireBurstWeapon(slot: string, w: any, target: any, shooter: any) {
-    const count = Math.max(1, w?.burst?.count ?? 3);
-    const delayMs = Math.max(1, w?.burst?.delayMs ?? 80);
-    for (let k = 0; k < count; k++) {
-      const burstId = `burst_${slot}_${k}_${Date.now()}`;
-      const burstTimer = this.scene.time.delayedCall(k * delayMs, () => {
-        // Проверяем паузу боевых систем
-        if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-          return;
-        }
-        
-        if (!shooter?.active || !target?.active) return;
-        const muzzleOffset = this.resolveMuzzleOffset(shooter, 0, { x: 0, y: 0 });
-        // Для homing серии отмечаем обратный старт при создании снаряда
-        const w2 = { ...w, muzzleOffset, __slotIndex: 0, __burstShot: (w.type === 'homing') ? true : undefined };
-        this.fireWeapon(slot, w2, target, shooter);
-        try { this.pauseManager?.unregisterTimer?.(burstId); } catch {}
-      });
-      try { this.pauseManager?.registerTimer?.(burstId, burstTimer); } catch {}
-
-    }
+    console.warn('[CombatManager] Legacy fireBurstWeapon called - WeaponManager should handle this');
   }
 
+  // DEPRECATED: Helper methods moved to WeaponManager
+  // These are kept as stubs for backward compatibility
   private getMuzzleWorldPositionFor(shooter: any, offset: { x: number; y: number }) {
-    // offset относительно локальной системы корабля, учитываем визуальный носовой сдвиг
-    const nose = (shooter as any).__noseOffsetRad || 0;
-    const rot = shooter.rotation - nose;
-    const cos = Math.cos(rot);
-    const sin = Math.sin(rot);
-    const lx = offset.x;
-    const ly = offset.y;
-    const wx = shooter.x + lx * cos - ly * sin;
-    const wy = shooter.y + lx * sin + ly * cos;
-    return { x: wx, y: wy };
+    // Delegate to WeaponManager if needed
+    return this.weaponManager ? 
+      (this.weaponManager as any).getMuzzleWorldPositionFor?.(shooter, offset) ?? { x: shooter.x, y: shooter.y } :
+      { x: shooter.x, y: shooter.y };
   }
 
   private resolveMuzzleOffset(shooter: any, slotIndex: number, defaultOffset: { x: number; y: number }) {
-    // Player
-    if (shooter === this.ship) {
-      const shipId = this.config.player?.shipId ?? this.config.ships.current;
-      const def = this.config.ships.defs[shipId];
-      const off = def?.combat?.slots?.[slotIndex]?.offset;
-      if (off) return off;
-    }
-    // Enemy -> try enemy ship slots, fallback to player's layout
-    const entry = this.targets.find(t => t.obj === shooter);
-    const eShipId = entry?.shipId;
-    if (eShipId) {
-      const offE = this.config.ships.defs[eShipId]?.combat?.slots?.[slotIndex]?.offset;
-      if (offE) return offE;
-    }
-    const offP = this.config.ships.defs[this.config.player?.shipId ?? this.config.ships.current]?.combat?.slots?.[slotIndex]?.offset;
-    return offP ?? defaultOffset;
+    // Delegate to WeaponManager if needed
+    return this.weaponManager ? 
+      (this.weaponManager as any).resolveMuzzleOffset?.(shooter, slotIndex, defaultOffset) ?? defaultOffset :
+      defaultOffset;
   }
 
+  // DEPRECATED: Legacy autoFire method removed to avoid duplication
+  // All weapon firing now handled by WeaponManager
   private autoFire(shooter: any, target: any) {
-    if (!target || !target.active || !shooter || !shooter.active) return;
-    const dx = target.x - shooter.x;
-    const dy = target.y - shooter.y;
-    const dist = Math.hypot(dx, dy);
-    const times = this.cooldowns.getShooterTimes(shooter);
-    const slotsArr = this.weaponSlots;
-    for (let i = 0; i < slotsArr.length; i++) {
-      const slotKey = slotsArr[i];
-      const w = this.config.weapons.defs[slotKey];
-      if (!w) continue;
-      if ((w.type ?? 'single') === 'beam') {
-        const nowMs = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-        const readyAt = this.cooldowns.getBeamReadyAt(shooter, slotKey);
-        // NPC стреляют только если не на паузе
-        if (nowMs >= readyAt && dist <= w.range) {
-          const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
-          if (!isPaused) {
-            this.ensureBeam(shooter, slotKey, w, target, dist);
-          }
-        } else {
-          this.stopBeamIfAny(shooter, slotKey);
-        }
-        continue;
-      }
-      if (dist > w.range) { this.stopBeamIfAny(shooter, slotKey); continue; }
-      const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
-      const cooldownMs = 1000 / Math.max(0.001, (w.fireRatePerSec ?? 1));
-      const last = times[slotKey] ?? 0;
-      if (now - last >= cooldownMs) {
-        // NPC стреляют только если не на паузе
-        const isPaused = this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused();
-        if (!isPaused) {
-          times[slotKey] = now;
-          const muzzleOffset = this.resolveMuzzleOffset(shooter, i, { x: 0, y: 0 });
-          const w2 = { ...w, muzzleOffset };
-          const isBurst = ((w2?.burst?.count ?? 1) > 1) || ((w2.type ?? 'single') === 'burst');
-          if (isBurst) this.fireBurstWeapon(slotKey, w2, target, shooter);
-          else this.fireWeapon(slotKey, w2, target, shooter);
-        }
-      }
-    }
+    // This method is deprecated and should not be called
+    // WeaponManager.updateNpcWeapons() handles all NPC weapon firing
+    console.warn('[CombatManager] Legacy autoFire called - WeaponManager should handle this');
   }
 
   // getShooterTimes перенесён в CooldownService
@@ -1366,8 +1245,7 @@ export class CombatManager {
         try { t.nameLabel?.destroy(); } catch {}
         try { this.indicatorMgr?.destroyNPCBadge(target); } catch {}
         // удалить боевое кольцо если было
-        const ring = this.combatRings.get(target);
-        if (ring) { try { ring.destroy(); } catch {} this.combatRings.delete(target); }
+        try { this.uiManager.hideCombatRing(target); } catch {}
         // снять информационную цель при необходимости
         if (this.selectedTarget === target) this.clearSelection();
         // очистить назначения слотов на этот таргет через WeaponManager и уведомить UI
@@ -1376,8 +1254,8 @@ export class CombatManager {
         if (this.fogOfWar) {
           this.fogOfWar.unregisterObject(target);
         }
-        // вычистить из массива целей
-        this.targets = this.targets.filter(rec => rec.obj !== target);
+        // вычистить из массива целей - используем TargetManager
+        this.targetManager.removeTarget(target);
         return;
       }
       return;
@@ -1746,10 +1624,7 @@ export class CombatManager {
     const dmgTick = w?.beam?.damagePerTick ?? 1; // Для beam оружия всегда используем damagePerTick
     
     const timer = this.scene.time.addEvent({ delay: tickMs, loop: true, callback: () => {
-      // Проверяем паузу боевых систем
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
+      // Legacy beam timer - PauseManager should control execution, not manual isPaused() check
       
       if (!shooter?.active || !target?.active) { 
         this.stopBeamIfAny(shooter, slotKey); 
@@ -1790,10 +1665,7 @@ export class CombatManager {
     // Beam таймеры работают как обычные Phaser таймеры, паузы обрабатываются вручную в callback
     // Перерисовка луча на каждом кадре (не наносит урон)
     const redraw = () => {
-      // Проверяем паузу боевых систем
-      if (this.pauseManager?.isSystemPausable('combat') && this.pauseManager?.getPaused()) {
-        return;
-      }
+      // Legacy beam redraw - PauseManager should control execution, not manual isPaused() check
       
       if (!shooter?.active || !target?.active) { this.stopBeamIfAny(shooter, slotKey); return; }
       const dx = target.x - shooter.x; const dy = target.y - shooter.y; const d = Math.hypot(dx, dy);
@@ -1842,7 +1714,7 @@ export class CombatManager {
       try { this.scene.events.emit('beam-start', slotKey, durationMs); } catch {}
     }
     // Автоматическое отключение по duration и установка refresh
-    const durationId = `beam_duration_${slotKey}_${Date.now()}`;
+    const durationId = `beam_duration_${slotKey}_${this.pauseManager?.getAdjustedTime() ?? this.scene.time.now}`;
     const durationTimer = this.scene.time.delayedCall(durationMs, () => {
       const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
       this.cooldowns.setBeamReadyAt(shooter, slotKey, now + refreshMs);
@@ -1950,10 +1822,8 @@ export class CombatManager {
   public destroy() {
     this.npcStateManager.destroy();
     this.targetManager.destroy();
+    this.uiManager.destroy(); // Делегируем очистку визуальных элементов в UIManager
     this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.update, this);
-    // Очистка визуальных кругов радиусов
-    for (const c of this.playerWeaponRangeCircles.values()) { try { c.destroy(); } catch {} }
-    this.playerWeaponRangeCircles.clear();
   }
 }
 

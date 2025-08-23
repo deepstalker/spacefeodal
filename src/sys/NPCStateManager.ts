@@ -71,6 +71,66 @@ export class NPCStateManager {
       return;
     }
     
+    // КРИТИЧНАЯ ПРОВЕРКА: проверяем что __uniqueId уникален
+    if (objId !== 'unknown') {
+      for (const [existingObj, context] of this.contexts.entries()) {
+        if ((existingObj as any).__uniqueId === objId) {
+          console.error(`[NPCState] CRITICAL: Duplicate __uniqueId detected during registration! ${objId}`, {
+            existing: {
+              prefab: (existingObj as any).__prefabKey,
+              active: existingObj.active,
+              state: context.state
+            },
+            new: {
+              prefab: (obj as any).__prefabKey,
+              active: obj.active
+            }
+          });
+          
+          // Отклоняем регистрацию дубликата
+          throw new Error(`Duplicate NPC registration: __uniqueId ${objId} already exists`);
+        }
+      }
+    }
+    
+    // Валидация объекта
+    if (!obj || typeof obj.x !== 'number' || typeof obj.y !== 'number') {
+      throw new Error(`Invalid NPC object for registration: ${objId}`);
+    }
+    
+    // Создаем контекст
+    const context: NPCStateContext = {
+      obj,
+      state: NPCState.IDLE,
+      lastStateChange: this.pauseManager?.getAdjustedTime() ?? this.scene.time.now,
+      targetStabilization: this.targetAnalyzer.createStabilizationContext(),
+      aggression: {
+        level: 0,
+        threshold: 0.3,
+        maxLevel: 1.0,
+        cooldownRate: 0.2,
+        sources: new Map(),
+        lastDamageTime: 0,
+        lastCombatTime: 0
+      },
+      movementQueue: [],
+      aiProfile: aiProfile || 'default',
+      combatAI: combatAI,
+      faction: faction
+    };
+    
+    this.contexts.set(obj, context);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[NPCState] ✓ Registered NPC ${objId}`, {
+        aiProfile,
+        combatAI,
+        faction,
+        totalContexts: this.contexts.size,
+        prefab: (obj as any).__prefabKey
+      });
+    }
+    
     // Проверяем нет ли "потерянных" контекстов для других объектов с тем же ID
     for (const [existingObj, existingContext] of this.contexts.entries()) {
       if ((existingObj as any).__uniqueId === objId && existingObj !== obj) {
@@ -80,55 +140,6 @@ export class NPCStateManager {
         this.contexts.delete(existingObj);
       }
     }
-    
-    const context: NPCStateContext = {
-      obj,
-      state: NPCState.SPAWNING as any,
-      previousState: NPCState.SPAWNING as any,
-      stateEnterTime: this.scene.time.now,
-      
-      aggression: {
-        level: 0,
-        lastDamageTime: 0,
-        lastCombatTime: 0,
-        cooldownRate: this.AGGRESSION_COOLDOWN_RATE,
-        sources: new Map()
-      },
-      
-      targetStabilization: {
-        currentTarget: null,
-        targetScore: 0,
-        targetSwitchTime: 0,
-        requiredAdvantage: this.TARGET_SWITCH_THRESHOLD,
-        stabilityPeriod: this.TARGET_STABILITY_TIME
-      },
-      
-      movementQueue: [],
-      currentMovement: null,
-      
-      aiProfile,
-      combatAI,
-      faction,
-      
-      // Сохраняем существующие поля для совместимости
-      legacy: {
-        __behavior: obj.__behavior,
-        __state: obj.__state,
-        intent: obj.intent
-      }
-    };
-    
-    this.contexts.set(obj, context);
-    
-    // Debug logging disabled
-    // if (process.env.NODE_ENV === 'development') {
-    //   console.log(`[NPCState] Registered NPC ${objId}`, {
-    //     aiProfile,
-    //     combatAI,
-    //     faction,
-    //     totalContexts: this.contexts.size
-    //   });
-    // }
     
     // Автоматический переход в начальное состояние через кадр
     this.scene.time.delayedCall(1, () => {
@@ -191,7 +202,7 @@ export class NPCStateManager {
       distance,
       priority,
       source,
-      timestamp: this.scene.time.now
+      timestamp: this.pauseManager?.getAdjustedTime() ?? this.scene.time.now
     };
     
     // Проверяем, можем ли мы добавить команду с таким приоритетом
@@ -217,7 +228,7 @@ export class NPCStateManager {
 
   // Обновление агрессии
   updateAggression(context: NPCStateContext, deltaMs: number): void {
-    const now = this.scene.time.now;
+    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
     const aggression = context.aggression;
     
     // Очищаем старые источники урона
@@ -272,7 +283,7 @@ export class NPCStateManager {
       return;
     }
     
-    const now = this.scene.time.now;
+    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
     const aggression = context.aggression;
     const victimId = (obj as any).__uniqueId;
     
@@ -351,6 +362,11 @@ export class NPCStateManager {
   getContext(obj: any): NPCStateContext | null {
     return this.contexts.get(obj) || null;
   }
+  
+  // Получить все контексты (для отладки и синхронизации)
+  getAllContexts(): ReadonlyMap<any, NPCStateContext> {
+    return this.contexts;
+  }
 
   // Проверка, находится ли NPC в боевом состоянии
   isInCombat(obj: any): boolean {
@@ -411,7 +427,7 @@ export class NPCStateManager {
   // Обновление очереди команд движения
   private updateMovementQueue(context: NPCStateContext): void {
     // Удаляем устаревшие команды (старше 10 секунд)
-    const now = this.scene.time.now;
+    const now = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now;
     context.movementQueue = context.movementQueue.filter(cmd => 
       now - cmd.timestamp < 10000
     );
@@ -427,7 +443,7 @@ export class NPCStateManager {
   // Логика состояний
   private updateStateLogic(context: NPCStateContext, deltaMs: number): void {
     const state = context.state;
-    const timeInState = this.scene.time.now - context.stateEnterTime;
+    const timeInState = this.pauseManager?.getAdjustedTime() ?? this.scene.time.now - context.stateEnterTime;
     
     switch (state) {
       case NPCState.SPAWNING:

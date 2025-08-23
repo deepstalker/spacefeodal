@@ -20,6 +20,19 @@ export class TargetAnalyzer {
   }
   
   /**
+   * Создает новый контекст стабилизации целей
+   */
+  createStabilizationContext(): TargetStabilization {
+    return {
+      currentTarget: null,
+      targetScore: 0,
+      targetSwitchTime: 0,
+      requiredAdvantage: this.TARGET_SWITCH_THRESHOLD - 1, // 0.4 (40%)
+      stabilityPeriod: this.TARGET_STABILITY_TIME
+    };
+  }
+  
+  /**
    * Оценка цели (улучшенная система)
    * ПЕРЕНЕСЕНО ИЗ NPCStateManager.evaluateTarget()
    */

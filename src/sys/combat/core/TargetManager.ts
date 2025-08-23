@@ -52,48 +52,307 @@ export class TargetManager implements ITargetManager {
   // === Core Target Management ===
   
   /**
-   * Добавить новую цель в систему
+   * Добавить новую цель в систему с валидацией регистрации
+   * @returns true если все регистрации прошли успешно, false в противном случае
    */
-  addTarget(entry: TargetEntry): void {
+  addTargetWithValidation(entry: TargetEntry): boolean {
+    const uniqueId = (entry.obj as any).__uniqueId;
+    
     // Проверяем что цель еще не зарегистрирована
     const existing = this.targets.find(t => t.obj === entry.obj);
     if (existing) {
       if (process.env.NODE_ENV === 'development') {
-        console.warn(`[TargetManager] Target already registered: ${(entry.obj as any).__uniqueId}`);
+        console.warn(`[TargetManager] Target already registered: ${uniqueId}`);
       }
+      return false;
+    }
+    
+    // КРИТИЧНАЯ ПРОВЕРКА: проверяем что __uniqueId уникален
+    if (uniqueId) {
+      const duplicateById = this.targets.find(t => (t.obj as any).__uniqueId === uniqueId);
+      if (duplicateById) {
+        console.error(`[TargetManager] CRITICAL: Duplicate __uniqueId detected! ${uniqueId}`, {
+          existing: {
+            prefab: (duplicateById.obj as any).__prefabKey,
+            shipId: duplicateById.shipId,
+            active: duplicateById.obj.active
+          },
+          new: {
+            prefab: (entry.obj as any).__prefabKey,
+            shipId: entry.shipId,
+            active: entry.obj.active
+          }
+        });
+        
+        // Принудительно присваиваем новый ID для нового объекта
+        (entry.obj as any).__uniqueId = ++TargetManager.npcCounter;
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] Assigned new ID: ${(entry.obj as any).__uniqueId}`);
+        }
+      }
+    }
+    
+    // Валидация объекта перед регистрацией
+    if (!entry.obj || typeof entry.obj.x !== 'number' || typeof entry.obj.y !== 'number') {
+      console.error(`[TargetManager] Invalid object for registration:`, {
+        hasObj: !!entry.obj,
+        uniqueId,
+        hasPosition: entry.obj && typeof entry.obj.x === 'number'
+      });
+      return false;
+    }
+    
+    // Попытка регистрации во всех подсистемах ПЕРЕД добавлением в targets
+    let allRegistrationsSuccessful = true;
+    const registrationResults: { system: string; success: boolean; error?: any }[] = [];
+    
+    // 1. Регистрация в NPC Movement
+    if (this.npcMovement) {
+      try {
+        this.npcMovement.registerNPC(entry.obj, entry.shipId, entry.combatAI);
+        registrationResults.push({ system: 'NPCMovement', success: true });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ NPC movement registration successful: ${uniqueId}`);
+        }
+      } catch (e) {
+        allRegistrationsSuccessful = false;
+        registrationResults.push({ system: 'NPCMovement', success: false, error: e });
+        console.error('[TargetManager] ✗ Failed to register in NPC movement:', e);
+      }
+    }
+    
+    // 2. КРИТИЧНО: Регистрация в NPCStateManager
+    if (this.npcStateManager) {
+      try {
+        this.npcStateManager.registerNPC(entry.obj, entry.aiProfileKey, entry.combatAI, entry.faction);
+        registrationResults.push({ system: 'NPCStateManager', success: true });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ NPC state manager registration successful: ${uniqueId}`);
+        }
+      } catch (e) {
+        allRegistrationsSuccessful = false;
+        registrationResults.push({ system: 'NPCStateManager', success: false, error: e });
+        console.error('[TargetManager] ✗ CRITICAL: Failed to register in NPC state manager:', {
+          error: e instanceof Error ? e.message : String(e),
+          stack: e instanceof Error ? e.stack : undefined,
+          npcDetails: {
+            uniqueId,
+            prefab: (entry.obj as any).__prefabKey,
+            shipId: entry.shipId,
+            aiProfile: entry.aiProfileKey,
+            combatAI: entry.combatAI,
+            faction: entry.faction,
+            position: { x: entry.obj.x, y: entry.obj.y },
+            active: entry.obj.active,
+            destroyed: entry.obj.destroyed,
+            hasRequiredProps: {
+              x: typeof entry.obj.x === 'number',
+              y: typeof entry.obj.y === 'number',
+              objExists: !!entry.obj
+            }
+          },
+          existingContexts: this.npcStateManager ? this.npcStateManager.getAllContexts().size : 'N/A'
+        });
+      }
+    }
+    
+    // 3. Регистрация в Fog of War (некритично)
+    if (this.fogOfWar) {
+      try {
+        this.fogOfWar.registerDynamicObject(entry.obj, DynamicObjectType.NPC);
+        registrationResults.push({ system: 'FogOfWar', success: true });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Fog of war registration successful: ${uniqueId}`);
+        }
+      } catch (e) {
+        registrationResults.push({ system: 'FogOfWar', success: false, error: e });
+        console.warn('[TargetManager] Failed to register in fog of war:', e);
+        // Fog of war failures are not critical for gameplay
+      }
+    }
+    
+    // Если критичные регистрации не удались, откатываем все изменения
+    if (!allRegistrationsSuccessful) {
+      console.error(`[TargetManager] Registration validation FAILED for ${uniqueId}, rolling back all changes`, {
+        registrationResults
+      });
+      
+      // Откатываем успешные регистрации
+      for (const result of registrationResults) {
+        if (result.success) {
+          try {
+            if (result.system === 'NPCMovement' && this.npcMovement) {
+              this.npcMovement.unregisterNPC(entry.obj);
+            } else if (result.system === 'NPCStateManager' && this.npcStateManager) {
+              this.npcStateManager.unregisterNPC(entry.obj);
+            } else if (result.system === 'FogOfWar' && this.fogOfWar) {
+              this.fogOfWar.unregisterObject(entry.obj);
+            }
+          } catch (rollbackError) {
+            console.error(`[TargetManager] Failed to rollback ${result.system} registration:`, rollbackError);
+          }
+        }
+      }
+      
+      return false;
+    }
+    
+    // Все критичные регистрации прошли успешно - добавляем в targets
+    this.targets.push(entry);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[TargetManager] ✓ Target registration SUCCESSFUL: ${uniqueId}`, {
+        prefab: (entry.obj as any).__prefabKey,
+        shipId: entry.shipId,
+        faction: entry.faction,
+        totalTargets: this.targets.length,
+        registrationResults
+      });
+    }
+    
+    return true;
+  }
+  
+  /**
+   * Добавить новую цель в систему (старый метод для совместимости)
+   */
+  addTarget(entry: TargetEntry): void {
+    const uniqueId = (entry.obj as any).__uniqueId;
+    
+    // Проверяем что цель еще не зарегистрирована
+    const existing = this.targets.find(t => t.obj === entry.obj);
+    if (existing) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[TargetManager] Target already registered: ${uniqueId}`);
+      }
+      return;
+    }
+    
+    // КРИТИЧНАЯ ПРОВЕРКА: проверяем что __uniqueId уникален
+    if (uniqueId) {
+      const duplicateById = this.targets.find(t => (t.obj as any).__uniqueId === uniqueId);
+      if (duplicateById) {
+        console.error(`[TargetManager] CRITICAL: Duplicate __uniqueId detected! ${uniqueId}`, {
+          existing: {
+            prefab: (duplicateById.obj as any).__prefabKey,
+            shipId: duplicateById.shipId,
+            active: duplicateById.obj.active
+          },
+          new: {
+            prefab: (entry.obj as any).__prefabKey,
+            shipId: entry.shipId,
+            active: entry.obj.active
+          }
+        });
+        
+        // Принудительно присваиваем новый ID для нового объекта
+        (entry.obj as any).__uniqueId = ++TargetManager.npcCounter;
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] Assigned new ID: ${(entry.obj as any).__uniqueId}`);
+        }
+      }
+    }
+    
+    // Валидация объекта перед регистрацией
+    if (!entry.obj || typeof entry.obj.x !== 'number' || typeof entry.obj.y !== 'number') {
+      console.error(`[TargetManager] Invalid object for registration:`, {
+        hasObj: !!entry.obj,
+        uniqueId,
+        hasPosition: entry.obj && typeof entry.obj.x === 'number'
+      });
       return;
     }
     
     this.targets.push(entry);
     
-    // Регистрируем в подсистемах
+    let registrationSuccess = true;
+    
+    // Регистрируем в подсистемах с детальной отчетностью
     if (this.npcMovement) {
       try {
         this.npcMovement.registerNPC(entry.obj, entry.shipId, entry.combatAI);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ NPC movement registration successful: ${uniqueId}`);
+        }
       } catch (e) {
-        console.warn('[TargetManager] Failed to register in NPC movement:', e);
+        console.error('[TargetManager] ✗ Failed to register in NPC movement:', e);
+        registrationSuccess = false;
       }
     }
     
     if (this.npcStateManager) {
       try {
         this.npcStateManager.registerNPC(entry.obj, entry.aiProfileKey, entry.combatAI, entry.faction);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ NPC state manager registration successful: ${uniqueId}`);
+        }
       } catch (e) {
-        console.warn('[TargetManager] Failed to register in NPC state manager:', e);
+        console.error('[TargetManager] ✗ CRITICAL: Failed to register in NPC state manager:', {
+          error: e instanceof Error ? e.message : String(e),
+          stack: e instanceof Error ? e.stack : undefined,
+          npcDetails: {
+            uniqueId,
+            prefab: (entry.obj as any).__prefabKey,
+            shipId: entry.shipId,
+            aiProfile: entry.aiProfileKey,
+            combatAI: entry.combatAI,
+            faction: entry.faction,
+            position: { x: entry.obj.x, y: entry.obj.y },
+            active: entry.obj.active,
+            destroyed: entry.obj.destroyed,
+            hasRequiredProps: {
+              x: typeof entry.obj.x === 'number',
+              y: typeof entry.obj.y === 'number',
+              objExists: !!entry.obj
+            }
+          },
+          existingContexts: this.npcStateManager ? this.npcStateManager.getAllContexts().size : 'N/A'
+        });
+        registrationSuccess = false;
+        
+        // Если регистрация в NPCStateManager не удалась, это критическая ошибка
+        // Удаляем из targets чтобы избежать "NO CONTEXT" ошибок
+        const index = this.targets.indexOf(entry);
+        if (index >= 0) {
+          this.targets.splice(index, 1);
+          console.error(`[TargetManager] Removing target due to failed NPCStateManager registration: ${uniqueId}`);
+          
+          // Также очищаем визуальные элементы
+          try { entry.hpBarBg.destroy(); } catch {}
+          try { entry.hpBarFill.destroy(); } catch {}
+          try { entry.nameLabel?.destroy(); } catch {}
+          
+          // Возвращаем null, так как NPC не был успешно создан
+          return;
+        }
       }
     }
     
     if (this.fogOfWar) {
       try {
         this.fogOfWar.registerDynamicObject(entry.obj, DynamicObjectType.NPC);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Fog of war registration successful: ${uniqueId}`);
+        }
       } catch (e) {
         console.warn('[TargetManager] Failed to register in fog of war:', e);
+        // Fog of war failures are not critical for gameplay
       }
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      const status = registrationSuccess ? '✓ SUCCESS' : '✗ PARTIAL FAILURE';
+      console.log(`[TargetManager] Target registration ${status}: ${uniqueId}`, {
+        prefab: (entry.obj as any).__prefabKey,
+        shipId: entry.shipId,
+        faction: entry.faction,
+        totalTargets: this.targets.length
+      });
     }
   }
   
   /**
-   * Удалить цель из системы
+   * Удалить цель из системы с улучшенной очисткой
    */
   removeTarget(obj: any): void {
     const targetIndex = this.targets.findIndex(t => t.obj === obj);
@@ -102,6 +361,19 @@ export class TargetManager implements ITargetManager {
     }
     
     const target = this.targets[targetIndex];
+    const uniqueId = (obj as any).__uniqueId;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[TargetManager] Removing target: ${uniqueId}`, {
+        prefab: (obj as any).__prefabKey,
+        faction: target.faction,
+        shipId: target.shipId,
+        totalTargets: this.targets.length
+      });
+    }
+    
+    // КРИТИЧНО: Сначала очищаем все ссылки на удаляемый объект в других целях
+    this.clearReferencesToTarget(obj);
     
     // Очищаем визуальные элементы
     try { target.hpBarBg.destroy(); } catch {}
@@ -115,32 +387,124 @@ export class TargetManager implements ITargetManager {
       } catch {}
     }
     
-    // Дерегистрируем из подсистем
+    // Дерегистрируем из подсистем с детальной отчетностью
     if (this.npcMovement) {
       try {
         this.npcMovement.unregisterNPC(obj);
-      } catch {}
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Unregistered from NPC movement: ${uniqueId}`);
+        }
+      } catch (e) {
+        console.error(`[TargetManager] ✗ Failed to unregister from NPC movement: ${uniqueId}`, e);
+      }
     }
     
     if (this.npcStateManager) {
       try {
         this.npcStateManager.unregisterNPC(obj);
-      } catch {}
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Unregistered from NPC state manager: ${uniqueId}`);
+        }
+      } catch (e) {
+        console.error(`[TargetManager] ✗ Failed to unregister from NPC state manager: ${uniqueId}`, e);
+      }
     }
     
     if (this.fogOfWar) {
       try {
         this.fogOfWar.unregisterObject(obj);
-      } catch {}
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Unregistered from fog of war: ${uniqueId}`);
+        }
+      } catch (e) {
+        console.error(`[TargetManager] ✗ Failed to unregister from fog of war: ${uniqueId}`, e);
+      }
     }
     
     // Удаляем из массива
     this.targets.splice(targetIndex, 1);
     
-    // Уничтожаем игровой объект
+    // Безопасное уничтожение игрового объекта
     try {
-      (obj as any).destroy?.();
-    } catch {}
+      if (obj && typeof obj.destroy === 'function') {
+        obj.destroy();
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] ✓ Destroyed game object: ${uniqueId}`);
+        }
+      }
+    } catch (e) {
+      console.error(`[TargetManager] ✗ Failed to destroy game object: ${uniqueId}`, e);
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[TargetManager] ✓ Target removal complete: ${uniqueId}`, {
+        remainingTargets: this.targets.length
+      });
+    }
+  }
+  
+  /**
+   * Очистить все ссылки на удаляемую цель в других целях
+   */
+  private clearReferencesToTarget(dyingObj: any): void {
+    const dyingId = (dyingObj as any).__uniqueId;
+    let clearedCount = 0;
+    
+    for (const target of this.targets) {
+      if (target.obj === dyingObj) continue;
+      
+      let wasCleared = false;
+      
+      // Очищаем intent ссылки
+      if (target.intent?.target === dyingObj) {
+        target.intent = null;
+        wasCleared = true;
+      }
+      
+      // Очищаем из damage log
+      if (target.damageLog) {
+        if (target.damageLog.totalDamageBySource?.has(dyingObj)) {
+          target.damageLog.totalDamageBySource.delete(dyingObj);
+          wasCleared = true;
+        }
+        if (target.damageLog.lastDamageTimeBySource?.has(dyingObj)) {
+          target.damageLog.lastDamageTimeBySource.delete(dyingObj);
+          wasCleared = true;
+        }
+        if (target.damageLog.firstAttacker === dyingObj) {
+          target.damageLog.firstAttacker = undefined;
+          wasCleared = true;
+        }
+      }
+      
+      // Очищаем в новой системе состояний
+      if (this.npcStateManager) {
+        const context = this.npcStateManager.getContext(target.obj);
+        if (context) {
+          if (context.targetStabilization.currentTarget === dyingObj) {
+            context.targetStabilization.currentTarget = null;
+            context.targetStabilization.targetScore = 0;
+            wasCleared = true;
+          }
+          
+          if (context.aggression.sources.has(dyingObj)) {
+            context.aggression.sources.delete(dyingObj);
+            wasCleared = true;
+          }
+        }
+      }
+      
+      if (wasCleared) {
+        clearedCount++;
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] Cleared references in ${(target.obj as any).__uniqueId} to dying ${dyingId}`);
+        }
+      }
+    }
+    
+    if (process.env.NODE_ENV === 'development' && clearedCount > 0) {
+      console.log(`[TargetManager] Cleared references to ${dyingId} in ${clearedCount} targets`);
+    }
   }
   
   /**
@@ -289,8 +653,32 @@ export class TargetManager implements ITargetManager {
       entry.weaponSlots = prefab.weapons.slice(0);
     }
     
-    // Добавляем цель в систему
-    this.addTarget(entry);
+    // Добавляем цель в систему с немедленной валидацией
+    // КРИТИЧНО: Проверяем что все регистрации прошли успешно
+    const registrationSuccess = this.addTargetWithValidation(entry);
+    
+    if (!registrationSuccess) {
+      // Если регистрация не удалась, немедленно очищаем созданные ресурсы
+      const uniqueId = (obj as any).__uniqueId;
+      console.error(`[TargetManager] SPAWN FAILED - Registration validation failed for ${prefabKey} #${uniqueId}`);
+      
+      // Очистка визуальных элементов
+      try { bg.destroy(); } catch {}
+      try { fill.destroy(); } catch {}
+      try { obj.destroy(); } catch {}
+      
+      return null;
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      const uniqueId = (obj as any).__uniqueId;
+      console.log(`[TargetManager] ✓ NPC spawn successful: ${prefabKey} #${uniqueId}`, {
+        faction: prefab?.faction,
+        aiProfile: aiProfileName,
+        combatAI: prefab?.combatAI,
+        position: { x, y }
+      });
+    }
     
     return obj;
   }
@@ -301,41 +689,127 @@ export class TargetManager implements ITargetManager {
   despawnNPC(target: any, reason?: string): void {
     if (process.env.NODE_ENV === 'development' && reason) {
       console.log(`[TargetManager] Despawning NPC: ${reason}`, {
-        uniqueId: (target as any).__uniqueId
+        uniqueId: (target as any).__uniqueId,
+        prefab: (target as any).__prefabKey
       });
     }
     
+    // Удаляем из системы целей
     this.removeTarget(target);
     
     // Убираем из массива NPC сцены, если используется
+    this.removeFromSceneNPCArray(target);
+  }
+  
+  /**
+   * Удалить NPC из массива npcs сцены
+   */
+  private removeFromSceneNPCArray(target: any): void {
     try {
       const arr: any[] | undefined = (this.scene as any).npcs;
       if (Array.isArray(arr)) {
         const idx = arr.indexOf(target);
-        if (idx >= 0) arr.splice(idx, 1);
+        if (idx >= 0) {
+          arr.splice(idx, 1);
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[TargetManager] Removed from scene.npcs array: ${(target as any).__uniqueId}`);
+          }
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.error('[TargetManager] Error removing from scene.npcs array:', e);
+    }
   }
   
   /**
-   * Принудительная очистка неактивных целей
+   * Массовая очистка неактивных NPC из всех массивов сцены
+   */
+  cleanupSceneNPCArrays(): void {
+    try {
+      const arr: any[] | undefined = (this.scene as any).npcs;
+      if (Array.isArray(arr)) {
+        const before = arr.length;
+        const toRemove: number[] = [];
+        
+        for (let i = 0; i < arr.length; i++) {
+          const npc = arr[i];
+          if (!npc || !npc.active || npc.destroyed) {
+            toRemove.push(i);
+          }
+        }
+        
+        // Удаляем в обратном порядке чтобы не сбить индексы
+        for (let i = toRemove.length - 1; i >= 0; i--) {
+          arr.splice(toRemove[i], 1);
+        }
+        
+        if (toRemove.length > 0 && process.env.NODE_ENV === 'development') {
+          console.log(`[TargetManager] Cleaned ${toRemove.length} inactive NPCs from scene.npcs array (${before} → ${arr.length})`);
+        }
+      }
+    } catch (e) {
+      console.error('[TargetManager] Error cleaning scene.npcs array:', e);
+    }
+  }
+  
+  /**
+   * Принудительная очистка неактивных целей с улучшенной диагностикой
    */
   forceCleanupInactiveTargets(): void {
+    const before = this.targets.length;
     const toRemove: any[] = [];
+    const reasons: string[] = [];
     
     for (const target of this.targets) {
+      let shouldRemove = false;
+      let reason = '';
+      
+      // Проверка активности объекта
       if (!target.obj || !(target.obj as any).active) {
+        shouldRemove = true;
+        reason = 'inactive object';
+      }
+      // Проверка дублирования ID
+      else if ((target.obj as any).__uniqueId) {
+        const duplicates = this.targets.filter(t => 
+          t !== target && (t.obj as any).__uniqueId === (target.obj as any).__uniqueId
+        );
+        if (duplicates.length > 0) {
+          shouldRemove = true;
+          reason = `duplicate ID ${(target.obj as any).__uniqueId}`;
+        }
+      }
+      // Проверка что объект еще существует в Phaser
+      else if (target.obj.scene && !target.obj.scene.sys.displayList.exists(target.obj)) {
+        shouldRemove = true;
+        reason = 'object not in display list';
+      }
+      
+      if (shouldRemove) {
         toRemove.push(target.obj);
+        reasons.push(reason);
       }
     }
     
     if (toRemove.length > 0) {
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[TargetManager] Cleaning up ${toRemove.length} inactive targets`);
+        console.log(`[TargetManager] Cleaning up ${toRemove.length} targets:`, {
+          before,
+          toRemove: toRemove.map((obj, i) => ({
+            id: (obj as any).__uniqueId,
+            prefab: (obj as any).__prefabKey,
+            reason: reasons[i]
+          }))
+        });
       }
       
       for (const obj of toRemove) {
         this.removeTarget(obj);
+      }
+      
+      const after = this.targets.length;
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[TargetManager] Cleanup complete: ${before} → ${after} targets`);
       }
     }
   }
@@ -439,6 +913,117 @@ export class TargetManager implements ITargetManager {
    */
   hasTarget(obj: any): boolean {
     return this.targets.some(t => t.obj === obj);
+  }
+  
+  /**
+   * Проверка и исправление дубликатов __uniqueId
+   */
+  validateAndFixDuplicateIds(): number {
+    const idCounts = new Map<number, any[]>();
+    let fixedCount = 0;
+    
+    // Собираем статистику по ID
+    for (const target of this.targets) {
+      const id = (target.obj as any).__uniqueId;
+      if (typeof id === 'number') {
+        if (!idCounts.has(id)) {
+          idCounts.set(id, []);
+        }
+        idCounts.get(id)!.push(target);
+      }
+    }
+    
+    // Исправляем дубликаты
+    for (const [id, targets] of idCounts.entries()) {
+      if (targets.length > 1) {
+        console.warn(`[TargetManager] Found ${targets.length} targets with duplicate ID ${id}`);
+        
+        // Оставляем первый, остальным присваиваем новые ID
+        for (let i = 1; i < targets.length; i++) {
+          const target = targets[i];
+          const oldId = (target.obj as any).__uniqueId;
+          const newId = ++TargetManager.npcCounter;
+          (target.obj as any).__uniqueId = newId;
+          fixedCount++;
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[TargetManager] Fixed duplicate ID: ${oldId} → ${newId}`, {
+              prefab: (target.obj as any).__prefabKey,
+              shipId: target.shipId
+            });
+          }
+        }
+      }
+    }
+    
+    return fixedCount;
+  }
+  
+  /**
+   * Проверка интегритета регистраций для диагностики
+   */
+  validateRegistrationIntegrity(): {
+    totalTargets: number;
+    registeredInNpcState: number;
+    registeredInMovement: number;
+    registeredInFog: number;
+    missingRegistrations: Array<{
+      id: string;
+      prefab: string;
+      missingIn: string[];
+    }>;
+  } {
+    const result = {
+      totalTargets: this.targets.length,
+      registeredInNpcState: 0,
+      registeredInMovement: 0,
+      registeredInFog: 0,
+      missingRegistrations: [] as Array<{
+        id: string;
+        prefab: string;
+        missingIn: string[];
+      }>
+    };
+    
+    for (const target of this.targets) {
+      const id = (target.obj as any).__uniqueId || 'unknown';
+      const prefab = (target.obj as any).__prefabKey || 'unknown';
+      const missing: string[] = [];
+      
+      // Проверяем регистрацию в NPCStateManager
+      if (this.npcStateManager) {
+        const hasContext = this.npcStateManager.getContext(target.obj);
+        if (hasContext) {
+          result.registeredInNpcState++;
+        } else {
+          missing.push('NPCStateManager');
+        }
+      }
+      
+      // Проверяем регистрацию в NpcMovement (если есть метод проверки)
+      if (this.npcMovement && typeof this.npcMovement.hasNPC === 'function') {
+        if (this.npcMovement.hasNPC(target.obj)) {
+          result.registeredInMovement++;
+        } else {
+          missing.push('NPCMovement');
+        }
+      }
+      
+      // Проверяем регистрацию в FogOfWar (если есть метод проверки)
+      if (this.fogOfWar && typeof this.fogOfWar.hasObject === 'function') {
+        if (this.fogOfWar.hasObject(target.obj)) {
+          result.registeredInFog++;
+        } else {
+          missing.push('FogOfWar');
+        }
+      }
+      
+      if (missing.length > 0) {
+        result.missingRegistrations.push({ id, prefab, missingIn: missing });
+      }
+    }
+    
+    return result;
   }
   
   /**

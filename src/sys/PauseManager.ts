@@ -33,7 +33,8 @@ export class PauseManager {
   
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    this.loadConfig();
+    // Критические системы должны сразу ставиться на паузу, поэтому загружаем конфиг немедленно
+    this.loadConfigSync();
   }
   
   /**
@@ -173,16 +174,55 @@ export class PauseManager {
   
   /**
    * Зарегистрировать обработчик UPDATE для приостановки
+   * КРИТИЧЕСКИЙ ФИКС: Теперь PauseManager сам контролирует выполнение обработчиков
    */
   public registerUpdateHandler(id: string, handler: Function): void {
     this.pausedUpdateHandlers.set(id, handler);
+    
+    // Создаем обертку, которая проверяет паузу перед выполнением
+    const wrappedHandler = (...args: any[]) => {
+      if (this.shouldProcessUpdate(id)) {
+        handler(...args);
+      }
+    };
+    
+    // Сохраняем обертку для возможности отписки
+    (handler as any).__wrappedHandler = wrappedHandler;
+    
+    if (this.getDebugSetting('log_pause_events')) {
+      console.log(`[PauseManager] Registered UPDATE handler: ${id}`);
+    }
   }
   
   /**
    * Отписать обработчик UPDATE
    */
   public unregisterUpdateHandler(id: string): void {
+    const handler = this.pausedUpdateHandlers.get(id);
+    if (handler && (handler as any).__wrappedHandler) {
+      // Удаляем обертку из сцены
+      try {
+        this.scene.events.off(Phaser.Scenes.Events.UPDATE, (handler as any).__wrappedHandler);
+      } catch {}
+    }
+    
     this.pausedUpdateHandlers.delete(id);
+    
+    if (this.getDebugSetting('log_pause_events')) {
+      console.log(`[PauseManager] Unregistered UPDATE handler: ${id}`);
+    }
+  }
+  
+  /**
+   * Получить обернутый обработчик для регистрации в Phaser
+   * Используется боевыми системами для получения pause-aware обработчика
+   */
+  public getWrappedUpdateHandler(id: string): Function | null {
+    const handler = this.pausedUpdateHandlers.get(id);
+    if (handler && (handler as any).__wrappedHandler) {
+      return (handler as any).__wrappedHandler;
+    }
+    return null;
   }
   
   /**
@@ -202,7 +242,36 @@ export class PauseManager {
   }
   
   /**
-   * Загрузить конфигурацию паузы
+   * Загрузить конфигурацию паузы (синхронно)
+   * Критично для корректной работы проектильной системы
+   */
+  private loadConfigSync(): void {
+    try {
+      // Пробуем синхронную загрузку (XMLHttpRequest)
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/configs/general/pause.json', false); // false = синхронно
+      xhr.send();
+      
+      if (xhr.status === 200) {
+        this.config = JSON.parse(xhr.responseText);
+        
+        if (this.config?.debug?.log_pause_events) {
+          console.log('[PauseManager] Config loaded synchronously:', this.config);
+        }
+      } else {
+        throw new Error(`HTTP ${xhr.status}: ${xhr.statusText}`);
+      }
+    } catch (error) {
+      console.warn('[PauseManager] Failed to load pause config synchronously, using defaults:', error);
+      this.config = null;
+      
+      // Асинхронный фолбэк
+      this.loadConfig();
+    }
+  }
+  
+  /**
+   * Загрузить конфигурацию паузы (асинхронно для фолбэка)
    */
   private async loadConfig(): Promise<void> {
     try {
@@ -222,7 +291,18 @@ export class PauseManager {
    * Проверить, должна ли система останавливаться при паузе
    */
   public isSystemPausable(systemName: string): boolean {
-    if (!this.config) return false;
+    if (!this.config) {
+      // КРИТИЧЕСКИЙ ФИКС: Если конфиг еще не загружен, используем безопасные значения по умолчанию
+      // для ключевых игровых систем чтобы они корректно ставились на паузу
+      const defaultPausableSystems = ['combat', 'movement', 'pathfinding', 'npcStateManager', 'npcMovementManager'];
+      const shouldPause = defaultPausableSystems.includes(systemName);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[PauseManager] Config not loaded yet, using default for '${systemName}': ${shouldPause}`);
+      }
+      
+      return shouldPause;
+    }
     
     const pausable = this.config.systems.pausable;
     
@@ -385,7 +465,17 @@ export class PauseManager {
    * Очистка ресурсов при уничтожении
    */
   public destroy(): void {
+    // Очищаем все зарегистрированные UPDATE обработчики
+    for (const [id, handler] of this.pausedUpdateHandlers.entries()) {
+      if (handler && (handler as any).__wrappedHandler) {
+        try {
+          this.scene.events.off(Phaser.Scenes.Events.UPDATE, (handler as any).__wrappedHandler);
+        } catch {}
+      }
+    }
+    
     this.pausedTimers.clear();
+    this.managedTimers.clear();
     this.pausedTweens = [];
     this.pausedUpdateHandlers.clear();
   }

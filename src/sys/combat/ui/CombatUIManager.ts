@@ -283,17 +283,34 @@ export class CombatUIManager {
     // В текущей реализации используется showOrUpdateNPCBadge через updateHpBar
     // Этот метод добавлен для совместимости с существующим API
     if (this.indicatorMgr) {
-      // Создаем временный объект для совместимости
-      const tempObj = { x, y, active: true };
-      const colorStr = color ? `#${color.toString(16).padStart(6, '0')}` : '#ffffff';
+      // Получаем список всех целей для поиска реального объекта
+      const targets = this.deps.getTargets();
+      const targetObj = targets.find(t => 
+        Math.abs(t.obj.x - x) < 50 && Math.abs(t.obj.y - y) < 50
+      );
       
-      this.indicatorMgr.showOrUpdateNPCBadge(tempObj, {
-        name,
-        status: '',
-        color: colorStr,
-        x,
-        y
-      });
+      if (targetObj) {
+        // Используем реальный объект вместо создания временного
+        const colorStr = color ? `#${color.toString(16).padStart(6, '0')}` : '#ffffff';
+        
+        this.indicatorMgr.showOrUpdateNPCBadge(targetObj.obj, {
+          name,
+          status: '',
+          color: colorStr,
+          x: targetObj.obj.x,
+          y: targetObj.obj.y
+        });
+      }
+    }
+  }
+  
+  /**
+   * Скрыть индикатор для объекта
+   * ДОБАВЛЕНО ДЛЯ УСТРАНЕНИЯ ДУБЛИРОВАНИЯ ИНДИКАТОРОВ
+   */
+  hideIndicator(obj: any): void {
+    if (this.indicatorMgr) {
+      this.indicatorMgr.hideNPCBadge(obj);
     }
   }
   

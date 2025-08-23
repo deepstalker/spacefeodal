@@ -181,6 +181,10 @@ export default class StarSystemScene extends Phaser.Scene {
     
     // Set initial player position for fog of war
     this.fogOfWar.setPlayerPosition(this.ship.x, this.ship.y);
+    
+    // КРИТИЧНО: Принудительная очистка осиротевших NPC при старте сцены
+    // Выполняется после инициализации всех систем, но ДО запуска NPC симуляции
+    this.performStartupOrphanCleanup();
 
     // Энкаунтеры
     this.encounterManager = new EncounterManager(this, this.config);
@@ -274,7 +278,7 @@ export default class StarSystemScene extends Phaser.Scene {
     this.updateMgr = new GameUpdateManager(this, this.config, this.pauseManager);
     this.updateMgr.registerPausedAware('planetOrbits', (dt) => this.planetOrbitMgr.update(dt));
     this.updateMgr.registerPausedAware('indicatorsPlanets', () => this.indicators.updateAllPlanetBadges(this.planets as any));
-    this.updateMgr.registerPausedAware('combat', () => this.pathRender.updateAimLine());
+    this.updateMgr.register(() => this.pathRender.updateAimLine()); // КРИТИЧЕСКИ ВАЖНО: траектория должна обновляться всегда, даже во время паузы
     this.updateMgr.registerPausedAware('encounters', () => this.encounterManager.update());
     this.updateMgr.registerPausedAware('npcStateManager', (dt) => this.npcBehaviorMgr.updateTraders(dt));
     this.updateMgr.registerPausedAware('npcMovementManager', (dt) => this.npcBehaviorMgr.updatePatrol(dt));
@@ -599,6 +603,159 @@ export default class StarSystemScene extends Phaser.Scene {
   private executeSimpleMoveTo(_worldX: number, _worldY: number) {}
 
   private executeMovementCommand(_item: any, _worldX: number, _worldY: number, _capturedTarget: any | null) {}
+  
+  /**
+   * Принудительная очистка осиротевших NPC при старте сцены
+   * Удаляет NPC, которые остались в сцене но не зарегистрированы проперли в системах
+   */
+  private performStartupOrphanCleanup(): void {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[StarSystemScene] Starting orphan NPC cleanup on scene startup');
+    }
+    
+    let cleanedCount = 0;
+    const startTime = Date.now();
+    
+    try {
+      // 1. Очистка массива npcs сцены от неактивных объектов
+      const initialNpcsCount = this.npcs.length;
+      const orphanedNpcs: any[] = [];
+      
+      for (let i = this.npcs.length - 1; i >= 0; i--) {
+        const npc = this.npcs[i];
+        
+        // Проверяем состояние NPC
+        const isInactive = !npc || !npc.active || npc.destroyed;
+        const hasValidId = (npc as any).__uniqueId && typeof (npc as any).__uniqueId === 'number';
+        
+        let isOrphaned = false;
+        let orphanReason = '';
+        
+        if (isInactive) {
+          isOrphaned = true;
+          orphanReason = 'inactive or destroyed';
+        } else if (!hasValidId) {
+          isOrphaned = true;
+          orphanReason = 'missing valid __uniqueId';
+        } else {
+          // Проверяем регистрацию в TargetManager
+          const targetEntry = this.combat.findTargetEntry(npc);
+          if (!targetEntry) {
+            isOrphaned = true;
+            orphanReason = 'not registered in TargetManager';
+          } else {
+            // Проверяем регистрацию в NPCStateManager
+            const hasContext = this.combat.getNpcStateManager().getContext(npc);
+            if (!hasContext) {
+              isOrphaned = true;
+              orphanReason = 'missing NPCStateManager context';
+            }
+          }
+        }
+        
+        if (isOrphaned) {
+          orphanedNpcs.push({ npc, reason: orphanReason, index: i });
+          
+          if (process.env.NODE_ENV === 'development') {
+            const uniqueId = (npc as any).__uniqueId || 'unknown';
+            const prefab = (npc as any).__prefabKey || 'unknown';
+            console.log(`[StarSystemScene] Orphaned NPC detected: ${uniqueId} (${prefab}) - ${orphanReason}`);
+          }
+        }
+      }
+      
+      // Удаляем орфанов в обратном порядке чтобы не сбить индексы
+      for (const orphan of orphanedNpcs) {
+        try {
+          // Удаляем из массива сцены
+          this.npcs.splice(orphan.index, 1);
+          
+          // Если объект еще активен, пытаемся корректно его удалить
+          if (orphan.npc && orphan.npc.active && !orphan.npc.destroyed) {
+            // Попытка удаления через CombatManager (если зарегистрирован)
+            try {
+              this.combat.despawnNPC(orphan.npc, `startup cleanup: ${orphan.reason}`);
+            } catch {
+              // Если не удалось через CombatManager, прямое уничтожение
+              try {
+                orphan.npc.destroy();
+              } catch {}
+            }
+          }
+          
+          cleanedCount++;
+        } catch (cleanupError) {
+          console.error('[StarSystemScene] Error cleaning orphaned NPC:', cleanupError);
+        }
+      }
+      
+      // 2. Принудительная очистка через CombatManager
+      try {
+        this.combat.forceCleanupInactiveTargets();
+      } catch (e) {
+        console.error('[StarSystemScene] Error during CombatManager cleanup:', e);
+      }
+      
+      // 3. Очистка массивов сцены через TargetManager
+      try {
+        const targetManager = (this.combat as any).targetManager;
+        if (targetManager && typeof targetManager.cleanupSceneNPCArrays === 'function') {
+          targetManager.cleanupSceneNPCArrays();
+        }
+      } catch (e) {
+        console.error('[StarSystemScene] Error during TargetManager scene cleanup:', e);
+      }
+      
+      // 4. Проверка интегритета регистраций (только в dev)
+      if (process.env.NODE_ENV === 'development') {
+        try {
+          const targetManager = (this.combat as any).targetManager;
+          if (targetManager && typeof targetManager.validateRegistrationIntegrity === 'function') {
+            const integrity = targetManager.validateRegistrationIntegrity();
+            if (integrity.missingRegistrations.length > 0) {
+              console.warn('[StarSystemScene] Registration integrity issues found after cleanup:', {
+                total: integrity.totalTargets,
+                missingRegistrations: integrity.missingRegistrations.slice(0, 5) // Показываем только первые 5
+              });
+              
+              // Попытка фикса оставшихся проблем
+              const combat = this.combat as any;
+              if (combat.syncLegacyAndNewSystems && typeof combat.syncLegacyAndNewSystems === 'function') {
+                combat.syncLegacyAndNewSystems();
+                console.log('[StarSystemScene] Attempted sync of legacy and new systems');
+              }
+            } else {
+              console.log('[StarSystemScene] All registrations are intact after cleanup');
+            }
+          }
+        } catch (e) {
+          console.error('[StarSystemScene] Error during integrity validation:', e);
+        }
+      }
+      
+      const duration = Date.now() - startTime;
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[StarSystemScene] Orphan cleanup completed in ${duration}ms`, {
+          initialNpcsCount,
+          finalNpcsCount: this.npcs.length,
+          orphansFound: orphanedNpcs.length,
+          cleanedCount,
+          categories: {
+            inactiveDestroyed: orphanedNpcs.filter(o => o.reason.includes('inactive')).length,
+            missingId: orphanedNpcs.filter(o => o.reason.includes('__uniqueId')).length,
+            notInTargetManager: orphanedNpcs.filter(o => o.reason.includes('TargetManager')).length,
+            missingContext: orphanedNpcs.filter(o => o.reason.includes('NPCStateManager')).length
+          }
+        });
+      } else if (cleanedCount > 0) {
+        console.log(`[StarSystemScene] Cleaned up ${cleanedCount} orphaned NPCs on startup`);
+      }
+      
+    } catch (error) {
+      console.error('[StarSystemScene] Error during startup orphan cleanup:', error);
+    }
+  }
 }
 
 

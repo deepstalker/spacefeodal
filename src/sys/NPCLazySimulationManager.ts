@@ -121,58 +121,7 @@ export class NPCLazySimulationManager {
     }
   }
 
-  /**
-   * Проверяет, можно ли спаунить NPC для конкретного дома и префаба, не превышая квоты
-   */
-  private canSpawnForHomeAndPrefab(home: HomeRef, prefab: string, pendingId: string): boolean {
-    // Получаем текущие активные NPC
-    const npcs: any[] = ((this.scene as any).npcs ?? []).filter((o: any) => o?.active);
-    
-    // Подсчитываем активных NPC с тем же домом и префабом
-    let count = 0;
-    for (const o of npcs) {
-      const hr = (o as any).__homeRef as HomeRef | undefined;
-      const npcPrefab = (o as any).__prefabKey ?? 'unknown';
-      
-      // Проверяем совпадение дома
-      const homeId = hr?.id ?? `${hr?.type ?? 'unknown'}_${Math.floor(hr?.x ?? 0)}_${Math.floor(hr?.y ?? 0)}`;
-      const thisHomeId = home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`;
-      
-      if (homeId === thisHomeId && npcPrefab === prefab) {
-        count++;
-      }
-    }
-    
-    // Получаем квоту для этого дома и префаба
-    const sys = this.config.system as SystemConfig;
-    let quota = 0;
-    
-    if (home.type === 'planet' && home.id) {
-      const planet = (sys.planets as any[]).find(p => p.id === home.id);
-      quota = planet?.spawn?.quotas?.[prefab] ?? 0;
-    } else if (home.type === 'station') {
-      const station = (sys.stations ?? []).find(s => {
-        const sid = (s as any).id ?? `${(s as any).type}_${Math.floor((s as any).x)}_${Math.floor((s as any).y)}`;
-        return sid === home.id;
-      });
-      quota = (station as any)?.spawn?.quotas?.[prefab] ?? 0;
-    }
-    
-    // Также учитываем других ожидающих NPC с тем же домом и префабом
-    for (const p of this.pending) {
-      if (p.created || p.id === pendingId) continue;
-      
-      const pHomeId = p.home.id ?? `${p.home.type}_${Math.floor(p.home.x)}_${Math.floor(p.home.y)}`;
-      const thisHomeId = home.id ?? `${home.type}_${Math.floor(home.x)}_${Math.floor(home.y)}`;
-      
-      if (pHomeId === thisHomeId && p.prefab === prefab) {
-        count++;
-      }
-    }
-    
-    // Можно спаунить, если текущее количество меньше квоты
-    return count < quota;
-  }
+
 
   private createNPC(p: PendingNPC, opts?: { fadeIfInRadar?: boolean }) {
     // Защита от двойного вызова (например, при ранее запланированной задаче и одновременном попадании в радиус)
