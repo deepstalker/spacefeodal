@@ -6,6 +6,8 @@ export class RangeUiService {
   private config: ConfigManager;
   private combatManager: CombatManager;
   private circles: Map<string, Phaser.GameObjects.Arc> = new Map();
+  // Причины видимости для каждого слота: радиус виден, если selected || hover
+  private visibleReasons: Map<string, { selected?: boolean; hover?: boolean }> = new Map();
 
   constructor(scene: Phaser.Scene, config: ConfigManager, combatManager: CombatManager) {
     this.scene = scene;
@@ -13,42 +15,60 @@ export class RangeUiService {
     this.combatManager = combatManager;
   }
 
+  // Обратная совместимость: toggle трактуем как переключение причины "selected"
   public toggle(slotKey: string, show: boolean) {
+    this.setSelected(slotKey, show);
+  }
+
+  // Установка причины selected
+  public setSelected(slotKey: string, show: boolean) {
+    const state = this.visibleReasons.get(slotKey) ?? {};
+    state.selected = !!show;
+    this.visibleReasons.set(slotKey, state);
+    if (show) this.ensureCircle(slotKey);
+    this.updateVisibility(slotKey);
+  }
+
+  // Установка причины hover
+  public setHover(slotKey: string, show: boolean) {
+    const state = this.visibleReasons.get(slotKey) ?? {};
+    state.hover = !!show;
+    this.visibleReasons.set(slotKey, state);
+    if (show) this.ensureCircle(slotKey);
+    this.updateVisibility(slotKey);
+  }
+
+  // Создать или обновить круг с актуальными стилями и позицией
+  private ensureCircle(slotKey: string) {
     const def = this.config.weapons?.defs?.[slotKey];
-    if (!def || typeof def.range !== 'number') {
-      const old = this.circles.get(slotKey);
-      if (old) { try { old.setVisible(false); } catch {} }
-      return;
-    }
+    if (!def || typeof def.range !== 'number') return;
     let circle = this.circles.get(slotKey);
-    if (show) {
-      if (!circle) {
-        const wr = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-        const fillColorNum = Number((wr.color ?? '#4ade80').replace('#','0x'));
-        const fillAlpha = typeof wr.fillAlpha === 'number' ? Phaser.Math.Clamp(wr.fillAlpha, 0, 1) : 0.08;
-        const strokeColorNum = Number((wr.strokeColor ?? wr.color ?? '#4ade80').replace('#','0x'));
-        const strokeAlpha = typeof wr.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr.strokeAlpha, 0, 1) : 0.8;
-        const strokeWidth = typeof wr.strokeWidth === 'number' ? Math.max(0, Math.floor(wr.strokeWidth)) : 1;
-        const ship = this.combatManager.getPlayerShip();
-        circle = this.scene.add.circle(ship?.x ?? 0, ship?.y ?? 0, def.range, fillColorNum, fillAlpha).setDepth(0.35);
-        circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
-        this.circles.set(slotKey, circle);
-      }
-      const wr2 = this.config.settings?.ui?.combat?.weaponRanges ?? {} as any;
-      const fillColorNum2 = Number((wr2.color ?? '#4ade80').replace('#','0x'));
-      const fillAlpha2 = typeof wr2.fillAlpha === 'number' ? Phaser.Math.Clamp(wr2.fillAlpha, 0, 1) : 0.08;
-      const strokeColorNum2 = Number((wr2.strokeColor ?? wr2.color ?? '#4ade80').replace('#','0x'));
-      const strokeAlpha2 = typeof wr2.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr2.strokeAlpha, 0, 1) : 0.8;
-      const strokeWidth2 = typeof wr2.strokeWidth === 'number' ? Math.max(0, Math.floor(wr2.strokeWidth)) : 1;
-      circle.setFillStyle(fillColorNum2, fillAlpha2);
-      circle.setStrokeStyle(strokeWidth2, strokeColorNum2, strokeAlpha2);
-      circle.setRadius(def.range);
-      const ship = this.combatManager.getPlayerShip();
-      circle.setPosition(ship?.x ?? 0, ship?.y ?? 0);
-      circle.setVisible(true);
+    const wr = this.config.settings?.ui?.combat?.weaponRanges ?? ({} as any);
+    const fillColorNum = Number((wr.color ?? '#4ade80').replace('#','0x'));
+    const fillAlpha = typeof wr.fillAlpha === 'number' ? Phaser.Math.Clamp(wr.fillAlpha, 0, 1) : 0.08;
+    const strokeColorNum = Number((wr.strokeColor ?? wr.color ?? '#4ade80').replace('#','0x'));
+    const strokeAlpha = typeof wr.strokeAlpha === 'number' ? Phaser.Math.Clamp(wr.strokeAlpha, 0, 1) : 0.8;
+    const strokeWidth = typeof wr.strokeWidth === 'number' ? Math.max(0, Math.floor(wr.strokeWidth)) : 1;
+    const ship = this.combatManager.getPlayerShip();
+    if (!circle) {
+      circle = this.scene.add.circle(ship?.x ?? 0, ship?.y ?? 0, def.range, fillColorNum, fillAlpha).setDepth(0.35);
+      circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
+      this.circles.set(slotKey, circle);
     } else {
-      if (circle) { circle.setVisible(false); }
+      circle.setFillStyle(fillColorNum, fillAlpha);
+      circle.setStrokeStyle(strokeWidth, strokeColorNum, strokeAlpha);
     }
+    circle.setRadius(def.range);
+    circle.setPosition(ship?.x ?? 0, ship?.y ?? 0);
+  }
+
+  // Пересчитать видимость по причинам
+  private updateVisibility(slotKey: string) {
+    const circle = this.circles.get(slotKey);
+    if (!circle) return;
+    const st = this.visibleReasons.get(slotKey) ?? {};
+    const visible = !!(st.selected || st.hover);
+    circle.setVisible(visible);
   }
 
   public updateAll() {

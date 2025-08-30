@@ -73,6 +73,13 @@ export class WeaponManager {
   }
 
   /**
+   * Показ/скрытие круга дальности по причине наведения курсора на иконку оружия в HUD
+   */
+  public setHoverRange(slotKey: string, show: boolean) {
+    try { this.rangeUi.setHover(slotKey, !!show); } catch {}
+  }
+
+  /**
    * Применить тик урона лучом и, при необходимости, показать hit-эффект (FoW учитывается)
    */
   private applyBeamTickDamage(shooter: any, target: any, w: any): void {

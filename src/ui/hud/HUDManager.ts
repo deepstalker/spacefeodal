@@ -416,13 +416,40 @@ export class HUDManager {
           container.add(img);
 
           const rec = { slotIndex: i, slotKey: weaponKey, baseX: x, baseY: y, size: slotSize, bg: slotBg, outline: this.scene.add.rectangle(x, y, slotSize, slotSize, 0x000000, 0).setOrigin(0,0).setDepth(1503).setScrollFactor(0), under, icon: img };
+          // Сохраняем базовый масштаб и вычисляем hover-масштаб (+5px к целевому размеру)
+          (rec as any).iconBaseScale = scale;
+          (rec as any).iconHoverScale = scale * ((targetSize + 5) / targetSize);
           rec.outline.setStrokeStyle(0, 0x00ff00, 1);
           this.slotRecords.push(rec as any);
           // badge number already below — keep it
           (rec as any).badge = undefined; (rec as any).badgeText = undefined;
           // interactivity: toggle select
           const hitZone = this.scene.add.zone(x, y, slotSize, slotSize).setOrigin(0,0).setScrollFactor(0).setDepth(1504).setInteractive({ useHandCursor: true });
-          hitZone.on('pointerdown', () => this.toggleSelectSlotByIndex(i));
+          hitZone.on('pointerdown', () => {
+            // Сбросить hover при клике, чтобы не влиял на выбранный слот
+            try { this.weaponManager?.setHoverRange(rec.slotKey, false); } catch {}
+            const base = (rec as any).iconBaseScale ?? (rec.icon?.scale ?? 1);
+            if (rec.icon) this.scene.tweens.add({ targets: rec.icon, scaleX: base, scaleY: base, duration: 60, ease: 'Sine.easeOut' });
+            this.toggleSelectSlotByIndex(i);
+          });
+          // Hover эффекты: показать радиус и увеличить иконку, если слот не выбран
+          hitZone.on('pointerover', () => {
+            // Игнорировать hover, если слот выбран для наведения цели
+            if (this.selectedSlots.has(i)) return;
+            // Показать круг дальности по hover
+            try { this.weaponManager?.setHoverRange(rec.slotKey, true); } catch {}
+            // Увеличить иконку на +5px относительно базового размера
+            const base = (rec as any).iconBaseScale ?? (rec.icon?.scale ?? 1);
+            const hover = (rec as any).iconHoverScale ?? base;
+            if (rec.icon) this.scene.tweens.add({ targets: rec.icon, scaleX: hover, scaleY: hover, duration: 80, ease: 'Sine.easeOut' });
+          });
+          hitZone.on('pointerout', () => {
+            // Скрыть круг дальности по hover (на всякий случай даже если слот был выбран)
+            try { this.weaponManager?.setHoverRange(rec.slotKey, false); } catch {}
+            // Вернуть масштаб иконки к базовому
+            const base = (rec as any).iconBaseScale ?? (rec.icon?.scale ?? 1);
+            if (rec.icon) this.scene.tweens.add({ targets: rec.icon, scaleX: base, scaleY: base, duration: 80, ease: 'Sine.easeOut' });
+          });
           container.add(hitZone);
         }
       }
